@@ -1,0 +1,16 @@
+[package]
+name = "maenad"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = [
+    "lib/*",
+    "guest/hvss",
+    "guest/tdtp",
+    "control",
+    "client/tui",
+    "client/gui",
+]
+
+[dependencies]
