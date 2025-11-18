@@ -5,12 +5,30 @@ edition = "2024"
 
 [workspace]
 members = [
-    "lib/*",
-    "guest/hvss",
-    "guest/tdtp",
+    "lib",
+    "guest/hvss/script",
+    "guest/tdtp/script",
     "control",
+    "client/gui/src-tauri",
     "client/tui",
-    "client/gui",
 ]
 
+[workspace.dependencies]
+alloy-sol-types = "1.0"
+
 [dependencies]
+maenad_gui = { path = "client/gui/src-tauri" }
+maenad_tui = { path = "client/tui" }
+
+[lib]
+name = "control"
+path = "control/src/lib.rs"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "maenad_gui"
+path = "client/gui/src-tauri/src/main.rs"
+
+[[bin]]
+name = "maenad_tui"
+path = "client/tui/src/main.rs"

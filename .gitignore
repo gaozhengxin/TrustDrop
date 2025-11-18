@@ -1,1 +1,124 @@
-/target
+# ============================================================
+# RUST & CARGO
+# ============================================================
+target/
+Cargo.lock
+**/target/
+**/*.rs.bk
+
+# SP1 guest build outputs
+**/guest/**/sp1-build/
+**/guest/**/program/elf/
+**/guest/**/program/target/
+
+# Rust toolchains
+rust-toolchain.toml
+rust-toolchain
+
+# Core dump
+core
+
+
+# ============================================================
+# FORGE (foundry)
+# ============================================================
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/artifacts/
+**/*.sol.json
+
+
+# ============================================================
+# NPM / PNPM / JS / TS
+# ============================================================
+node_modules/
+**/node_modules/
+npm-debug.log*
+pnpm-lock.yaml
+yarn.lock
+dist/
+build/
+.cache/
+.next/
+out/
+
+
+# ============================================================
+# TAURI (GUI / TUI)
+# ============================================================
+src-tauri/target/
+src-tauri/.cargo/
+src-tauri/gen/
+**/src-tauri/target/
+**/src-tauri/gen/
+
+# Desktop bundle & release artifacts
+*.dmg
+*.app
+*.deb
+*.rpm
+*.AppImage
+**/bundle/
+
+
+# ============================================================
+# DART / FLUTTER (如果有)
+# ============================================================
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub-cache/
+.pub/
+
+
+# ============================================================
+# MAC / LINUX / EDITORS
+# ============================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ============================================================
+# LOG / TEMP / MISC
+# ============================================================
+*.log
+*.tmp
+.tmp/
+temp/
+.cache/
+.env
+.env.*
+!.env.example
+
+# ============================================================
+# LOCAL CONFIGS
+# ============================================================
+*.local
+*.secret
+*.bak
+**/*.iml
+
+# ============================================================
+# BINARY / EXECUTABLES
+# ============================================================
+*.exe
+*.bin
+*.o
+*.so
+*.a
+
+# ============================================================
+# SP1 PROVER OUTPUTS
+# ============================================================
+**/proofs/
+**/*.proof
+**/*.vk
+**/*.pk
+**/*.zkey
+**/*.r1cs
+
