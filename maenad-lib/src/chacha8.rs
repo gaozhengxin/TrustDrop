@@ -35,12 +35,12 @@ const HASH_LEN: usize = 32;
 /// ZK Program 1 的公开输出结构，用于 Rust 端的解码和处理。
 #[derive(Debug, Clone)]
 pub struct DecodedZKOutputs {
+    // 原文块的哈希 (H_ORIG Block)
+    pub h_orig_block: [u8; HASH_LEN],
     /// 密文块的哈希 (H(Ciphertext Block))
     pub h_cipher_block: [u8; HASH_LEN],
     /// ChaCha8 密钥的承诺哈希 (H_K)
     pub h_k_commitment: [u8; HASH_LEN],
-    ///// 原文块的哈希 (H_ORIG Block)
-    // pub h_orig_block: [u8; HASH_LEN],
 }
 
 // --- 2. 自定义错误类型 ---
@@ -88,14 +88,14 @@ pub fn decode_public_outputs(output_bytes: &[u8]) -> Result<DecodedZKOutputs, De
     cursor += HASH_LEN;
 
     // 3. 解码 hOrigBlock (64..96)
-    // let h_orig_block_slice: [u8; HASH_LEN] = output_bytes[cursor..cursor + HASH_LEN]
-    //    .try_into()
-    //    .map_err(|e| DecodingError::IoError(format!("Failed to read hOrigBlock: {:?}", e)))?;
+    let h_orig_block_slice: [u8; HASH_LEN] = output_bytes[cursor..cursor + HASH_LEN]
+        .try_into()
+        .map_err(|e| DecodingError::IoError(format!("Failed to read hOrigBlock: {:?}", e)))?;
 
     Ok(DecodedZKOutputs {
+        h_orig_block: h_orig_block_slice,
         h_cipher_block: h_cipher_block_slice,
         h_k_commitment: h_k_commitment_slice,
-        //h_orig_block: h_orig_block_slice,
     })
 }
 

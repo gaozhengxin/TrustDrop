@@ -5,10 +5,10 @@ edition = "2024"
 
 [workspace]
 members = [
-    "lib",
-    "guest/hvss/script",
-    "guest/tdtp/script",
-    "control",
+    "maenad-lib",
+    "guest/*/script",
+    "guest/*/program",
+    "core",
     "client/gui/src-tauri",
     "client/tui",
 ]
@@ -21,8 +21,8 @@ maenad_gui = { path = "client/gui/src-tauri" }
 maenad_tui = { path = "client/tui" }
 
 [lib]
-name = "control"
-path = "control/src/lib.rs"
+name = "core"
+path = "core/src/lib.rs"
 crate-type = ["rlib"]
 
 [[bin]]

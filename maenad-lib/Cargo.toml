@@ -1,0 +1,29 @@
+[package]
+name = "maenad-lib"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# host 默认使用 std
+default = ["std"]
+
+# std 环境（GUI, TUI, 控制层, host）
+std = ["cid/std", "multihash/std", "ipfs-unixfs/filetime", "libipld-core/std"]
+
+# guest 用纯 no_std
+guest = ["k256/arithmetic"]
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+blake3 = { version = "1.8.2", default-features = false }
+sp1-lib = { version = "5.2.2", default-features = false }
+sp1-zkvm = { version = "5.0.8" }
+k256 = { version = "0.13", default-features = false, features = ["arithmetic"] }
+chacha20 = { version = "0.9.1", default-features = false }
+sha256 = "1.6.0"
+sha2 = "0.10.9"
+hex = "0.4.3"
+ipfs-unixfs = { version = "0.2.0", default-features = false }
+multihash = { version = "0.19.3", default-features = false }
+cid = { version = "0.11.1", default-features = false }
+libipld-core = { version = "0.16.0", default-features = false }
