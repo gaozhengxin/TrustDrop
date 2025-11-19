@@ -22,7 +22,7 @@ pub fn main() {
     }
     
     // 计算密钥承诺 H_K 
-    let h_k = blake3::hash(&key).as_bytes().to_vec();
+    let h_k: Vec<u8> = blake3::hash(&key).as_bytes().to_vec();
 
     // 准备底层 ChaCha8 函数所需的输入引用
     let key_array: &[u8; 32] = key.as_slice().try_into().expect("Key长度错误");
@@ -41,10 +41,13 @@ pub fn main() {
         }
     };
 
-    let h_cipher = blake3::hash(&ciphertext).as_bytes().to_vec();
+    let h_origin = blake3::hash(&msg).as_bytes().to_vec();
 
-    // 承诺密文哈希 (H(Ciphertext))
-    io::commit_slice(&h_cipher);
+    // 承诺原文块哈希 (H_ORIG)
+    io::commit_slice(&h_origin);
+    
+    // 承诺密文 (Ciphertext)
+    io::commit_slice(&ciphertext);
     
     // 承诺密钥哈希 (H_K)
     io::commit_slice(&h_k);
