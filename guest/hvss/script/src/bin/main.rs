@@ -66,7 +66,7 @@ fn main() {
         println!("a: {}", a);
         println!("b: {}", b);
 
-        let (expected_a, expected_b) = fibonacci_lib::fibonacci(n);
+        let (expected_a, expected_b) = hvss_lib::fibonacci(n);
         assert_eq!(a, expected_a);
         assert_eq!(b, expected_b);
         println!("Values are correct!");
@@ -75,7 +75,7 @@ fn main() {
         println!("Number of cycles: {}", report.total_instruction_count());
     } else {
         // Setup the program for proving.
-        let (pk, vk) = client.setup(FIBONACCI_ELF);
+        let (pk, vk) = client.setup(HVSS_ELF);
 
         // Generate the proof
         let proof = client

@@ -1,11 +1,11 @@
 [package]
 version = "0.1.0"
-name = "fibonacci-script"
+name = "hvss-script"
 edition = "2021"
-default-run = "fibonacci"
+default-run = "hvss"
 
 [[bin]]
-name = "fibonacci"
+name = "hvss"
 path = "src/bin/main.rs"
 
 [[bin]]
