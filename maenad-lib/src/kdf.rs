@@ -13,8 +13,8 @@ type KeyDeriveResult<T> = Result<T, &'static str>;
 /// * `msg_hash`: 32 字节的消息哈希 (通用哈希，如 Blake3/Keccak)。
 /// 
 /// # 返回值
-/// 32 字节的 ChaCha8 密钥 ([u8; 32])。
-pub fn chacha8_key_derive(
+/// 32 字节的对称加密密钥 ([u8; 32])。
+pub fn key_derive(
     ecc_sk: &[u8; 32],
     msg_hash: &[u8; 32],
 ) -> KeyDeriveResult<[u8; 32]> {

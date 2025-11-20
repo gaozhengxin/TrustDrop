@@ -17,9 +17,10 @@ use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use sp1_sdk::env::EnvProver;
 use rand::{rngs::StdRng, SeedableRng};
 use k256::ecdsa::SigningKey;
-use maenad_lib::data::MESSAGE_32;
-use maenad_lib::kdf::chacha8_key_derive;
-use maenad_lib::chacha8::{decode_public_outputs_with_cipher, derive_nonce, print_public_outputs_with_cipher};
+use maenad_lib::data::PLAINTEXT_DATA_1;
+use maenad_lib::kdf::key_derive;
+use maenad_lib::common::{decode_public_outputs_with_cipher, print_public_outputs_with_cipher};
+use maenad_lib::chacha8::derive_nonce;
 use k256::sha2::{Digest, Sha256};
 use blake3;
 use std::time::Instant;
@@ -53,7 +54,7 @@ fn main() {
     let client = ProverClient::from_env();
 
     // 准备数据
-    let msg: &[u8] = MESSAGE_32.as_slice();
+    let msg: &[u8] = PLAINTEXT_DATA_1.as_bytes();
     let mut hasher = Sha256::new();
     hasher.update(msg);
     let msg_hash = hasher.finalize();
@@ -74,7 +75,7 @@ fn main() {
     let sk_bytes: [u8; 32] = sk.to_bytes().into();
 
     // 生成 chacha8 密钥
-    let key_result = chacha8_key_derive(&sk_bytes, &msg_hash_32);
+    let key_result = key_derive(&sk_bytes, &msg_hash_32);
     let key: [u8; 32] = match key_result {
         Ok(c) => c,
         Err(e) => {

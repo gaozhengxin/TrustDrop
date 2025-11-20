@@ -23,10 +23,11 @@ use k256::ecdsa::SigningKey;
 use k256::sha2::{Digest, Sha256};
 
 use maenad_lib::data::MESSAGE_32;
-use maenad_lib::kdf::chacha8_key_derive;
-use maenad_lib::chacha8::{
-    decode_public_outputs_with_cipher, derive_nonce, print_public_outputs_with_cipher,
+use maenad_lib::kdf::key_derive;
+use maenad_lib::common::{
+    decode_public_outputs_with_cipher, print_public_outputs_with_cipher,
 };
+use maenad_lib::chacha8::derive_nonce;
 
 use blake3;
 
@@ -83,7 +84,7 @@ fn main() {
     let sk = SigningKey::random(&mut rng);
     let sk_bytes: [u8; 32] = sk.to_bytes().into();
 
-    let key = chacha8_key_derive(&sk_bytes, msg_hash_32).expect("key derivation failed");
+    let key = key_derive(&sk_bytes, msg_hash_32).expect("key derivation failed");
     let h_k = blake3::hash(&key).as_bytes().to_vec();
 
     println!("Derived K_KEY: {}", hex::encode(key));
