@@ -17,7 +17,7 @@ use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use sp1_sdk::env::EnvProver;
 use rand::{rngs::StdRng, SeedableRng};
 use k256::ecdsa::SigningKey;
-use maenad_lib::data::PLAINTEXT_DATA_1;
+use maenad_lib::data::{MESSAGE_32};
 use maenad_lib::kdf::key_derive;
 use maenad_lib::common::{decode_public_outputs_with_cipher, print_public_outputs_with_cipher};
 use maenad_lib::chacha8::derive_nonce;
@@ -54,7 +54,12 @@ fn main() {
     let client = ProverClient::from_env();
 
     // 准备数据
-    let msg: &[u8] = PLAINTEXT_DATA_1.as_bytes();
+    //let msg: &[u8] = PLAINTEXT_DATA_1.as_bytes();
+    let msg: &[u8] = &MESSAGE_32;
+
+    let h_orig_block = blake3::hash(&msg);
+    println!("Original Message Hash (blake3): {}", hex::encode(h_orig_block.as_bytes()));
+    
     let mut hasher = Sha256::new();
     hasher.update(msg);
     let msg_hash = hasher.finalize();
@@ -69,14 +74,51 @@ fn main() {
 
     println!("msg length = {:?}", msg.len());
 
+    let key_length = 4u8; // 4 个密钥
+
     // 生成密钥对
-    let mut rng = StdRng::seed_from_u64(0x12345678);
-    let sk = SigningKey::random(&mut rng);
-    let sk_bytes: [u8; 32] = sk.to_bytes().into();
+    let mut rng_1 = StdRng::seed_from_u64(0x11111111);
+    let sk_1 = SigningKey::random(&mut rng_1);
+    let sk_1_bytes: [u8; 32] = sk_1.to_bytes().into();
+
+    let mut rng_2 = StdRng::seed_from_u64(0x11112222);
+    let sk_2 = SigningKey::random(&mut rng_2);
+    let sk_2_bytes: [u8; 32] = sk_2.to_bytes().into();
+
+    let mut rng_3 = StdRng::seed_from_u64(0x11113333);
+    let sk_3 = SigningKey::random(&mut rng_3);
+    let sk_3_bytes: [u8; 32] = sk_3.to_bytes().into();
+
+    let mut rng_4 = StdRng::seed_from_u64(0x11114444);
+    let sk_4 = SigningKey::random(&mut rng_4);
+    let sk_4_bytes: [u8; 32] = sk_4.to_bytes().into();
 
     // 生成 chacha8 密钥
-    let key_result = key_derive(&sk_bytes, &msg_hash_32);
-    let key: [u8; 32] = match key_result {
+    let key_1 = match key_derive(&sk_1_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    let key_2 = match key_derive(&sk_2_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    let key_3 = match key_derive(&sk_3_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    let key_4 = match key_derive(&sk_4_bytes, &msg_hash_32) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("密钥推导失败: {}", e);
@@ -85,39 +127,71 @@ fn main() {
     };
 
     // 计算 K_KEY 的承诺 (H_K)
-    let h_k_calculated = blake3::hash(&key).as_bytes().to_vec();
-    println!("Derived K_KEY: {}", hex::encode(key));
-    println!("H_K Commitment: {}", hex::encode(&h_k_calculated));
+    let h_k_1_calculated = blake3::hash(&key_1).as_bytes().to_vec();
+    let h_k_2_calculated = blake3::hash(&key_2).as_bytes().to_vec();
+    let h_k_3_calculated = blake3::hash(&key_3).as_bytes().to_vec();
+    let h_k_4_calculated = blake3::hash(&key_4).as_bytes().to_vec();
+
+    println!("Derived K_KEY 1: {}", hex::encode(key_1));
+    println!("Derived K_KEY 2: {}", hex::encode(key_2));
+    println!("Derived K_KEY 3: {}", hex::encode(key_3));
+    println!("Derived K_KEY 4: {}", hex::encode(key_4));
+    println!("H_K Commitment 1: {}", hex::encode(&h_k_1_calculated));
+    println!("H_K Commitment 2: {}", hex::encode(&h_k_2_calculated));
+    println!("H_K Commitment 3: {}", hex::encode(&h_k_3_calculated));
+    println!("H_K Commitment 4: {}", hex::encode(&h_k_4_calculated));
 
     // 生成 chacha8 加密 nonce
-    let binding = derive_nonce(&key, &msg_hash);
-    let nonce_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_1, &msg_hash);
+    let nonce_1_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_2, &msg_hash);
+    let nonce_2_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_3, &msg_hash);
+    let nonce_3_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_4, &msg_hash);
+    let nonce_4_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
 
     // Setup input (这里你可以修改为你的程序输入)
     let mut stdin = SP1Stdin::new();
+    // 密钥长度输入
+    stdin.write(&key_length);
     // 消息输入
     stdin.write_slice(&msg);
-    
     // 密钥输入
-    stdin.write_slice(&key);
-
+    stdin.write_slice(&key_1);
+    stdin.write_slice(&key_2);
+    stdin.write_slice(&key_3);
+    stdin.write_slice(&key_4);
     // nonce 输入
-    stdin.write_slice(nonce_ref);
+    stdin.write_slice(nonce_1_ref);
+    stdin.write_slice(nonce_2_ref);
+    stdin.write_slice(nonce_3_ref);
+    stdin.write_slice(nonce_4_ref);
 
     if args.execute {
-        run_execute(&client, &stdin);
+        run_execute(&client, &stdin, Vec::from([key_1, key_2, key_3, key_4]));
     } else {
-        run_prove(&client, &stdin);
+        run_prove(&client, &stdin, Vec::from([key_1, key_2, key_3, key_4]));
     }
 }
 
-fn handle_output_data(output_bytes: Vec<u8>) {
+fn handle_output_data(output_bytes: Vec<u8>, keys: Vec<[u8; 32]>) {
     println!("Raw output bytes: (Length: {})", output_bytes.len());
+    println!("All bytes: {}", hex::encode(&output_bytes));
 
     match decode_public_outputs_with_cipher(&output_bytes) {
         Ok(decoded) => {
             // 调用打印函数
             print_public_outputs_with_cipher(&decoded);
+            // 解密内容
+            match decoded.decryptContent(keys) {
+                Ok(decrypted_blocks) => {
+                    for (i, block) in decrypted_blocks.iter().enumerate() {
+                        println!("Decrypted Block[{}]: {}", i, hex::encode(block));
+                    }
+                },
+                Err(e) => eprintln!("Error decrypt cipher: {}", e)
+            }
         }
         Err(e) => {
             eprintln!("Error decoding ZK output: {}", e);
@@ -125,11 +199,11 @@ fn handle_output_data(output_bytes: Vec<u8>) {
     }
 }
 
-fn run_execute(client: &EnvProver, stdin: &SP1Stdin) {
+fn run_execute(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
     let (output, report) = client.execute(HVSS_ELF, stdin).run().unwrap();
     println!("Program executed successfully.");
 
-    handle_output_data(output.as_slice().to_vec());
+    handle_output_data(output.as_slice().to_vec(), keys);
 
     println!("Number of cycles executed: {}", report.total_instruction_count());
 
@@ -146,7 +220,7 @@ fn run_execute(client: &EnvProver, stdin: &SP1Stdin) {
     println!("---------------------------------");
 }
 
-fn run_prove(client: &EnvProver, stdin: &SP1Stdin) {
+fn run_prove(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
     let (pk, vk) = client.setup(HVSS_ELF);
     
     // --- 1. 证明生成计时 ---
@@ -170,5 +244,5 @@ fn run_prove(client: &EnvProver, stdin: &SP1Stdin) {
     
     // 3. 解码 Proof 的公开输出
     let output_vec = proof.public_values.as_slice().to_vec();
-    handle_output_data(output_vec);
+    handle_output_data(output_vec, keys);
 }

@@ -5,50 +5,80 @@ use sp1_zkvm::io;
 use maenad_lib::chacha8;
 
 pub fn main() {
-    // 输入：原文数据块（Msg）
-    let msg: Vec<u8> = io::read_vec();
-    // 输入：ChaCha8 密钥 (K_KEY)，长度应为 32 字节
-    let key: Vec<u8> = io::read_vec();
-    // 输入：Nonce (12 字节) 和 Counter (u32)，用于加密
-    let nonce: Vec<u8> = io::read_vec();
+    use sp1_zkvm::io::{read, read_vec, commit_slice};
+    use blake3;
+
+    // 1. 输入
+    let length = read::<u8>();
+    let length_usize = length as usize;
+
+    let msg: Vec<u8> = read_vec();
+
+    // 读取 keys
+    let mut keys = Vec::with_capacity(length_usize);
+    for _ in 0..length_usize {
+        let k = read_vec();
+        keys.push(<[u8; 32]>::try_from(&k[..]).expect("key must be 32 bytes"));
+    }
+
+    // 读取 nonces
+    let mut nonces = Vec::with_capacity(length_usize);
+    for _ in 0..length_usize {
+        let n = read_vec();
+        nonces.push(<[u8; 12]>::try_from(&n[..]).expect("nonce must be 12 bytes"));
+    }
 
     const INITIAL_COUNTER: u32 = 0;
 
-    // ZK Program 核心计算 (加密 & 承诺)
+    // ---------- 开始构造 ABI 编码的 public output ----------
+    let mut public_output = Vec::with_capacity(4096);
 
-    // 检查输入
-    if key.len() != 32 || nonce.len() != 12 {
-        panic!("invalid chacha8 key or nonce");
+    // 1. length (uint8 → 32 字节，右对齐)
+    let mut tmp32 = [0u8; 32];
+    tmp32[31] = length;
+    public_output.extend_from_slice(&tmp32);
+
+    // 2. h_orig_block = blake3(msg)
+    public_output.extend_from_slice(blake3::hash(&msg).as_bytes());
+
+    // 动态数据起始位置
+    let dynamic_start = public_output.len();
+
+    // ---------- 准备三个动态数组的内容 ----------
+    let mut cipher_data   = Vec::with_capacity(length_usize * 32 + 32);
+    let mut hk_data       = Vec::with_capacity(length_usize * 32 + 32);
+    let mut nonce_data    = Vec::with_capacity(length_usize * 32 + 32);
+
+    // 每个数组前面都要放长度（uint256）
+    tmp32[31] = length;                           // 复用 tmp32
+    let len_bytes = tmp32.to_vec();
+    cipher_data.extend_from_slice(&len_bytes);
+    hk_data.extend_from_slice(&len_bytes);
+    nonce_data.extend_from_slice(&len_bytes);
+
+    // 填充实际数据
+    for (key, nonce) in keys.iter().zip(nonces.iter()) {
+        // 密钥承诺
+        let h_k: [u8; 32] = blake3::hash(key).into();
+
+        // 加密（长度不变）
+        let ciphertext = chacha8::chacha8_encrypt(&msg, key, nonce, INITIAL_COUNTER)
+            .expect("encrypt failed");
+
+        cipher_data.extend_from_slice(&ciphertext);
+        hk_data.extend_from_slice(&h_k);
+
+        // nonce → bytes12 在 ABI 中占 32 字节（左对齐）
+        let mut padded = [0u8; 32];
+        padded[..12].copy_from_slice(nonce);
+        nonce_data.extend_from_slice(&padded);
     }
-    
-    // 计算密钥承诺 H_K 
-    let h_k: Vec<u8> = blake3::hash(&key).as_bytes().to_vec();
 
-    // 准备底层 ChaCha8 函数所需的输入引用
-    let key_array: &[u8; 32] = key.as_slice().try_into().expect("Key长度错误");
-    let nonce_array: &[u8; 12] = nonce.as_slice().try_into().expect("Nonce长度错误");
+    // ---------- 追加动态数据 ----------
+    public_output.extend_from_slice(&cipher_data);
+    public_output.extend_from_slice(&hk_data);
+    public_output.extend_from_slice(&nonce_data);
 
-    // 执行底层加密 (ChaCha8 运算验证)
-    let ciphertext: Vec<u8> = match chacha8::chacha8_encrypt(
-        &msg,
-        key_array,
-        nonce_array,
-        INITIAL_COUNTER
-    ) {
-        Ok(c) => c,
-        Err(_) => {
-            panic!("ChaCha8 加密计算失败"); 
-        }
-    };
-
-    let h_origin = blake3::hash(&msg).as_bytes().to_vec();
-
-    // 承诺原文块哈希 (H_ORIG)
-    io::commit_slice(&h_origin);
-    
-    // 承诺密文 (Ciphertext)
-    io::commit_slice(&ciphertext);
-    
-    // 承诺密钥哈希 (H_K)
-    io::commit_slice(&h_k);
+    // ---------- 提交 ----------
+    commit_slice(&public_output);
 }

@@ -19,6 +19,8 @@ use sp1_sdk::{
 use sp1_sdk::network::NetworkMode;
 use std::path::PathBuf;
 
+use dotenv::dotenv;
+
 use rand::{rngs::StdRng, SeedableRng};
 use k256::ecdsa::SigningKey;
 use k256::sha2::{Digest, Sha256};
@@ -60,51 +62,132 @@ struct SP1ChaCha8ProofFixture {
 }
 
 fn main() {
+    dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    std::env::set_var("NETWORK_PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000000000");
+    //std::env::set_var("NETWORK_PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000000000");
     let client = ProverClient::builder()
         .network_for(NetworkMode::Mainnet)
         .build();
-    std::env::set_var("NETWORK_PRIVATE_KEY", "");
+    //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
     // -----------------------------------------
     // 1. Prepare Message & Derive Key
     // -----------------------------------------
-    let msg: &[u8] = MESSAGE_32.as_slice();
-
-    // sha256(msg)
+    let msg: &[u8] = &MESSAGE_32;
+    
     let mut hasher = Sha256::new();
     hasher.update(msg);
     let msg_hash = hasher.finalize();
-    let msg_hash_32: &[u8; 32] = msg_hash.as_slice().try_into().unwrap();
+    let binding = msg_hash.try_into();
+    let msg_hash_32: &[u8; 32] = match &binding {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("msg hash 数据长度不是 32 字节");
+            return;
+        }
+    };
 
-    println!("msg length = {}", msg.len());
+    println!("msg length = {:?}", msg.len());
 
-    // keypair -> derive chacha8 key
-    let mut rng = StdRng::seed_from_u64(0x12345678);
-    let sk = SigningKey::random(&mut rng);
-    let sk_bytes: [u8; 32] = sk.to_bytes().into();
+    let key_length = 4u8; // 4 个密钥
 
-    let key = key_derive(&sk_bytes, msg_hash_32).expect("key derivation failed");
-    let h_k = blake3::hash(&key).as_bytes().to_vec();
+    // 生成密钥对
+    let mut rng_1 = StdRng::seed_from_u64(0x11111111);
+    let sk_1 = SigningKey::random(&mut rng_1);
+    let sk_1_bytes: [u8; 32] = sk_1.to_bytes().into();
 
-    println!("Derived K_KEY: {}", hex::encode(key));
-    println!("H_K Commitment: {}", hex::encode(h_k));
+    let mut rng_2 = StdRng::seed_from_u64(0x11112222);
+    let sk_2 = SigningKey::random(&mut rng_2);
+    let sk_2_bytes: [u8; 32] = sk_2.to_bytes().into();
 
-    let nonce_vec = derive_nonce(&key, &msg_hash);
-    let nonce_ref: &[u8; 12] = nonce_vec.as_slice().try_into().unwrap();
+    let mut rng_3 = StdRng::seed_from_u64(0x11113333);
+    let sk_3 = SigningKey::random(&mut rng_3);
+    let sk_3_bytes: [u8; 32] = sk_3.to_bytes().into();
+
+    let mut rng_4 = StdRng::seed_from_u64(0x11114444);
+    let sk_4 = SigningKey::random(&mut rng_4);
+    let sk_4_bytes: [u8; 32] = sk_4.to_bytes().into();
+
+    // 生成 chacha8 密钥
+    let key_1 = match key_derive(&sk_1_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    let key_2 = match key_derive(&sk_2_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    let key_3 = match key_derive(&sk_3_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    let key_4 = match key_derive(&sk_4_bytes, &msg_hash_32) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("密钥推导失败: {}", e);
+            return;
+        }
+    };
+
+    // 计算 K_KEY 的承诺 (H_K)
+    let h_k_1_calculated = blake3::hash(&key_1).as_bytes().to_vec();
+    let h_k_2_calculated = blake3::hash(&key_2).as_bytes().to_vec();
+    let h_k_3_calculated = blake3::hash(&key_3).as_bytes().to_vec();
+    let h_k_4_calculated = blake3::hash(&key_4).as_bytes().to_vec();
+
+    println!("Derived K_KEY 1: {}", hex::encode(key_1));
+    println!("Derived K_KEY 2: {}", hex::encode(key_2));
+    println!("Derived K_KEY 3: {}", hex::encode(key_3));
+    println!("Derived K_KEY 4: {}", hex::encode(key_4));
+    println!("H_K Commitment 1: {}", hex::encode(&h_k_1_calculated));
+    println!("H_K Commitment 2: {}", hex::encode(&h_k_2_calculated));
+    println!("H_K Commitment 3: {}", hex::encode(&h_k_3_calculated));
+    println!("H_K Commitment 4: {}", hex::encode(&h_k_4_calculated));
+
+    // 生成 chacha8 加密 nonce
+    let binding = derive_nonce(&key_1, &msg_hash);
+    let nonce_1_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_2, &msg_hash);
+    let nonce_2_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_3, &msg_hash);
+    let nonce_3_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
+    let binding = derive_nonce(&key_4, &msg_hash);
+    let nonce_4_ref: &[u8; 12] = binding.as_slice().try_into().unwrap();
 
     // -----------------------------------------
     // 2. Build zkVM input
     // -----------------------------------------
     let mut stdin = SP1Stdin::new();
+    // 密钥长度输入
+    stdin.write(&key_length);
+    // 消息输入
     stdin.write_slice(msg);
-    stdin.write_slice(&key);
-    stdin.write_slice(nonce_ref);
+    // 密钥输入
+    stdin.write_slice(&key_1);
+    stdin.write_slice(&key_2);
+    stdin.write_slice(&key_3);
+    stdin.write_slice(&key_4);
+    // nonce 输入
+    stdin.write_slice(nonce_1_ref);
+    stdin.write_slice(nonce_2_ref);
+    stdin.write_slice(nonce_3_ref);
+    stdin.write_slice(nonce_4_ref);
 
     // -----------------------------------------
     // 3. Setup & Prove
