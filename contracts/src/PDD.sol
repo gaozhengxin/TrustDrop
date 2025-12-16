@@ -6,6 +6,9 @@ pragma solidity ^0.8.13;
 abstract contract PDD {
     address public storageNetworkOracle;
 
+    // TODO struct dataObject {publisher, commitment, timestamp}
+    // TODO mapping(Types.Hash => dataObject)
+
     // TODO construtor
 
     // TODO

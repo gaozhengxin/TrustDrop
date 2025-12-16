@@ -45,19 +45,14 @@ contract HVSSGroth16Test is Test {
             abi.encode(true)
         );
 
-        (HVSSPublicValues.HVSSPublicValuesStruct memory publicValues) = hvss.verifyHVSSProof(
-            fixture.publicValues,
-            fixture.proof
-        );
-        //assert(hOrigBlock == fixture.hOrigBlock);
-        //assert(cipherBlock == fixture.cipherBlock);
-        //assert(hKCommitment == fixture.hKCommitment);
-        //console.logBytes32(hOrigBlock);
-        //console.logBytes32(cipherBlock);
-        //console.logBytes(hKCommitment);
+        HVSSPublicValues.HVSSPublicValuesStruct memory publicValues = hvss
+            .verifyHVSSProof(fixture.publicValues, fixture.proof);
+        assert(publicValues.hKCommitment.length == publicValues.length);
+        assert(publicValues.nonce.length == publicValues.length);
+        assert(publicValues.cipherBlock.length == publicValues.length);
     }
 
-    /*function testRevert_InvalidFibonacciProof() public {
+    function testRevert_InvalidHVSSProof() public {
         vm.expectRevert();
 
         SP1ProofFixtureJson memory fixture = loadFixture();
@@ -66,5 +61,5 @@ contract HVSSGroth16Test is Test {
         bytes memory fakeProof = new bytes(fixture.proof.length);
 
         hvss.verifyHVSSProof(fixture.publicValues, fakeProof);
-    }*/
+    }
 }

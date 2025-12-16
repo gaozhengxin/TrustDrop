@@ -1,7 +1,6 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use sp1_zkvm::io;
 use maenad_lib::chacha8;
 
 pub fn main() {

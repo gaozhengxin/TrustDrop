@@ -8,15 +8,110 @@ library HVSSPublicValues {
         uint64 length;
         bytes32 hOrigBlock;
         bytes32[] cipherBlock;
-        bytes[] hKCommitment;
+        bytes32[] hKCommitment;
         uint32[] nonce;
     }
 
-    // 提供一个 decode 工具函数，哪个合约想用直接调用
-    function decode(
-        bytes memory publicValues
-    ) internal pure returns (HVSSPublicValuesStruct memory) {
-        return abi.decode(publicValues, (HVSSPublicValuesStruct));
+    function decodeHVSS(
+        bytes memory data
+    ) internal pure returns (HVSSPublicValuesStruct memory r) {
+        uint256 slot = 0;
+        uint256 ptr;
+
+        assembly {
+            ptr := add(data, 32)
+        }
+
+        // ---- length (uint64) ----
+        {
+            uint256 w;
+            assembly {
+                w := mload(ptr)
+            }
+            r.length = uint64(w);
+            slot += 1;
+        }
+
+        // ---- hOrigBlock ----
+        {
+            bytes32 w;
+            assembly {
+                w := mload(add(ptr, mul(slot, 32)))
+            }
+            r.hOrigBlock = w;
+            slot += 1;
+        }
+
+        // ---- cipherBlock.length ----
+        uint256 cipherLen;
+        {
+            uint256 w;
+            assembly {
+                w := mload(add(ptr, mul(slot, 32)))
+            }
+            cipherLen = w;
+            slot += 1;
+        }
+
+        r.cipherBlock = new bytes32[](cipherLen);
+
+        // ---- cipherBlock[i] ----
+        for (uint256 i = 0; i < cipherLen; i++) {
+            bytes32 w;
+            assembly {
+                w := mload(add(ptr, mul(add(slot, i), 32)))
+            }
+            r.cipherBlock[i] = w;
+        }
+        slot += cipherLen;
+
+        // ---- hKCommitment.length ----
+        uint256 hkLen;
+        {
+            uint256 w;
+            assembly {
+                w := mload(add(ptr, mul(slot, 32)))
+            }
+            hkLen = w;
+            slot += 1;
+        }
+
+        r.hKCommitment = new bytes32[](hkLen);
+
+        // ---- hKCommitment[i] ----
+        for (uint256 i = 0; i < hkLen; i++) {
+            bytes32 w;
+            assembly {
+                w := mload(add(ptr, mul(add(slot, i), 32)))
+            }
+            r.hKCommitment[i] = w;
+        }
+        slot += hkLen;
+
+        // ---- nonce.length ----
+        uint256 nonceLen;
+        {
+            uint256 w;
+            assembly {
+                w := mload(add(ptr, mul(slot, 32)))
+            }
+            nonceLen = w;
+            slot += 1;
+        }
+
+        r.nonce = new uint32[](nonceLen);
+
+        // ---- nonce[i] ----
+        for (uint256 i = 0; i < nonceLen; i++) {
+            uint256 w;
+            assembly {
+                w := mload(add(ptr, mul(add(slot, i), 32)))
+            }
+            r.nonce[i] = uint32(w);
+        }
+        slot += nonceLen;
+
+        return r;
     }
 }
 
@@ -51,7 +146,8 @@ contract HVSS {
             _publicValues,
             _proofBytes
         );
-        HVSSPublicValues.HVSSPublicValuesStruct memory publicValues = _publicValues.decode();
+        HVSSPublicValues.HVSSPublicValuesStruct
+            memory publicValues = _publicValues.decodeHVSS();
         return publicValues;
     }
 }

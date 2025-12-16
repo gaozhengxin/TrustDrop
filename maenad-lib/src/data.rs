@@ -1,5 +1,4 @@
 pub const PLAINTEXT_DATA_1: &str ="
-    ZK-VM中的ChaCha8加密测试
      白日依山尽
      黄河入海流
      欲穷千里目

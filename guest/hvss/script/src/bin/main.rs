@@ -56,6 +56,7 @@ fn main() {
     // 准备数据
     //let msg: &[u8] = PLAINTEXT_DATA_1.as_bytes();
     let msg: &[u8] = &MESSAGE_32;
+    println!("Original Message: {}", hex::encode(msg));
 
     let h_orig_block = blake3::hash(&msg);
     println!("Original Message Hash (blake3): {}", hex::encode(h_orig_block.as_bytes()));

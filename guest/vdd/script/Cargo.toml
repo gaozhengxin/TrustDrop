@@ -26,6 +26,9 @@ hex = "0.4.3"
 alloy-sol-types = { workspace = true }
 vdd-lib = { path = "../lib" }
 dotenv = "0.15.0"
+maenad-lib = { path = "../../../maenad-lib" }
+blake3 = "1.8.2"
+rand = "0.9.2"
 
 [build-dependencies]
 sp1-build = "5.0.8"
