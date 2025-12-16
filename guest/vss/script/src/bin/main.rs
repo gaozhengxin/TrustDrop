@@ -12,7 +12,7 @@
 
 use alloy_sol_types::SolType;
 use clap::Parser;
-use hvss_lib::PublicValuesStruct;
+use vss_lib::PublicValuesStruct;
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use sp1_sdk::env::EnvProver;
 use rand::{rngs::StdRng, SeedableRng};
@@ -26,7 +26,7 @@ use blake3;
 use std::time::Instant;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const HVSS_ELF: &[u8] = include_elf!("hvss-program");
+pub const VSS_ELF: &[u8] = include_elf!("vss-program");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -201,7 +201,7 @@ fn handle_output_data(output_bytes: Vec<u8>, keys: Vec<[u8; 32]>) {
 }
 
 fn run_execute(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
-    let (output, report) = client.execute(HVSS_ELF, stdin).run().unwrap();
+    let (output, report) = client.execute(VSS_ELF, stdin).run().unwrap();
     println!("Program executed successfully.");
 
     handle_output_data(output.as_slice().to_vec(), keys);
@@ -222,7 +222,7 @@ fn run_execute(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
 }
 
 fn run_prove(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
-    let (pk, vk) = client.setup(HVSS_ELF);
+    let (pk, vk) = client.setup(VSS_ELF);
     
     // --- 1. 证明生成计时 ---
     let start_prove = Instant::now();

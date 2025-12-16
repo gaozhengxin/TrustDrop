@@ -3,8 +3,8 @@ pragma solidity ^0.8.13;
 
 // TODO import standard ERC1155 contract
 // hierachical verifiable secret sharing
-// TODO inherits ERC1155, HVSS is ERC1155 access token
-contract HVSS {
+// TODO inherits ERC1155, VSS is ERC1155 access token
+contract VSS {
     constructor() {
         // TODO initiate ERC1155
     }

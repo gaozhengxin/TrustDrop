@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 // trustless data trading
-// TODO TDT is PDD
+// TODO TDT is VDD
 contract TDT {
     // struct Trade { // trade info }
 
@@ -39,13 +39,13 @@ contract TDT {
         // TODO set a deadline, max deadline is 1 day
     }
 
-    // implement PDD
+    // implement VDD
     function onSuccess() internal {
         // TODO record all verified trades
         // TODO settle all verified trades
     }
 
-    // implement PDD
+    // implement VDD
     function onFail() internal {
         // TODO do nothing
     }
@@ -53,7 +53,7 @@ contract TDT {
     function settle() public {
         // close a trade
         // called by EOA or by oracle (through onSuccess) 
-        // TODO call PDD.send, in which delivers blob and verifies proof
+        // TODO call VDD.send, in which delivers blob and verifies proof
         // TODO unlock money and transfer
     }
 

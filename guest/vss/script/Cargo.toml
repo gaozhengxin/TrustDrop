@@ -1,11 +1,11 @@
 [package]
 version = "0.1.0"
-name = "hvss-script"
+name = "vss-script"
 edition = "2021"
-default-run = "hvss"
+default-run = "vss"
 
 [[bin]]
-name = "hvss"
+name = "vss"
 path = "src/bin/main.rs"
 
 [[bin]]
@@ -28,7 +28,7 @@ clap = { version = "4.0", features = ["derive", "env"] }
 tracing = "0.1.40"
 hex = "0.4.3"
 alloy-sol-types = { workspace = true }
-hvss-lib = { path = "../lib" }
+vss-lib = { path = "../lib" }
 dotenv = "0.15.0"
 k256 = "0.13.4"
 rand = { version = "0.8", features = ["std"] }

@@ -1,10 +1,10 @@
 use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const HVSS_ELF: &[u8] = include_elf!("hvss-program");
+pub const VSS_ELF: &[u8] = include_elf!("vss-program");
 
 fn main() {
     let prover = ProverClient::builder().cpu().build();
-    let (_, vk) = prover.setup(HVSS_ELF);
+    let (_, vk) = prover.setup(VSS_ELF);
     println!("{}", vk.bytes32());
 }

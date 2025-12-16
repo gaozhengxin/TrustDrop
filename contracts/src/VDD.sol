@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-// TODO PDD is HVSS
+// TODO VDD is VSS
 // provable data delivery
-abstract contract PDD {
+abstract contract VDD {
     address public storageNetworkOracle;
 
     // TODO struct dataObject {publisher, commitment, timestamp}

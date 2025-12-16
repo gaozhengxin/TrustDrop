@@ -3,20 +3,23 @@
 //!
 //! You can run this script using the following command:
 //! ```shell
-//! RUST_LOG=info cargo run --release --bin evm -- --system groth16
+//! RUST_LOG=info cargo run --release --bin pn -- --system groth16
 //! ```
 //! or
 //! ```shell
-//! RUST_LOG=info cargo run --release --bin evm -- --system plonk
+//! RUST_LOG=info cargo run --release --bin pn -- --system plonk
 //! ```
 //! Generate an EVM-compatible proof for the ChaCha8 ZK program.
 
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
-    include_elf, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
+    include_elf, HashableKey, ProverClient, Prover, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey
 };
+use sp1_sdk::network::NetworkMode;
 use std::path::PathBuf;
+
+use dotenv::dotenv;
 
 use rand::{rngs::StdRng, SeedableRng};
 use k256::ecdsa::SigningKey;
@@ -32,7 +35,7 @@ use maenad_lib::chacha8::derive_nonce;
 use blake3;
 
 /// ELF of your guest program
-pub const HVSS_ELF: &[u8] = include_elf!("hvss-program");
+pub const VSS_ELF: &[u8] = include_elf!("vss-program");
 
 /// CLI args
 #[derive(Parser, Debug)]
@@ -59,12 +62,17 @@ struct SP1ChaCha8ProofFixture {
 }
 
 fn main() {
+    dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    let client = ProverClient::from_env();
+    //std::env::set_var("NETWORK_PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000000000");
+    let client = ProverClient::builder()
+        .network_for(NetworkMode::Mainnet)
+        .build();
+    //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
     // -----------------------------------------
     // 1. Prepare Message & Derive Key
@@ -184,11 +192,18 @@ fn main() {
     // -----------------------------------------
     // 3. Setup & Prove
     // -----------------------------------------
-    let (pk, vk) = client.setup(HVSS_ELF);
+    let (pk, vk) = client.setup(VSS_ELF);
+    println!("Set up finished!");
 
     let proof: SP1ProofWithPublicValues = match args.system {
-        ProofSystem::Plonk => client.prove(&pk, &stdin).plonk().run(),
-        ProofSystem::Groth16 => client.prove(&pk, &stdin).groth16().run(),
+        ProofSystem::Plonk => client.prove(&pk, &stdin)
+            .compressed()
+            .plonk()
+            .run(),
+        ProofSystem::Groth16 => client.prove(&pk, &stdin)
+            .compressed()
+            .groth16()
+            .run(),
     }
     .expect("failed to generate proof");
 
