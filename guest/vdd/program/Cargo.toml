@@ -9,3 +9,4 @@ sp1-zkvm = "5.0.8"
 vdd-lib = { path = "../lib" }
 blake3 = "1.8.2"
 maenad-lib = { path = "../../../maenad-lib", default-features = false, features = ["guest"] }
+hex = "0.4.3"

@@ -152,6 +152,7 @@ fn default_config() -> ClientConfig {
     ClientConfig {
         publisher_url: "http://127.0.0.1:31415".into(),
         aggregator_url: "http://127.0.0.1:31415".into(),
+        //aggregator_url: "https://walrus.blockscope.net".into(),
         blockberry_base: "https://api.blockberry.one/walrus-mainnet".into(),
         api_key: "eNx0cS4PemfQtVaArXbRbHcyJTnP0l".into(),
         send_object_to: None,

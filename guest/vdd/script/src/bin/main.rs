@@ -1,9 +1,10 @@
 use alloy_sol_types::SolType;
 use clap::Parser;
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use sp1_sdk::{ include_elf, ProverClient, SP1Stdin };
 use rand::RngCore;
 
-use maenad_lib::merkle;
+use maenad_lib::chacha8::chacha8_seal;
+use maenad_lib::walrus_address::compute_blob_id_default;
 use rand::rng;
 use blake3;
 
@@ -53,13 +54,18 @@ fn main() {
     // Setup the prover client.
     let client = ProverClient::from_env();
 
-    const CHUNK_SIZE: usize = 1024 * 1024;
-
     // === Prepare inputs on host ===
-    const ORIGIN_SIZE: u32 = 300 * 1024 * 1024;
+    const ORIGIN_SIZE: u32 = 100;
 
     let mut origin = vec![0u8; ORIGIN_SIZE.try_into().unwrap()];
     rand::thread_rng().fill_bytes(&mut origin);
+
+    {
+        let len = origin.len();
+        let head = hex::encode(&origin[..16]);
+        let tail = hex::encode(&origin[len - 16..]);
+        eprintln!("origin len: {}, head: {}, tail: {}", len, head, tail);
+    }
 
     // generate random 32-byte key
     let mut key_arr = [0u8; 32];
@@ -67,34 +73,41 @@ fn main() {
     let key_vec: Vec<u8> = key_arr.to_vec();
 
     // compute commitments
-    let origin_mkt = merkle::build_merkle_tree(origin.as_slice(), CHUNK_SIZE);
-    let origin_mkt_root = origin_mkt.root();
-    let c_origin: Vec<u8> = origin_mkt_root.to_vec();
+    let binding: blake3::Hash = blake3::hash(&origin);
+    let c_origin = binding.as_bytes();
 
     let c_key_hash = blake3::hash(&key_vec);
     let c_key: Vec<u8> = c_key_hash.as_bytes().to_vec();
 
     // compute cipher
-    let cipher_mkt = merkle::encrypt_merkle_tree(&origin_mkt, &key_arr).expect("data encryption failed");
+    let cipher = chacha8_seal(&origin, &key_arr, c_origin).expect("data encryption failed");
+    {
+        let len = cipher.len();
+        let head = hex::encode(&cipher[..16]);
+        let tail = hex::encode(&cipher[len - 16..]);
+        eprintln!("cipher len: {}, head: {}, tail: {}", len, head, tail);
+    }
 
     // compute cipher commitment
-    let cipher_mkt_root = cipher_mkt.root();
-    let c_cipher: Vec<u8> = cipher_mkt_root.to_vec();
+    let cipher_blob_id = compute_blob_id_default(&cipher).expect(
+        "Should compute blob ID for cipher data"
+    );
+    let c_cipher = cipher_blob_id.as_ref();
 
     // combined expected public output (what guest commit_slice will commit)
     let mut combined_expected: Vec<u8> = Vec::with_capacity(128);
-    combined_expected.extend_from_slice(&c_origin);
+    combined_expected.extend_from_slice(c_origin);
     combined_expected.extend_from_slice(&c_key);
     combined_expected.extend_from_slice(&c_cipher);
     combined_expected.extend_from_slice(&ORIGIN_SIZE.to_be_bytes());
 
     // print some info
-    println!("Prepared inputs:");
-    println!("  origin bytes: {}", origin.len());
-    println!("  key: 32 bytes");
-    println!("  c_origin (merkle root): {}", bytes_to_hex_prefix(&c_origin, 32));
-    println!("  c_key    (blake3): {}", bytes_to_hex_prefix(&c_key, 32));
-    println!("  c_cipher (merkle root): {}", bytes_to_hex_prefix(&c_cipher, 32));
+    eprintln!("Prepared inputs:");
+    eprintln!("  origin bytes: {}", origin.len());
+    eprintln!("  key: 32 bytes");
+    eprintln!("  c_origin (blake3): {}", bytes_to_hex_prefix(c_origin, 32));
+    eprintln!("  c_key    (blake3): {}", bytes_to_hex_prefix(&c_key, 32));
+    eprintln!("  c_cipher (blob id): {}", bytes_to_hex_prefix(&c_cipher, 32));
 
     // === Build SP1 stdin ===
     let mut stdin = SP1Stdin::new();
@@ -118,14 +131,22 @@ fn main() {
         } else {
             println!("Output DOES NOT match expected combined commitments!");
             // print some diagnostics
-            let show = 64.min(output.as_slice().len());
-            println!("  returned first {} bytes hex: {}", show, bytes_to_hex_prefix(&output.as_slice(), show));
-            println!("  expected first {} bytes hex: {}", show, bytes_to_hex_prefix(&combined_expected.as_slice(), show));
+            let show = (64).min(output.as_slice().len());
+            println!(
+                "  returned first {} bytes hex: {}",
+                show,
+                bytes_to_hex_prefix(&output.as_slice(), show)
+            );
+            println!(
+                "  expected first {} bytes hex: {}",
+                show,
+                bytes_to_hex_prefix(&combined_expected.as_slice(), show)
+            );
         }
 
         // print a short readable summary
-        println!("Merkle root (host calc): {}", bytes_to_hex_prefix(&c_cipher, 32));
-        println!("Output sample (first 64 bytes hex): {}", bytes_to_hex_prefix(&output.as_slice(), 64));
+        println!("Cipher commitment (host calc): {}", bytes_to_hex_prefix(&c_cipher, 32));
+        println!("Output: {}", bytes_to_hex_prefix(&output.as_slice(), 128));
 
         println!("Number of cycles executed: {}", report.total_instruction_count());
 
@@ -143,10 +164,7 @@ fn main() {
         // prove path: setup, prove, verify
         let (pk, vk) = client.setup(VDD_ELF);
 
-        let proof = client
-            .prove(&pk, &stdin)
-            .run()
-            .expect("failed to generate proof");
+        let proof = client.prove(&pk, &stdin).run().expect("failed to generate proof");
 
         println!("Successfully generated proof!");
 
@@ -157,7 +175,7 @@ fn main() {
         let (output, _report) = client.execute(VDD_ELF, &stdin).run().unwrap();
         println!("Also executed to obtain public output (prove mode).");
         println!("Returned public output length: {}", output.as_slice().len());
-        println!("Output sample (first 64 bytes hex): {}", bytes_to_hex_prefix(&output.as_slice(), 64));
+        println!("Output: {}", bytes_to_hex_prefix(&output.as_slice(), 128));
         if output.as_slice() == combined_expected.as_slice() {
             println!("Output matches expected combined commitments.");
         } else {

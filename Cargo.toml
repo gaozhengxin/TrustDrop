@@ -11,6 +11,7 @@ members = [
     "core",
     "client/gui/src-tauri",
     "storage",
+    "walrus-core",
 ]
 
 [workspace.dependencies]

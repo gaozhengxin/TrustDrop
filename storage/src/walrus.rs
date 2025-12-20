@@ -7,8 +7,6 @@ use reqwest::Client;
 use serde::Deserialize;
 use tokio_util::io::StreamReader;
 use std::io;
-use reqwest::header::HeaderMap;
-use std::error::Error;
 
 use crate::{ BlobId, BlobStatus, ClientConfig, StorageError, StorageNetwork, WalrusUploadResponse };
 
@@ -25,10 +23,10 @@ pub struct WalrusClient {
 
 impl WalrusClient {
     pub fn new(cfg: ClientConfig) -> Self {
-        let http = Client::builder()
-            .pool_max_idle_per_host(0)
-            .http2_prior_knowledge()
-            .timeout(std::time::Duration::from_secs(30))
+        let http: Client = Client::builder()
+            //.pool_max_idle_per_host(0)
+            //.http2_prior_knowledge()
+            //.timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("Failed to build reqwest client");
         Self {

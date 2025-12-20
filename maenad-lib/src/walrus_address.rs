@@ -1,162 +1,100 @@
-use sha2::{Digest, Sha256};
+#![no_std]
 use hex;
+use core::num::NonZeroU16;
+use walrus_core::{ BlobId, encoding::{ EncodingConfig, EncodingFactory as _ } };
 
-/// Walrus 风格 Blob Address 的哈希输出类型（SHA-256，32 字节）
-pub type BlobAddress = [u8; 32];
+/// Computes the Walrus blob ID for the given data using specified encoding configuration.
+///
+/// This function encodes the data according to Walrus standards and returns the computed blob ID.
+///
+/// # Arguments
+/// * `data` - The raw data to encode and compute blob ID for
+/// * `n_shards` - The number of shards to use for encoding (should match publisher's configuration)
+///
+/// # Returns
+/// The `BlobId` computed from the encoded data
+///
+/// # Errors
+/// Returns `DataTooLargeError` if the data is too large to be encoded
+pub fn compute_blob_id(
+    data: &[u8],
+    n_shards: u16
+) -> Result<BlobId, walrus_core::encoding::DataTooLargeError> {
+    let n_shards = NonZeroU16::new(n_shards).expect("n_shards must be > 0");
+    let config = EncodingConfig::new(n_shards);
 
-/// 协议假设的 Sliver（数据片段）大小。
-/// Walrus 协议通常使用 64KB 或 128KB，我们使用 64KB 作为示例。
-const SLIVER_SIZE: usize = 64 * 1024; // 65536 字节
+    // Get the encoding config for the default encoding type (RS2)
+    let encoding_config = config.get_for_type(walrus_core::EncodingType::RS2);
 
-/// 计算任意字节切片的 SHA-256 哈希值。
-/// 这是 Merkle 叶子节点和父节点计算的基础。
-fn hash_data(data: &[u8]) -> BlobAddress {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hasher.finalize().into()
+    // Compute metadata which includes the blob ID
+    let metadata_with_id = encoding_config.compute_metadata(data)?;
+
+    Ok(*metadata_with_id.blob_id())
 }
 
-/// 计算 Merkle Tree 的父节点哈希。
-/// 父哈希 = HASH(左子节点哈希 || 右子节点哈希)
-fn hash_parent(left: &BlobAddress, right: &BlobAddress) -> BlobAddress {
-    let mut hasher = Sha256::new();
-    // 拼接 (||) 左哈希和右哈希
-    hasher.update(left);
-    hasher.update(right);
-    hasher.finalize().into()
+/// Computes the Walrus blob ID using the default 1000 shards configuration.
+/// This matches the typical Walrus network configuration.
+pub fn compute_blob_id_default(
+    data: &[u8]
+) -> Result<BlobId, walrus_core::encoding::DataTooLargeError> {
+    compute_blob_id(data, 1000)
 }
 
-/**
- * @brief 计算给定 Blob 数据的 Walrus 风格 Blob Address (Merkle Tree Root)。
- *
- * @param blob_data 要计算地址的字节切片（最大 500MB）。
- * @return 成功返回 BlobAddress (32 字节的 SHA-256 哈希)，失败返回 None (例如空数据)。
- */
-pub fn calculate_blob_address(blob_data: &[u8]) -> Option<BlobAddress> {
-    if blob_data.is_empty() {
-        return None;
-    }
-
-    // 1. 数据分片 (Slicing) 和计算叶子节点 (Sliver 哈希)
-    // Walrus 协议：数据被切片成 SLIVER_SIZE 的块，然后计算每个 Sliver 的哈希。
-    let num_slivers = (blob_data.len() + SLIVER_SIZE - 1) / SLIVER_SIZE;
-    // 使用 Vec<BlobAddress> 存储当前层的哈希值
-    let mut current_hashes: Vec<BlobAddress> = Vec::with_capacity(num_slivers);
-
-    // 对每个 Sliver (数据块) 计算其叶子哈希
-    for chunk in blob_data.chunks(SLIVER_SIZE) {
-        current_hashes.push(hash_data(chunk));
-    }
-
-    // 
-
-    // 2. Merkle Tree 构建 (从叶子节点到根节点)
-    // 循环直到只剩下一个哈希值（即 Merkle Root）
-    while current_hashes.len() > 1 {
-        let mut next_layer: Vec<BlobAddress> = Vec::new();
-        let mut i = 0;
-        
-        while i < current_hashes.len() {
-            let left_hash = &current_hashes[i];
-            
-            // Merkle Tree 填充策略：如果只剩一个节点，复制自身进行哈希 (Hash(H_L || H_L))
-            // 否则，取下一个节点。
-            let right_hash = current_hashes.get(i + 1).unwrap_or(left_hash);
-
-            let parent_hash = hash_parent(left_hash, right_hash);
-            next_layer.push(parent_hash);
-            
-            i += 2; // 跳到下一对
-        }
-
-        // 用下一层哈希替换当前层
-        current_hashes = next_layer;
-    }
-
-    // 根节点即为 Blob Address。如果 current_hashes.len() == 1，则 pop() 返回 Some(Address)
-    current_hashes.pop()
-}
-
-
-// --- 实用工具函数 ---
-
-/// 将 32 字节的 BlobAddress 转换为十六进制字符串。
-pub fn address_to_hex(address: &BlobAddress) -> String {
-    hex::encode(address)
-}
-
-/// 模块的单元测试
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
 
-    // 1. 测试小数据 Blob (刚好一个 Sliver)
     #[test]
-    fn test_small_blob_address() {
-        // 64KB 数据
-        let data = vec![0xCC; SLIVER_SIZE];
-        // 预期：Merkle Root 就是这 64KB 数据的 SHA-256
-        let expected_hash = hash_data(&data);
+    fn test_compute_blob_id_basic() {
+        let data =
+            "[\"朝辞白帝彩云间\",\"千里江陵一日还\",\"两岸猿声啼不住\",\"轻舟已过万重山\"]\n".as_bytes();
 
-        let address = calculate_blob_address(&data).unwrap();
-        assert_eq!(address, expected_hash, "单 Sliver Blob 的地址应等于其数据的直接哈希");
+        // Data: [91, 34, 230, 156, 157, 232, 190, 158, 231, 153, 189, 229, 184, 157, 229, 189, 169, 228, 186, 145, 233, 151, 180, 34, 44, 34, 229, 141, 131, 233, 135, 140, 230, 177, 159, 233, 153, 181, 228, 184, 128, 230, 151, 165, 232, 191, 152, 34, 44, 34, 228, 184, 164, 229, 178, 184, 231, 140, 191, 229, 163, 176, 229, 149, 188, 228, 184, 141, 228, 189, 143, 34, 44, 34, 232, 189, 187, 232, 136, 159, 229, 183, 178, 232, 191, 135, 228, 184, 135, 233, 135, 141, 229, 177, 177, 34, 93, 10]
+        let blob_id = compute_blob_id_default(data).expect("Should compute blob ID");
+
+        // Verify the blob ID is 32 bytes
+        assert_eq!(blob_id.as_ref().len(), 32);
+        eprintln!("Computed Blob ID: {}", blob_id.to_string());
+        // TGBXYr0km3mLvyNHt6bQXbLHslBR5HAwV8mAQ-HFJIo
+        eprintln!("Computed Blob ID (Hex): {}", hex::encode(blob_id));
+        // 4c605762bd249b798bbf2347b7a6d05db2c7b25051e4703057c98043e1c5248a
+
+        assert_eq!(blob_id.to_string(), "TGBXYr0km3mLvyNHt6bQXbLHslBR5HAwV8mAQ-HFJIo");
     }
 
-    // 2. 测试刚好两倍 Sliver 大小的 Blob
     #[test]
-    fn test_two_sliver_blob_address() {
-        let size = SLIVER_SIZE * 2;
-        let mut data = vec![0; size];
-        // 区分两个 Sliver
-        for i in 0..SLIVER_SIZE { data[i] = 0xAA; }
-        for i in SLIVER_SIZE..size { data[i] = 0xBB; }
-        
-        let hash_a = hash_data(&data[0..SLIVER_SIZE]);
-        let hash_b = hash_data(&data[SLIVER_SIZE..size]);
-        let expected_root = hash_parent(&hash_a, &hash_b);
+    fn test_compute_blob_id_different_data() {
+        let data1 = b"Hello, Walrus!";
+        let data2 = b"Hello, World!";
 
-        let address = calculate_blob_address(&data).unwrap();
-        assert_eq!(address, expected_root, "两 Sliver Blob 的地址应是两 Sliver 哈希的父哈希");
+        let blob_id1 = compute_blob_id_default(data1).expect("Should compute blob ID");
+        eprintln!("Blob ID for data1: {}", blob_id1.to_string());
+        let blob_id2 = compute_blob_id_default(data2).expect("Should compute blob ID");
+        eprintln!("Blob ID for data2: {}", blob_id2.to_string());
+
+        // Different data should produce different blob IDs
+        assert_ne!(blob_id1, blob_id2);
     }
 
-    // 3. 测试奇数个 Sliver 的 Blob (需要填充/复制)
     #[test]
-    fn test_odd_sliver_blob_address() {
-        let size = SLIVER_SIZE * 3;
-        let data = vec![0xDD; size]; // 3 个相同的 Sliver
-        
-        let address = calculate_blob_address(&data).unwrap();
-        // 验证 Merkle 树层级计算 (H1, H2, H3) -> (H12, H33) -> (H1233)
-        // 步骤：
-        // L0: H1, H2, H3
-        // L1: H(H1 || H2), H(H3 || H3)
-        // Root: H(H12 || H33)
-        
-        let h1 = hash_data(&data[0..SLIVER_SIZE]); // 都是一样的
-        let h12 = hash_parent(&h1, &h1);
-        let h33 = hash_parent(&h1, &h1); // 这里的 h3 也等于 h1，所以是 H(H1||H1)
+    fn test_compute_blob_id_empty_data() {
+        let data = b"";
+        let blob_id = compute_blob_id_default(data).expect("Should compute blob ID for empty data");
+        eprintln!("Blob ID for empty data: {}", blob_id.to_string());
 
-        let expected_root = hash_parent(&h12, &h33);
-        assert_eq!(address, expected_root, "奇数 Sliver 的 Merkle 根应正确填充");
+        // Even empty data should produce a valid blob ID
+        assert_eq!(blob_id.as_ref().len(), 32);
     }
 
-    // 4. 压力测试 (模拟 100MB 左右的大 Blob)
     #[test]
-    fn test_large_blob_performance() {
-        const TEST_SIZE: usize = 100 * 1024 * 1024; // 100MB
-        let data = vec![0xEF; TEST_SIZE];
-        println!("开始计算 100MB Blob Address...");
+    fn test_compute_blob_id_large_data() {
+        // Test with larger data (1MB)
+        let data = vec![42u8; 1024 * 1024];
+        let blob_id = compute_blob_id_default(&data).expect(
+            "Should compute blob ID for larger data"
+        );
+        eprintln!("Blob ID for large data: {}", blob_id.to_string());
 
-        let start = Instant::now();
-        let address = calculate_blob_address(&data).unwrap();
-        let duration = start.elapsed();
-        
-        println!("100MB Blob Address 计算耗时: {:?}", duration);
-        println!("Address: {}", address_to_hex(&address));
-
-        // 验证计算结果（100MB 统一数据计算的哈希应是固定的）
-        let expected_fixed_address = hex::decode("7141f26d7f950669b02a2cc1222479e000720464c09d5718a385f0962817d2a5").unwrap();
-        assert_eq!(address.to_vec(), expected_fixed_address, "100MB 固定数据计算结果应一致");
+        assert_eq!(blob_id.as_ref().len(), 32);
     }
 }
