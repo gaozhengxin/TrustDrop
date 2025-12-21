@@ -3,30 +3,37 @@
 //!
 //! You can run this script using the following command:
 //! ```shell
-//! RUST_LOG=info cargo run --release --bin evm -- --system groth16
+//! RUST_LOG=info cargo run --release --bin pn -- --system groth16
 //! ```
 //! or
 //! ```shell
-//! RUST_LOG=info cargo run --release --bin evm -- --system plonk
+//! RUST_LOG=info cargo run --release --bin pn -- --system plonk
 //! ```
 //! Generate an EVM-compatible proof for the ChaCha8 ZK program.
 
-use clap::{Parser, ValueEnum};
-use serde::{Deserialize, Serialize};
+use clap::{ Parser, ValueEnum };
+use serde::{ Deserialize, Serialize };
 use sp1_sdk::{
-    include_elf, HashableKey, ProverClient, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
+    include_elf,
+    HashableKey,
+    ProverClient,
+    Prover,
+    SP1ProofWithPublicValues,
+    SP1Stdin,
+    SP1VerifyingKey,
 };
+use sp1_sdk::network::NetworkMode;
 use std::path::PathBuf;
 
-use rand::{rngs::StdRng, SeedableRng};
+use dotenv::dotenv;
+
+use rand::{ rngs::StdRng, SeedableRng };
 use k256::ecdsa::SigningKey;
-use k256::sha2::{Digest, Sha256};
+use k256::sha2::{ Digest, Sha256 };
 
 use maenad_lib::data::MESSAGE_32;
 use maenad_lib::kdf::key_derive;
-use maenad_lib::common::{
-    decode_public_outputs_with_cipher, print_public_outputs_with_cipher,
-};
+use maenad_lib::common::{ decode_public_outputs_with_cipher, print_public_outputs_with_cipher };
 use maenad_lib::chacha8::derive_nonce;
 
 use blake3;
@@ -40,6 +47,8 @@ pub const VSS_ELF: &[u8] = include_elf!("vss-program");
 struct EVMArgs {
     #[arg(long, value_enum, default_value = "groth16")]
     system: ProofSystem,
+    #[arg(long)]
+    idle: bool,
 }
 
 /// Available proof systems
@@ -52,25 +61,34 @@ enum ProofSystem {
 /// JSON fixture format for Solidity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SP1ChaCha8ProofFixture {
+struct SP1CVSSProofFixture {
+    length: u32,
+    hOrigBlock: String,
+    hKCommitment: Vec<String>,
+    nonce: Vec<String>,
     vkey: String,
     public_values: String,
     proof: String,
 }
 
 fn main() {
+    dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    let client = ProverClient::from_env();
+    //std::env::set_var("NETWORK_PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000000000");
+    let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
+    //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
     // -----------------------------------------
     // 1. Prepare Message & Derive Key
     // -----------------------------------------
     let msg: &[u8] = &MESSAGE_32;
-    
+
+    let h_orig_block = blake3::hash(&msg);
+
     let mut hasher = Sha256::new();
     hasher.update(msg);
     let msg_hash = hasher.finalize();
@@ -138,19 +156,19 @@ fn main() {
     };
 
     // 计算 K_KEY 的承诺 (H_K)
-    let h_k_1_calculated = blake3::hash(&key_1).as_bytes().to_vec();
-    let h_k_2_calculated = blake3::hash(&key_2).as_bytes().to_vec();
-    let h_k_3_calculated = blake3::hash(&key_3).as_bytes().to_vec();
-    let h_k_4_calculated = blake3::hash(&key_4).as_bytes().to_vec();
+    let h_k_1_calculated = blake3::hash(&key_1);
+    let h_k_2_calculated = blake3::hash(&key_2);
+    let h_k_3_calculated = blake3::hash(&key_3);
+    let h_k_4_calculated = blake3::hash(&key_4);
 
     println!("Derived K_KEY 1: {}", hex::encode(key_1));
     println!("Derived K_KEY 2: {}", hex::encode(key_2));
     println!("Derived K_KEY 3: {}", hex::encode(key_3));
     println!("Derived K_KEY 4: {}", hex::encode(key_4));
-    println!("H_K Commitment 1: {}", hex::encode(&h_k_1_calculated));
-    println!("H_K Commitment 2: {}", hex::encode(&h_k_2_calculated));
-    println!("H_K Commitment 3: {}", hex::encode(&h_k_3_calculated));
-    println!("H_K Commitment 4: {}", hex::encode(&h_k_4_calculated));
+    println!("H_K Commitment 1: {}", hex::encode(&h_k_1_calculated.as_bytes().to_vec()));
+    println!("H_K Commitment 2: {}", hex::encode(&h_k_2_calculated.as_bytes().to_vec()));
+    println!("H_K Commitment 3: {}", hex::encode(&h_k_3_calculated.as_bytes().to_vec()));
+    println!("H_K Commitment 4: {}", hex::encode(&h_k_4_calculated.as_bytes().to_vec()));
 
     // 生成 chacha8 加密 nonce
     let binding = derive_nonce(&key_1, &msg_hash);
@@ -194,6 +212,38 @@ fn main() {
 
     println!("✔ Proof generated successfully!");
 
+    // idle
+    if args.idle {
+        write_fixture_args(
+            key_length as u32,
+            format!("0x{}", hex::encode(h_orig_block.as_bytes())),
+            vec![
+                format!("0x{}", hex::encode(h_k_1_calculated.as_bytes())),
+                format!("0x{}", hex::encode(h_k_2_calculated.as_bytes())),
+                format!("0x{}", hex::encode(h_k_3_calculated.as_bytes())),
+                format!("0x{}", hex::encode(h_k_4_calculated.as_bytes()))
+            ],
+            vec![
+                format!("0x{}", hex::encode(nonce_1_ref)),
+                format!("0x{}", hex::encode(nonce_2_ref)),
+                format!("0x{}", hex::encode(nonce_3_ref)),
+                format!("0x{}", hex::encode(nonce_4_ref))
+            ],
+            &vk,
+            args.system
+        );
+        return;
+    }
+
+    let proof: SP1ProofWithPublicValues = (
+        match args.system {
+            ProofSystem::Plonk => client.prove(&pk, &stdin).compressed().plonk().run(),
+            ProofSystem::Groth16 => client.prove(&pk, &stdin).compressed().groth16().run(),
+        }
+    ).expect("failed to generate proof");
+
+    println!("✔ Proof generated successfully!");
+
     // -----------------------------------------
     // 4. Decode public outputs (ChaCha8)
     // -----------------------------------------
@@ -213,32 +263,91 @@ fn main() {
     // -----------------------------------------
     // 5. Write fixture json (for Solidity)
     // -----------------------------------------
-    write_fixture(&proof, &vk, args.system);
+    write_fixture(
+        key_length as u32,
+        format!("0x{}", hex::encode(h_orig_block.as_bytes())),
+        vec![
+            format!("0x{}", hex::encode(h_k_1_calculated.as_bytes())),
+            format!("0x{}", hex::encode(h_k_2_calculated.as_bytes())),
+            format!("0x{}", hex::encode(h_k_3_calculated.as_bytes())),
+            format!("0x{}", hex::encode(h_k_4_calculated.as_bytes()))
+        ],
+        vec![
+            format!("0x{}", hex::encode(nonce_1_ref)),
+            format!("0x{}", hex::encode(nonce_2_ref)),
+            format!("0x{}", hex::encode(nonce_3_ref)),
+            format!("0x{}", hex::encode(nonce_4_ref))
+        ],
+        &proof,
+        &vk,
+        args.system
+    );
 }
 
 /// Save the proof fixture for Solidity.
-fn write_fixture(proof: &SP1ProofWithPublicValues, vk: &SP1VerifyingKey, system: ProofSystem) {
+fn write_fixture(
+    length: u32,
+    h_orig_block: String,
+    h_k_commitment: Vec<String>,
+    nonce: Vec<String>,
+    proof: &SP1ProofWithPublicValues,
+    vk: &SP1VerifyingKey,
+    system: ProofSystem
+) {
     let public_values_hex = format!("0x{}", hex::encode(proof.public_values.as_slice()));
     let proof_hex = format!("0x{}", hex::encode(proof.bytes()));
     let vkey_hex = vk.bytes32().to_string();
 
-    let fixture = SP1ChaCha8ProofFixture {
+    let fixture = SP1CVSSProofFixture {
+        length: length,
+        hOrigBlock: h_orig_block,
+        hKCommitment: h_k_commitment,
+        nonce: nonce,
         vkey: vkey_hex,
         public_values: public_values_hex,
         proof: proof_hex,
     };
 
-    let fixture_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
 
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
     let filename = format!("{:?}-fixture.json", system).to_lowercase();
 
-    std::fs::write(
-        fixture_path.join(filename),
-        serde_json::to_string_pretty(&fixture).unwrap(),
-    )
-    .expect("failed to write fixture");
+    std::fs
+        ::write(fixture_path.join(filename), serde_json::to_string_pretty(&fixture).unwrap())
+        .expect("failed to write fixture");
+
+    println!("✔ Fixture saved for Solidity");
+}
+
+fn write_fixture_args(
+    length: u32,
+    h_orig_block: String,
+    h_k_commitment: Vec<String>,
+    nonce: Vec<String>,
+    vk: &SP1VerifyingKey,
+    system: ProofSystem
+) {
+    let vkey_hex = vk.bytes32().to_string();
+
+    let fixture = SP1CVSSProofFixture {
+        length: length,
+        hOrigBlock: h_orig_block,
+        hKCommitment: h_k_commitment,
+        nonce: nonce,
+        vkey: vkey_hex,
+        public_values: "".to_string(),
+        proof: "".to_string(),
+    };
+
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
+
+    std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
+    let filename = format!("{:?}-fixture.json", system).to_lowercase();
+
+    std::fs
+        ::write(fixture_path.join(filename), serde_json::to_string_pretty(&fixture).unwrap())
+        .expect("failed to write fixture");
 
     println!("✔ Fixture saved for Solidity");
 }

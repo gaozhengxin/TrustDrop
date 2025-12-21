@@ -3,18 +3,18 @@ pragma solidity ^0.8.20;
 
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 
-library HVSSPublicValues {
-    struct HVSSPublicValuesStruct {
+library VSSPublicValues {
+    struct VSSPublicValuesStruct {
         uint64 length;
         bytes32 hOrigBlock;
         bytes32[] cipherBlock;
         bytes32[] hKCommitment;
-        uint32[] nonce;
+        bytes12[] nonce;
     }
 
-    function decodeHVSS(
+    function decodeVSS(
         bytes memory data
-    ) internal pure returns (HVSSPublicValuesStruct memory r) {
+    ) internal pure returns (VSSPublicValuesStruct memory r) {
         uint256 slot = 0;
         uint256 ptr;
 
@@ -99,25 +99,24 @@ library HVSSPublicValues {
             slot += 1;
         }
 
-        r.nonce = new uint32[](nonceLen);
+        r.nonce = new bytes12[](nonceLen);
 
         // ---- nonce[i] ----
         for (uint256 i = 0; i < nonceLen; i++) {
-            uint256 w;
+            bytes32 w;
             assembly {
                 w := mload(add(ptr, mul(add(slot, i), 32)))
             }
-            r.nonce[i] = uint32(w);
+            r.nonce[i] = bytes12(w);
         }
-        slot += nonceLen;
 
         return r;
     }
 }
 
-/// @title HVSS.
-contract HVSS {
-    using HVSSPublicValues for bytes;
+/// @title VSS.
+contract VSS {
+    using VSSPublicValues for bytes;
 
     /// @notice The address of the SP1 verifier contract.
     /// @dev This can either be a specific SP1Verifier for a specific version, or the
@@ -137,17 +136,17 @@ contract HVSS {
     /// @notice The entrypoint for verifying the proof of a fibonacci number.
     /// @param _proofBytes The encoded proof.
     /// @param _publicValues The encoded public values.
-    function verifyHVSSProof(
+    function verifyVSSProof(
         bytes calldata _publicValues,
         bytes calldata _proofBytes
-    ) public view returns (HVSSPublicValues.HVSSPublicValuesStruct memory) {
+    ) public view returns (VSSPublicValues.VSSPublicValuesStruct memory) {
         ISP1Verifier(verifier).verifyProof(
             hVSSProgramVKey,
             _publicValues,
             _proofBytes
         );
-        HVSSPublicValues.HVSSPublicValuesStruct
-            memory publicValues = _publicValues.decodeHVSS();
+        VSSPublicValues.VSSPublicValuesStruct
+            memory publicValues = _publicValues.decodeVSS();
         return publicValues;
     }
 }
