@@ -55,7 +55,7 @@ fn main() {
     let client = ProverClient::from_env();
 
     // === Prepare inputs on host ===
-    const ORIGIN_SIZE: u32 = 100;
+    const ORIGIN_SIZE: u32 = 1 * 1024 * 1024;
 
     let mut origin = vec![0u8; ORIGIN_SIZE.try_into().unwrap()];
     rand::thread_rng().fill_bytes(&mut origin);

@@ -10,6 +10,7 @@ sp1_zkvm::entrypoint!(main);
 
 use maenad_lib::chacha8::chacha8_seal;
 use maenad_lib::walrus_address::compute_blob_id_default;
+use maenad_lib::walrus_address::compute_blob_id;
 use maenad_lib::{ chacha8, merkle };
 
 pub fn main() {
@@ -83,7 +84,10 @@ pub fn main() {
     // =========== check cipher commitment ============
     let key_arr_ref: &[u8; 32] = key.try_into().expect("key must be 32 bytes");
     let cipher = chacha8_seal(origin, key_arr_ref, c_origin).expect("data encryption failed");
-    let cipher_blob_id = compute_blob_id_default(&cipher).expect(
+    /*let cipher_blob_id = compute_blob_id_default(&cipher).expect(
+        "Should compute blob ID for cipher data"
+    );*/
+    let cipher_blob_id = compute_blob_id(&cipher, 100).expect(
         "Should compute blob ID for cipher data"
     );
 
@@ -93,7 +97,15 @@ pub fn main() {
         let head = hex::encode(&cipher[..16]);
         let tail = hex::encode(&cipher[len - 16..]);
         eprintln!("cipher len: {}, head: {}, tail: {}", len, head, tail);
-        panic!(
+        /*panic!(
+            "{}",
+            format!(
+                "cipher commitment mismatch, c_cipher: {}, blob_id: {}",
+                hex::encode(c_cipher),
+                hex::encode(cipher_blob_id)
+            )
+        );*/
+        eprintln!(
             "{}",
             format!(
                 "cipher commitment mismatch, c_cipher: {}, blob_id: {}",

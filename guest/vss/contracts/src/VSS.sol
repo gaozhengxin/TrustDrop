@@ -126,11 +126,11 @@ contract VSS {
     address public verifier;
 
     /// @notice The verification key for the fibonacci program.
-    bytes32 public hVSSProgramVKey;
+    bytes32 public VSSProgramVKey;
 
-    constructor(address _verifier, bytes32 _hVSSProgramVKey) {
+    constructor(address _verifier, bytes32 _VSSProgramVKey) {
         verifier = _verifier;
-        hVSSProgramVKey = _hVSSProgramVKey;
+        VSSProgramVKey = _VSSProgramVKey;
     }
 
     /// @notice The entrypoint for verifying the proof of a fibonacci number.
@@ -141,7 +141,7 @@ contract VSS {
         bytes calldata _proofBytes
     ) public view returns (VSSPublicValues.VSSPublicValuesStruct memory) {
         ISP1Verifier(verifier).verifyProof(
-            hVSSProgramVKey,
+            VSSProgramVKey,
             _publicValues,
             _proofBytes
         );

@@ -23,6 +23,7 @@ use sp1_sdk::{
     SP1VerifyingKey,
 };
 use sp1_sdk::network::NetworkMode;
+use sp1_sdk::network::FulfillmentStrategy;
 use std::path::PathBuf;
 
 use dotenv::dotenv;
@@ -61,7 +62,7 @@ enum ProofSystem {
 /// JSON fixture format for Solidity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SP1CVSSProofFixture {
+struct SP1VSSProofFixture {
     length: u32,
     hOrigBlock: String,
     hKCommitment: Vec<String>,
@@ -78,7 +79,6 @@ fn main() {
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    //std::env::set_var("NETWORK_PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000000000");
     let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
     //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
@@ -204,15 +204,6 @@ fn main() {
     // -----------------------------------------
     let (pk, vk) = client.setup(VSS_ELF);
 
-    let proof: SP1ProofWithPublicValues = (
-        match args.system {
-            ProofSystem::Plonk => client.prove(&pk, &stdin).plonk().run(),
-            ProofSystem::Groth16 => client.prove(&pk, &stdin).groth16().run(),
-        }
-    ).expect("failed to generate proof");
-
-    println!("✔ Proof generated successfully!");
-
     // idle
     if args.idle {
         write_fixture_args(
@@ -238,8 +229,22 @@ fn main() {
 
     let proof: SP1ProofWithPublicValues = (
         match args.system {
-            ProofSystem::Plonk => client.prove(&pk, &stdin).compressed().plonk().run(),
-            ProofSystem::Groth16 => client.prove(&pk, &stdin).compressed().groth16().run(),
+            ProofSystem::Plonk =>
+                client
+                    .prove(&pk, &stdin)
+                    .compressed()
+                    .strategy(FulfillmentStrategy::Auction)
+                    .max_price_per_pgu(1_000_000u64)
+                    .plonk()
+                    .run(),
+            ProofSystem::Groth16 =>
+                client
+                    .prove(&pk, &stdin)
+                    .compressed()
+                    .strategy(FulfillmentStrategy::Auction)
+                    .max_price_per_pgu(1_000_000u64)
+                    .groth16()
+                    .run(),
         }
     ).expect("failed to generate proof");
 
@@ -299,7 +304,7 @@ fn write_fixture(
     let proof_hex = format!("0x{}", hex::encode(proof.bytes()));
     let vkey_hex = vk.bytes32().to_string();
 
-    let fixture = SP1CVSSProofFixture {
+    let fixture = SP1VSSProofFixture {
         length: length,
         hOrigBlock: h_orig_block,
         hKCommitment: h_k_commitment,
@@ -331,7 +336,7 @@ fn write_fixture_args(
 ) {
     let vkey_hex = vk.bytes32().to_string();
 
-    let fixture = SP1CVSSProofFixture {
+    let fixture = SP1VSSProofFixture {
         length: length,
         hOrigBlock: h_orig_block,
         hKCommitment: h_k_commitment,
