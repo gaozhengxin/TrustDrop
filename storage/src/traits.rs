@@ -6,7 +6,7 @@ use bytes::Bytes;
 use std::path::Path;
 use tokio::{ fs, io::{ self, AsyncRead, AsyncReadExt } };
 
-use crate::{ BlobId, BlobStatus, ClientConfig, StorageError };
+use crate::{ BlobId, BlobStatus, StorageError };
 
 /// StorageNetwork trait split into 7 public functions as requested.
 ///
@@ -19,9 +19,6 @@ use crate::{ BlobId, BlobStatus, ClientConfig, StorageError };
 /// - download_file: convenience (default: download -> write_file)
 #[async_trait]
 pub trait StorageNetwork: Send + Sync {
-    /// Reconfigure client
-    async fn configure(&mut self, cfg: ClientConfig);
-
     // ---------------------------------------------------------------------
     // 1. load_file: read disk file and return an AsyncRead boxed trait object.
     //    Default implementation returns a tokio::fs::File opened for reading.

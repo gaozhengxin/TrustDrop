@@ -3,6 +3,8 @@ pub mod config;
 pub mod types;
 pub mod traits;
 pub mod walrus;
+pub mod filecoin;
+pub mod cid;
 
 pub use errors::*;
 pub use config::*;

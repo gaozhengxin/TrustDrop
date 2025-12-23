@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
+dotenv = "0.15"
 reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -15,3 +16,7 @@ anyhow = "1.0.100"
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["io-util"] }
 
+cid = { version = "0.10", default-features = false, features = ["alloc"] }
+ipfs-unixfs = { version = "0.2", default-features = false }
+multihash = { version = "0.18.1", default-features = false }
+sha2 = "0.10.9"

@@ -1,4 +1,4 @@
-use storage::{ClientConfig, WalrusClient, StorageNetwork, BlobId};
+use storage::{ WalrusConfig, WalrusClient, StorageNetwork, BlobId };
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -75,7 +75,9 @@ async fn main() {
             let mut blob_arg: Option<String> = None;
             while let Some(a) = args.next() {
                 match a.as_str() {
-                    "--blob" => blob_arg = args.next(),
+                    "--blob" => {
+                        blob_arg = args.next();
+                    }
                     other => {
                         eprintln!("Unknown argument for status: {}", other);
                         std::process::exit(1);
@@ -108,8 +110,12 @@ async fn main() {
 
             while let Some(a) = args.next() {
                 match a.as_str() {
-                    "--blob" => blob_arg = args.next(),
-                    "--output" => output_arg = args.next(),
+                    "--blob" => {
+                        blob_arg = args.next();
+                    }
+                    "--output" => {
+                        output_arg = args.next();
+                    }
                     other => {
                         eprintln!("Unknown argument for download: {}", other);
                         std::process::exit(1);
@@ -148,8 +154,8 @@ async fn main() {
 }
 
 /// Default client config used by demo CLI
-fn default_config() -> ClientConfig {
-    ClientConfig {
+fn default_config() -> WalrusConfig {
+    WalrusConfig {
         publisher_url: "http://127.0.0.1:31415".into(),
         aggregator_url: "http://127.0.0.1:31415".into(),
         //aggregator_url: "https://walrus.blockscope.net".into(),

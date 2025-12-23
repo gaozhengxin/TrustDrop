@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{ Deserialize, Serialize };
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6,12 +6,20 @@ pub struct BlobId(pub String);
 
 #[derive(Debug, Clone)]
 pub enum BlobStatus {
-    /// Blob 存在，并包含若干元信息
+    /// Walrus Blob info
     Info {
         blob_id: String,
         start_epoch: u64,
         end_epoch: u64,
         size: u64,
+    },
+    // Filecoin (Lighthouse) deal info
+    InfoFC {
+        cid: String,
+        deal_id: u64,
+        start_epoch: u64,
+        end_epoch: u64,
+        status: String,
     },
     /// Blob 在 Walrus 中不存在（404）
     NotFound,
@@ -43,30 +51,34 @@ impl WalrusUploadResponse {
     pub fn from_json(v: Value) -> Result<Self, crate::StorageError> {
         if let Some(obj) = v.get("newlyCreated") {
             let blob_obj = obj.get("blobObject").unwrap();
-            Ok(Self::NewlyCreated(NewlyCreatedInfo {
-                blob_id: BlobId(blob_obj.get("blobId").unwrap().as_str().unwrap().into()),
-                end_epoch: blob_obj
-                    .get("storage")
-                    .unwrap()
-                    .get("endEpoch")
-                    .unwrap()
-                    .as_u64()
-                    .unwrap(),
-                sui_object_id: blob_obj.get("id").unwrap().as_str().unwrap().into(),
-            }))
+            Ok(
+                Self::NewlyCreated(NewlyCreatedInfo {
+                    blob_id: BlobId(blob_obj.get("blobId").unwrap().as_str().unwrap().into()),
+                    end_epoch: blob_obj
+                        .get("storage")
+                        .unwrap()
+                        .get("endEpoch")
+                        .unwrap()
+                        .as_u64()
+                        .unwrap(),
+                    sui_object_id: blob_obj.get("id").unwrap().as_str().unwrap().into(),
+                })
+            )
         } else if let Some(obj) = v.get("alreadyCertified") {
-            Ok(Self::AlreadyCertified(AlreadyCertifiedInfo {
-                blob_id: BlobId(obj.get("blobId").unwrap().as_str().unwrap().into()),
-                end_epoch: obj.get("endEpoch").unwrap().as_u64().unwrap(),
-                tx_digest: obj
-                    .get("event")
-                    .unwrap()
-                    .get("txDigest")
-                    .unwrap()
-                    .as_str()
-                    .unwrap()
-                    .into(),
-            }))
+            Ok(
+                Self::AlreadyCertified(AlreadyCertifiedInfo {
+                    blob_id: BlobId(obj.get("blobId").unwrap().as_str().unwrap().into()),
+                    end_epoch: obj.get("endEpoch").unwrap().as_u64().unwrap(),
+                    tx_digest: obj
+                        .get("event")
+                        .unwrap()
+                        .get("txDigest")
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                })
+            )
         } else {
             Err(crate::StorageError::Other("unknown walrus response".into()))
         }

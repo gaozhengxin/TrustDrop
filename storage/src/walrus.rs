@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tokio_util::io::StreamReader;
 use std::io;
 
-use crate::{ BlobId, BlobStatus, ClientConfig, StorageError, StorageNetwork, WalrusUploadResponse };
+use crate::{ BlobId, BlobStatus, WalrusConfig, StorageError, StorageNetwork, WalrusUploadResponse };
 
 /// WalrusClient implements the StorageNetwork trait you provided.
 ///
@@ -17,12 +17,12 @@ use crate::{ BlobId, BlobStatus, ClientConfig, StorageError, StorageNetwork, Wal
 /// - get_status  -> GET {blockberry_base}/v1/blobs/{blobId} with header x-api-key
 /// - download    -> GET {aggregator_url}/v1/blobs/{blobId} returning async reader
 pub struct WalrusClient {
-    pub cfg: ClientConfig,
+    pub cfg: WalrusConfig,
     http: Client,
 }
 
 impl WalrusClient {
-    pub fn new(cfg: ClientConfig) -> Self {
+    pub fn new(cfg: WalrusConfig) -> Self {
         let http: Client = Client::builder()
             //.pool_max_idle_per_host(0)
             //.http2_prior_knowledge()
@@ -33,6 +33,10 @@ impl WalrusClient {
             cfg,
             http,
         }
+    }
+
+    async fn configure(&mut self, cfg: WalrusConfig) {
+        self.cfg = cfg;
     }
 }
 
@@ -54,10 +58,6 @@ struct BlockberryMetadata {
 
 #[async_trait]
 impl StorageNetwork for WalrusClient {
-    async fn configure(&mut self, cfg: ClientConfig) {
-        self.cfg = cfg;
-    }
-
     /// Upload bytes. `extra` accepts optional string; for Walrus we expect
     /// extra may contain an epoch number as plain string (e.g. "8").
     /// Default epoch = 4.
@@ -133,7 +133,7 @@ impl StorageNetwork for WalrusClient {
         let body = resp.text().await.unwrap_or_else(|_| "<body parse failed>".into());
 
         // print for debug as you requested
-        println!("Blockberry status API [{}]: {}", status, body);
+        // println!("Blockberry status API [{}]: {}", status, body);
 
         match status {
             200 => {
