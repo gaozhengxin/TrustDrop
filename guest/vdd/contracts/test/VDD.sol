@@ -4,13 +4,13 @@ pragma solidity ^0.8.20;
 import {Test, console} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {VDD} from "../src/VDD.sol";
-import {VDDPublicValues} from "../src/VDDPublicValues.sol";
+import {VDDPublicValues} from "../src/VDD.sol";
 import {SP1VerifierGateway} from "@sp1-contracts/SP1VerifierGateway.sol";
 
 struct SP1ProofFixtureJson {
     bytes32 cOrigin;
     bytes32 cKey;
-    bytes32 cCipher;
+    bytes cCipher;
     uint32 dataLength;
     bytes proof;
     bytes publicValues;
@@ -33,7 +33,7 @@ contract VDDTest is Test {
         SP1ProofFixtureJson memory fixture;
         fixture.cOrigin = json.readBytes32(".cOrigin");
         fixture.cKey = json.readBytes32(".cKey");
-        fixture.cCipher = json.readBytes32(".cCipher");
+        fixture.cCipher = json.readBytes(".cCipher");
 
         fixture.dataLength = uint32(json.readUint(".dataLength"));
 
@@ -70,7 +70,11 @@ contract VDDTest is Test {
 
         assertEq(pv.cOrigin, fixture.cOrigin, "cOrigin mismatch");
         assertEq(pv.cKey, fixture.cKey, "cKey mismatch");
-        assertEq(pv.cCipher, fixture.cCipher, "cCipher mismatch");
+        assertEq(
+            keccak256(pv.cCipher),
+            keccak256(fixture.cCipher),
+            "cCipher mismatch"
+        );
         assertEq(pv.dataLength, fixture.dataLength, "dataLength mismatch");
     }
 

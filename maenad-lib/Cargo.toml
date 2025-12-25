@@ -32,3 +32,5 @@ base64 = { version = "0.22", default-features = false }
 #walrus-core = { git = "https://github.com/MystenLabs/walrus", default-features = false }
 bytes = "1.0"
 walrus_core = { path = "../walrus-core" }
+
+cid = "0.11"

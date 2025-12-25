@@ -99,6 +99,7 @@ async fn main() {
         }
 
         "cid" => {
+            use maenad_lib::cid;
             let mut input = None;
             while let Some(a) = args.next() {
                 if a == "--input" {
@@ -111,7 +112,7 @@ async fn main() {
             let data = std::fs::read(&path).expect("Failed to read file");
 
             // 调用 lib 里的计算函数
-            let cid_str = storage::cid::compute_lighthouse_cid(&data);
+            let cid_str = cid::compute_ipfs_cid(&data);
 
             println!("File: {}", path);
             println!("Size: {} bytes", data.len());

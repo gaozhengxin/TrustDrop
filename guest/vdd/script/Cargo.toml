@@ -2,19 +2,31 @@
 version = "0.1.0"
 name = "vdd-script"
 edition = "2021"
-default-run = "vdd"
+default-run = "vdd_filecoin"
 
 [[bin]]
-name = "vdd"
-path = "src/bin/main.rs"
+name = "vdd_filecoin"
+path = "src/bin/main_filecoin.rs"
 
 [[bin]]
-name = "evm"
-path = "src/bin/evm.rs"
+name = "vdd_walrus"
+path = "src/bin/main_walrus.rs"
 
 [[bin]]
-name = "vkey"
-path = "src/bin/vkey.rs"
+name = "evm_filecoin"
+path = "src/bin/evm_filecoin.rs"
+
+[[bin]]
+name = "evm_walrus"
+path = "src/bin/evm_walrus.rs"
+
+[[bin]]
+name = "vkey_filecoin"
+path = "src/bin/vkey_filecoin.rs"
+
+[[bin]]
+name = "vkey_walrus"
+path = "src/bin/vkey_walrus.rs"
 
 [dependencies]
 sp1-sdk = "5.0.8"
@@ -29,6 +41,7 @@ dotenv = "0.15.0"
 maenad-lib = { path = "../../../maenad-lib" }
 blake3 = "1.8.2"
 rand = "0.9.2"
+cid = "0.11"
 
 [build-dependencies]
 sp1-build = "5.0.8"

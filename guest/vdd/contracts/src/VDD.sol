@@ -7,44 +7,36 @@ library VDDPublicValues {
     struct VDDPublicValuesStruct {
         bytes32 cOrigin;
         bytes32 cKey;
-        bytes32 cCipher;
         uint256 dataLength;
+        bytes cCipher;
     }
 
     function decodeVDD(
         bytes memory data
     ) internal pure returns (VDDPublicValuesStruct memory r) {
-        require(data.length >= 100, "Invalid data length");
+        require(data.length >= 68, "Invalid data length");
 
-        uint256 ptr;
+        uint256 totalLen = data.length;
+        uint256 cipherLen = totalLen - 68; // 动态计算 CID 的长度
+
         assembly {
-            ptr := add(data, 32)
+            let ptr := add(data, 32)
+
+            mstore(r, mload(ptr))
+
+            mstore(add(r, 32), mload(add(ptr, 32)))
+
+            let lenPtr := add(ptr, sub(totalLen, 4))
+            let w := mload(lenPtr)
+            w := shr(224, w)
+            mstore(add(r, 64), w)
         }
 
-        // 1. cOrigin (32 bytes) - Offset 0
-        assembly {
-            r.cOrigin := mload(ptr)
+        bytes memory cipherBytes = new bytes(cipherLen);
+        for (uint256 i = 0; i < cipherLen; i++) {
+            cipherBytes[i] = data[i + 64];
         }
-
-        // 2. cKey (32 bytes) - Offset 32
-        assembly {
-            r.cKey := mload(add(ptr, 32))
-        }
-
-        // 3. cCipher (32 bytes) - Offset 64
-        assembly {
-            r.cCipher := mload(add(ptr, 64))
-        }
-
-        // 4. dataLength (u32 -> 4 bytes) - Offset 96
-        {
-            uint256 w;
-            assembly {
-                w := mload(add(ptr, 96))
-                w := shr(224, w)
-            }
-            r.dataLength = uint32(w);
-        }
+        r.cCipher = cipherBytes;
 
         return r;
     }

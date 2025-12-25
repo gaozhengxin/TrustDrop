@@ -13,25 +13,25 @@ pub struct WalrusConfig {
 // --- Filecoin (Lighthouse) 配置 ---
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FilecoinConfig {
-    pub url: String,
-    pub api_key: String,
+    pub ipfs_rpc_url: String,
     pub gateway_url: String,
+    pub lighthouse_api_key: String,
 }
 
 impl Default for FilecoinConfig {
     fn default() -> Self {
         Self {
-            url: "https://upload.lighthouse.storage/api/v0/add?cid-version=1".into(),
-            api_key: "".into(),
+            ipfs_rpc_url: "http://127.0.0.1:5001".into(),
             gateway_url: "https://gateway.lighthouse.storage/ipfs/".into(),
+            lighthouse_api_key: "".into(),
         }
     }
 }
 
 impl FilecoinConfig {
-    pub fn new(api_key: impl Into<String>) -> Self {
+    pub fn new(lighthouse_api_key: impl Into<String>) -> Self {
         Self {
-            api_key: api_key.into(),
+            lighthouse_api_key: lighthouse_api_key.into(),
             ..Default::default()
         }
     }

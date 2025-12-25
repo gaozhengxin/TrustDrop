@@ -6,6 +6,7 @@ pub mod poseidon;
 pub mod common;
 pub mod merkle;
 pub mod walrus_address;
+pub mod cid;
 
 #[cfg(test)]
 mod tests {

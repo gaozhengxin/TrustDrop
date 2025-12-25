@@ -16,7 +16,5 @@ anyhow = "1.0.100"
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["io-util"] }
 
-cid = { version = "0.10", default-features = false, features = ["alloc"] }
-ipfs-unixfs = { version = "0.2", default-features = false }
-multihash = { version = "0.18.1", default-features = false }
-sha2 = "0.10.9"
+maenad-lib = { path = "../maenad-lib" }
+unsigned-varint = "0.8.0"
