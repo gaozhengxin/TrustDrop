@@ -97,14 +97,11 @@ contract VSS {
         Types.Hash vssKeyCommitment,
         Types.Cipher32 encryptedVssKey
     ) internal {
-        require(isRegistered[user], "Not an audience");
+        _revokePrivyInternal(user);
         uint256 idx = audienceIndex[user];
 
         audienceList[idx].vssKeyCommitment = vssKeyCommitment;
         audienceList[idx].encryptedVssKey = encryptedVssKey;
-
-        // Clear bit in bitmap to revoke access to old version
-        privyBitmap &= ~(uint256(1) << idx);
 
         emit VssKeyUpdated(user, vssKeyCommitment);
     }
@@ -114,6 +111,13 @@ contract VSS {
 
         uint256 idx = audienceIndex[user];
         return (privyBitmap & (uint256(1) << idx)) != 0;
+    }
+
+    function _revokePrivyInternal(address user) internal {
+        require(isRegistered[user], "Not an audience");
+        uint256 idx = audienceIndex[user];
+
+        privyBitmap &= ~(uint256(1) << idx);
     }
 
     function submitDataKeyCommitment(Types.Hash _commitment) public onlyOwner {
@@ -148,20 +152,20 @@ contract VSS {
 
         version += 1;
 
-        uint256 newBitmap = 0;
+        uint256 updatedBitmap = privyBitmap;
 
         for (uint256 i = 0; i < audiences.length; i++) {
             address user = audiences[i];
 
             if (isRegistered[user]) {
                 uint256 idx = audienceIndex[user];
-                newBitmap |= (uint256(1) << idx);
+                updatedBitmap |= (uint256(1) << idx);
             }
         }
 
-        privyBitmap = newBitmap;
+        privyBitmap = updatedBitmap;
 
-        emit DataKeyShared(newBitmap, version);
+        emit DataKeyShared(updatedBitmap, version);
     }
 
     function transferOwner(address newOwner) public onlyOwner {

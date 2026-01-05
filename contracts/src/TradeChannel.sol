@@ -195,6 +195,8 @@ contract TradeChannel is VDD, ReentrancyGuard {
         );
         lockedBalances[buyer] -= info.price;
 
+        _revokePrivyInternal(buyer);
+
         payable(owner).transfer(info.price);
         hub.reportSettleEvent(buyer, info.saleDigest, info.dataCommitment);
     }
