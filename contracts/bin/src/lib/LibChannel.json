@@ -1,0 +1,251 @@
+{
+    "contractName": "LibChannel",
+    "abi": [],
+    "metadata": "{\"compiler\":{\"version\":\"0.8.33+commit.64118f21\"},\"language\":\"Solidity\",\"output\":{\"abi\":[],\"devdoc\":{\"kind\":\"dev\",\"methods\":{},\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"/Users/xiexie/playDM/prover/maenad/contracts/src/lib/LibChannel.sol\":\"LibChannel\"},\"evmVersion\":\"osaka\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\"},\"optimizer\":{\"enabled\":true,\"runs\":200},\"remappings\":[],\"viaIR\":true},\"sources\":{\"/Users/xiexie/playDM/prover/maenad/contracts/src/lib/LibChannel.sol\":{\"keccak256\":\"0xd240d8c4b2aeb4163bad50796d4aa7bc5e79e7ddc5ca68f0dbd5de5e94bae8b4\",\"urls\":[\"bzz-raw://402121d3099263b7b5b501da78a2dc5c7fbcacbadb35760b4c5708d8578d7ae6\",\"dweb:/ipfs/QmT8QSFRsw49Q7bZuvwooZNhpLyJQaSjwUYmpyNemb1JvM\"]},\"/Users/xiexie/playDM/prover/maenad/contracts/src/lib/Types.sol\":{\"keccak256\":\"0x288c7402c8385f52badbc32fea419f24b40389f84c3b9dfed5bdc280ce8df326\",\"urls\":[\"bzz-raw://4a0b458ccc997943be2a79da16d41bd02fbd86deb93c9261cc72d0948578f094\",\"dweb:/ipfs/QmNP77dAiK1nfZuFfNQGzc5ZL5sHan876BUEwEhxHvdufW\"]}},\"version\":1}",
+    "bytecode": "6080806040523460175760399081601c823930815050f35b5f80fdfe5f80fdfea26469706673582212207c1836c4bb32367bbf2e0c8e445009405be1339cf96f2d0091947b0609e989d264736f6c63430008210033",
+    "deployedBytecode": "5f80fdfea26469706673582212207c1836c4bb32367bbf2e0c8e445009405be1339cf96f2d0091947b0609e989d264736f6c63430008210033",
+    "sourceMap": "23:240:0:-:0;;;;;;;;;;;;;;;;;;;;;",
+    "deployedSourceMap": "23:240:0:-:0;;",
+    "sourcePath": "/Users/xiexie/playDM/prover/maenad/contracts/src/lib/LibChannel.sol",
+    "compiler": {
+        "name": "solc",
+        "version": "0.8.33+commit.64118f21"
+    },
+    "ast": {
+        "absolutePath": "/Users/xiexie/playDM/prover/maenad/contracts/src/lib/LibChannel.sol",
+        "exportedSymbols": {
+            "LibChannel": [
+                17
+            ],
+            "Types": [
+                87
+            ]
+        },
+        "id": 18,
+        "nodeType": "SourceUnit",
+        "nodes": [
+            {
+                "absolutePath": "/Users/xiexie/playDM/prover/maenad/contracts/src/lib/Types.sol",
+                "file": "./Types.sol",
+                "id": 1,
+                "nameLocation": "-1:-1:-1",
+                "nodeType": "ImportDirective",
+                "scope": 18,
+                "sourceUnit": 88,
+                "src": "0:21:0",
+                "symbolAliases": [],
+                "unitAlias": ""
+            },
+            {
+                "abstract": false,
+                "baseContracts": [],
+                "canonicalName": "LibChannel",
+                "contractDependencies": [],
+                "contractKind": "library",
+                "fullyImplemented": true,
+                "id": 17,
+                "linearizedBaseContracts": [
+                    17
+                ],
+                "name": "LibChannel",
+                "nameLocation": "31:10:0",
+                "nodeType": "ContractDefinition",
+                "nodes": [
+                    {
+                        "global": false,
+                        "id": 3,
+                        "libraryName": {
+                            "id": 2,
+                            "name": "Types",
+                            "nameLocations": [
+                                "54:5:0"
+                            ],
+                            "nodeType": "IdentifierPath",
+                            "referencedDeclaration": 87,
+                            "src": "54:5:0"
+                        },
+                        "nodeType": "UsingForDirective",
+                        "src": "48:18:0"
+                    },
+                    {
+                        "canonicalName": "LibChannel.ChannelMetadata",
+                        "id": 16,
+                        "members": [
+                            {
+                                "constant": false,
+                                "id": 6,
+                                "mutability": "mutable",
+                                "name": "hashType",
+                                "nameLocation": "120:8:0",
+                                "nodeType": "VariableDeclaration",
+                                "scope": 16,
+                                "src": "105:23:0",
+                                "stateVariable": false,
+                                "storageLocation": "default",
+                                "typeDescriptions": {
+                                    "typeIdentifier": "t_enum$_HashType_$21",
+                                    "typeString": "enum Types.HashType"
+                                },
+                                "typeName": {
+                                    "id": 5,
+                                    "nodeType": "UserDefinedTypeName",
+                                    "pathNode": {
+                                        "id": 4,
+                                        "name": "Types.HashType",
+                                        "nameLocations": [
+                                            "105:5:0",
+                                            "111:8:0"
+                                        ],
+                                        "nodeType": "IdentifierPath",
+                                        "referencedDeclaration": 21,
+                                        "src": "105:14:0"
+                                    },
+                                    "referencedDeclaration": 21,
+                                    "src": "105:14:0",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_enum$_HashType_$21",
+                                        "typeString": "enum Types.HashType"
+                                    }
+                                },
+                                "visibility": "internal"
+                            },
+                            {
+                                "constant": false,
+                                "id": 9,
+                                "mutability": "mutable",
+                                "name": "ownerKeyType",
+                                "nameLocation": "155:12:0",
+                                "nodeType": "VariableDeclaration",
+                                "scope": 16,
+                                "src": "138:29:0",
+                                "stateVariable": false,
+                                "storageLocation": "default",
+                                "typeDescriptions": {
+                                    "typeIdentifier": "t_enum$_PubkeyType_$26",
+                                    "typeString": "enum Types.PubkeyType"
+                                },
+                                "typeName": {
+                                    "id": 8,
+                                    "nodeType": "UserDefinedTypeName",
+                                    "pathNode": {
+                                        "id": 7,
+                                        "name": "Types.PubkeyType",
+                                        "nameLocations": [
+                                            "138:5:0",
+                                            "144:10:0"
+                                        ],
+                                        "nodeType": "IdentifierPath",
+                                        "referencedDeclaration": 26,
+                                        "src": "138:16:0"
+                                    },
+                                    "referencedDeclaration": 26,
+                                    "src": "138:16:0",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_enum$_PubkeyType_$26",
+                                        "typeString": "enum Types.PubkeyType"
+                                    }
+                                },
+                                "visibility": "internal"
+                            },
+                            {
+                                "constant": false,
+                                "id": 12,
+                                "mutability": "mutable",
+                                "name": "vssKeyType",
+                                "nameLocation": "200:10:0",
+                                "nodeType": "VariableDeclaration",
+                                "scope": 16,
+                                "src": "177:33:0",
+                                "stateVariable": false,
+                                "storageLocation": "default",
+                                "typeDescriptions": {
+                                    "typeIdentifier": "t_enum$_SynmetricKeyType_$23",
+                                    "typeString": "enum Types.SynmetricKeyType"
+                                },
+                                "typeName": {
+                                    "id": 11,
+                                    "nodeType": "UserDefinedTypeName",
+                                    "pathNode": {
+                                        "id": 10,
+                                        "name": "Types.SynmetricKeyType",
+                                        "nameLocations": [
+                                            "177:5:0",
+                                            "183:16:0"
+                                        ],
+                                        "nodeType": "IdentifierPath",
+                                        "referencedDeclaration": 23,
+                                        "src": "177:22:0"
+                                    },
+                                    "referencedDeclaration": 23,
+                                    "src": "177:22:0",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_enum$_SynmetricKeyType_$23",
+                                        "typeString": "enum Types.SynmetricKeyType"
+                                    }
+                                },
+                                "visibility": "internal"
+                            },
+                            {
+                                "constant": false,
+                                "id": 15,
+                                "mutability": "mutable",
+                                "name": "dataKeyType",
+                                "nameLocation": "243:11:0",
+                                "nodeType": "VariableDeclaration",
+                                "scope": 16,
+                                "src": "220:34:0",
+                                "stateVariable": false,
+                                "storageLocation": "default",
+                                "typeDescriptions": {
+                                    "typeIdentifier": "t_enum$_SynmetricKeyType_$23",
+                                    "typeString": "enum Types.SynmetricKeyType"
+                                },
+                                "typeName": {
+                                    "id": 14,
+                                    "nodeType": "UserDefinedTypeName",
+                                    "pathNode": {
+                                        "id": 13,
+                                        "name": "Types.SynmetricKeyType",
+                                        "nameLocations": [
+                                            "220:5:0",
+                                            "226:16:0"
+                                        ],
+                                        "nodeType": "IdentifierPath",
+                                        "referencedDeclaration": 23,
+                                        "src": "220:22:0"
+                                    },
+                                    "referencedDeclaration": 23,
+                                    "src": "220:22:0",
+                                    "typeDescriptions": {
+                                        "typeIdentifier": "t_enum$_SynmetricKeyType_$23",
+                                        "typeString": "enum Types.SynmetricKeyType"
+                                    }
+                                },
+                                "visibility": "internal"
+                            }
+                        ],
+                        "name": "ChannelMetadata",
+                        "nameLocation": "79:15:0",
+                        "nodeType": "StructDefinition",
+                        "scope": 17,
+                        "src": "72:189:0",
+                        "visibility": "public"
+                    }
+                ],
+                "scope": 18,
+                "src": "23:240:0",
+                "usedErrors": [],
+                "usedEvents": []
+            }
+        ],
+        "src": "0:263:0"
+    },
+    "functionHashes": {},
+    "gasEstimates": {
+        "creation": {
+            "codeDepositCost": "11400",
+            "executionCost": "infinite",
+            "totalCost": "infinite"
+        }
+    }
+}

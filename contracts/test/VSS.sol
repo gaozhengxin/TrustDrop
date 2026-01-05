@@ -5,7 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {VSS} from "../src/VSS.sol";
 
 contract CounterTest is Test {
-    VSS public hvss;
+    VSS public vss;
 
     function setUp() public {
     }
