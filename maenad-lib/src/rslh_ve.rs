@@ -66,6 +66,32 @@ pub fn verify_rslh_ve_combat(
     Ok(())
 }
 
+pub fn verify_rslh_ve_combat_raw(
+    key: &[u8; 32],
+    c_key: &[u8; 32],
+    c_origin_bytes: &[u8; 32],
+    c_cipher_bytes: &[u8; 32],
+    aux_data: &[u8],
+    total_shards: u32,
+    proofs: &[VeShardProof],
+) -> Result<(), &'static str> {
+    // 增加 [..] 显式转为切片 &[u8]
+    let c_origin = walrus_core::BlobId::try_from(&c_origin_bytes[..])
+        .map_err(|_| "c_origin_cast_err")?;
+    let c_cipher = walrus_core::BlobId::try_from(&c_cipher_bytes[..])
+        .map_err(|_| "c_cipher_cast_err")?;
+
+    verify_rslh_ve_combat(
+        key,
+        c_key,
+        &c_origin,
+        &c_cipher,
+        aux_data,
+        total_shards,
+        proofs,
+    )
+}
+
 fn verify_col_homomorphism(key: &[u8; 32], nonce: &[u8; 12], proof: &VeShardProof) -> Result<(), &'static str> {
     let mut p_ks = vec![0u8; SYMBOL_SIZE];
     let mut cipher = ChaCha8::new(Key::from_slice(key), Nonce::from_slice(nonce));
