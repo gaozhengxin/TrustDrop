@@ -1,4 +1,3 @@
 interface IOracleClient {
-    function onSuccess(bytes calldata cCipher) external;
-    function onFail(bytes calldata cCipher) external;
+    function onResponse(bytes memory cCipher, bytes memory response) external;
 }

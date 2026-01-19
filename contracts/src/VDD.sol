@@ -26,6 +26,8 @@ contract VDD is VSS, IOracleClient {
     // State 2: oracleSuccessUntil[cCipher] = timestamp.
     mapping(bytes => uint256) public oracleSuccessUntil;
 
+    uint256 public immutable GRACE_PERIOD = 3 days;
+
     event DataListed(bytes32 indexed dataId, uint256 size);
     event VDDProofSubmitted(bytes cCipher);
 
@@ -72,31 +74,62 @@ contract VDD is VSS, IOracleClient {
         // 1. data commitment
         // 2. dataKeyCommitment
         // 3. cCipher
-        require(verifier.verifyVDD(proof, publicValues), "VDD verification failed");
+        require(
+            verifier.verifyVDD(proof, publicValues),
+            "VDD verification failed"
+        );
 
         vddVerified[cCipher] = true;
 
-        oracleWrapper.request(cCipher);
+        oracleWrapper.request(cCipher, address(this));
         emit VDDProofSubmitted(cCipher);
     }
 
     function triggerOracle(bytes memory cCipher) public onlyOwner {
+        _triggerOracle(cCipher);
+    }
+
+    function _triggerOracle(bytes memory cCipher) internal {
         require(vddVerified[cCipher], "VDD not verified");
-        oracleWrapper.request(cCipher);
+        oracleWrapper.request(cCipher, address(this));
+    }
+
+    function onResponse(
+        bytes memory cCipher,
+        bytes memory response
+    ) external virtual {
+        if (response.length >= 64) {
+            (uint256 status, uint256 endTime) = abi.decode(
+                response,
+                (uint256, uint256)
+            );
+            assert(endTime < block.timestamp + 1000 days);
+            if (status == 2) {
+                // Ensured
+                onFail(cCipher);
+            }
+            if (status == 1) {
+                // Retriveable
+                onSuccess(cCipher, block.timestamp + GRACE_PERIOD);
+            }
+            if (status == 0) {
+                // Not retrievable
+                onSuccess(cCipher, endTime);
+            }
+        }
     }
 
     // Oracle 异步回调：验证成功
-    function onSuccess(bytes calldata cCipher) external virtual {
+    function onSuccess(bytes memory cCipher, uint256 endTime) internal {
         require(msg.sender == address(oracleWrapper), "Only oracle proxy");
         if (!vddVerified[cCipher]) {
             return;
         }
-        // TODO let oracle pass in actual life span
-        oracleSuccessUntil[cCipher] = block.timestamp + 30 days;
+        oracleSuccessUntil[cCipher] = block.timestamp + endTime;
     }
 
     // Oracle 异步回调：验证失败
-    function onFail(bytes calldata cCipher) external virtual {
+    function onFail(bytes memory cCipher) internal {
         require(msg.sender == address(oracleWrapper), "Only oracle proxy");
         if (!vddVerified[cCipher]) {
             return;

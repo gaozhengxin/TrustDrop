@@ -5,6 +5,7 @@ import "./TradeChannel.sol";
 import "./interfaces/ITradeHub.sol";
 
 contract TradeHub is ITradeHub {
+    address public immutable oracleWrapper;
     mapping(address => bool) public isRegisteredChannel;
 
     event TradeChannelCreated(address indexed owner, address indexed channel);
@@ -49,9 +50,12 @@ contract TradeHub is ITradeHub {
         _;
     }
 
+    constructor(address _oracleWrapper) {
+        oracleWrapper = _oracleWrapper;
+    }
+
     function createTradeChannel(
-        Types.Pubkey memory ownerPubKey,
-        address oracleWrapper
+        Types.Pubkey memory ownerPubKey
     ) public returns (address) {
         // TradeHub -> TradeChannel (One-way dependency in bytecode)
         TradeChannel newChannel = new TradeChannel(

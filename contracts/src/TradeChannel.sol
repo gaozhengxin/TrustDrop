@@ -25,7 +25,7 @@ struct TradeInfo {
     Types.Hash vssKeyCommitment;
 }
 
-abstract contract ReentrancyGuard {
+contract ReentrancyGuard {
     uint256 private constant _NOT_ENTERED = 1;
     uint256 private constant _ENTERED = 2;
 
@@ -159,7 +159,7 @@ contract TradeChannel is VDD, ReentrancyGuard {
         } else if (
             oracleSuccessUntil[vdd.cCipher] <= block.timestamp + LIVING_WINDOW
         ) {
-            triggerOracle(vdd.cCipher);
+            _triggerOracle(vdd.cCipher);
         }
     }
 
