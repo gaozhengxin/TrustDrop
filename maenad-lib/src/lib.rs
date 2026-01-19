@@ -7,6 +7,7 @@ pub mod common;
 pub mod merkle;
 pub mod walrus_address;
 pub mod cid;
+pub mod rslh_ve;
 
 #[cfg(test)]
 mod tests {
