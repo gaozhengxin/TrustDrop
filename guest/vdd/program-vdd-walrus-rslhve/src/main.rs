@@ -2,7 +2,7 @@
 sp1_zkvm::entrypoint!(main);
 
 use maenad_lib::rslh_ve::{
-    verify_rslh_ve_combat_raw, // 直接调用这个原始接口
+    verify_rslh_ve_combat_raw,
     VeShardProof, 
     ParityType,
     ROW_WIDTH_PRIMARY,

@@ -75,7 +75,6 @@ pub fn verify_rslh_ve_combat_raw(
     total_shards: u32,
     proofs: &[VeShardProof],
 ) -> Result<(), &'static str> {
-    // 增加 [..] 显式转为切片 &[u8]
     let c_origin = walrus_core::BlobId::try_from(&c_origin_bytes[..])
         .map_err(|_| "c_origin_cast_err")?;
     let c_cipher = walrus_core::BlobId::try_from(&c_cipher_bytes[..])
