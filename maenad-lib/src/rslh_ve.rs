@@ -125,6 +125,38 @@ pub fn derive_rslh_nonce(key: &[u8; 32], aux_data: &[u8]) -> [u8; 12] {
     n
 }
 
+pub fn create_honest_proof(key: &[u8; 32], nonce: &[u8; 12], idx: u32, origin: &[u8], cipher: &[u8]) -> VeShardProof {
+    let col_idx = idx % ROW_WIDTH_PRIMARY;
+    let mut p_m = vec![0u8; SYMBOL_SIZE];
+    let mut p_c = vec![0u8; SYMBOL_SIZE];
+    let mut chacha = ChaCha8::new(Key::from_slice(key), Nonce::from_slice(nonce));
+
+    for row in 0..COL_HEIGHT_SECONDARY {
+        let logic_idx = row * ROW_WIDTH_PRIMARY + col_idx;
+        let stream_idx = (logic_idx as u64) * KEYSTREAM_SYMBOL_STEP;
+        let data_pos = (logic_idx as usize) * SYMBOL_SIZE;
+        let beta = GF_EXP[((row as u64 * 1) % 255) as usize];
+
+        if data_pos < origin.len() {
+            let end = (data_pos + SYMBOL_SIZE).min(origin.len());
+            let len = end - data_pos;
+            for j in 0..len {
+                p_m[j] ^= gf256_mul_walrus(origin[data_pos + j], beta);
+                p_c[j] ^= gf256_mul_walrus(cipher[data_pos + j], beta);
+            }
+        } else {
+            let mut s = [0u8; SYMBOL_SIZE];
+            chacha.seek(stream_idx * 16);
+            chacha.apply_keystream(&mut s);
+            for j in 0..SYMBOL_SIZE { p_c[j] ^= gf256_mul_walrus(s[j], beta); }
+        }
+    }
+    VeShardProof {
+        global_index: idx, col_index: col_idx, parity_offset: 0,
+        origin_shard: p_m, cipher_shard: p_c, p_type: ParityType::Col
+    }
+}
+
 // --- [自动化测试：成功用例 + 失败用例] ---
 
 #[cfg(test)]
@@ -139,38 +171,6 @@ mod tests {
         let encoding_config = config.get_for_type(walrus_core::EncodingType::RS2);
         let metadata_with_id = encoding_config.compute_metadata(data)?;
         Ok(*metadata_with_id.blob_id())
-    }
-
-    fn create_honest_proof(key: &[u8; 32], nonce: &[u8; 12], idx: u32, origin: &[u8], cipher: &[u8]) -> VeShardProof {
-        let col_idx = idx % ROW_WIDTH_PRIMARY;
-        let mut p_m = vec![0u8; SYMBOL_SIZE];
-        let mut p_c = vec![0u8; SYMBOL_SIZE];
-        let mut chacha = ChaCha8::new(Key::from_slice(key), Nonce::from_slice(nonce));
-
-        for row in 0..COL_HEIGHT_SECONDARY {
-            let logic_idx = row * ROW_WIDTH_PRIMARY + col_idx;
-            let stream_idx = (logic_idx as u64) * KEYSTREAM_SYMBOL_STEP;
-            let data_pos = (logic_idx as usize) * SYMBOL_SIZE;
-            let beta = GF_EXP[((row as u64 * 1) % 255) as usize];
-
-            if data_pos < origin.len() {
-                let end = (data_pos + SYMBOL_SIZE).min(origin.len());
-                let len = end - data_pos;
-                for j in 0..len {
-                    p_m[j] ^= gf256_mul_walrus(origin[data_pos + j], beta);
-                    p_c[j] ^= gf256_mul_walrus(cipher[data_pos + j], beta);
-                }
-            } else {
-                let mut s = [0u8; SYMBOL_SIZE];
-                chacha.seek(stream_idx * 16);
-                chacha.apply_keystream(&mut s);
-                for j in 0..SYMBOL_SIZE { p_c[j] ^= gf256_mul_walrus(s[j], beta); }
-            }
-        }
-        VeShardProof {
-            global_index: idx, col_index: col_idx, parity_offset: 0,
-            origin_shard: p_m, cipher_shard: p_c, p_type: ParityType::Col
-        }
     }
 
     #[test]
