@@ -3,40 +3,35 @@ pragma solidity ^0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {VDD} from "../src/VDD.sol";
-import {VDDPublicValues} from "../src/VDD.sol";
+import {VDD_RSLH, VDD_RSLH_PublicValues} from "../src/VDD_RSLH.sol";
 import {SP1VerifierGateway} from "@sp1-contracts/SP1VerifierGateway.sol";
 
-struct SP1ProofFixtureJson {
+struct RSLHVEFixtureJson {
     bytes32 cOrigin;
     bytes32 cKey;
     bytes cCipher;
-    uint32 dataLength;
     bytes proof;
     bytes publicValues;
     bytes32 vkey;
 }
 
-contract VDDTest is Test {
+contract VDD_RSLHTest is Test {
     using stdJson for string;
 
     address verifier;
-    VDD public vdd;
+    VDD_RSLH public vddRslhve;
 
     function loadFixture(
         string memory fileName
-    ) public view returns (SP1ProofFixtureJson memory) {
+    ) public view returns (RSLHVEFixtureJson memory) {
         string memory root = vm.projectRoot();
         string memory path = string.concat(root, "/src/fixtures/", fileName);
         string memory json = vm.readFile(path);
 
-        SP1ProofFixtureJson memory fixture;
+        RSLHVEFixtureJson memory fixture;
         fixture.cOrigin = json.readBytes32(".cOrigin");
         fixture.cKey = json.readBytes32(".cKey");
         fixture.cCipher = json.readBytes(".cCipher");
-
-        fixture.dataLength = uint32(json.readUint(".dataLength"));
-
         fixture.vkey = json.readBytes32(".vkey");
         fixture.publicValues = json.readBytes(".publicValues");
         fixture.proof = json.readBytes(".proof");
@@ -45,17 +40,14 @@ contract VDDTest is Test {
     }
 
     function setUp() public {
-        SP1ProofFixtureJson memory fixture = loadFixture(
-            "vdd-filecoin-groth16-fixture.json"
-        );
+        RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
+        // Mock Verifier Gateway
         verifier = address(new SP1VerifierGateway(address(1)));
-        vdd = new VDD(verifier, fixture.vkey);
+        vddRslhve = new VDD_RSLH(verifier, fixture.vkey);
     }
 
-    function test_ValidVDDProof() public {
-        SP1ProofFixtureJson memory fixture = loadFixture(
-            "vdd-filecoin-groth16-fixture.json"
-        );
+    function test_ValidRSLHVEProof() public {
+        RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
 
         vm.mockCall(
             verifier,
@@ -63,28 +55,21 @@ contract VDDTest is Test {
             abi.encode(true)
         );
 
-        VDDPublicValues.VDDPublicValuesStruct memory pv = vdd.verifyVDDProof(
+        VDD_RSLH_PublicValues.VDD_RSLH_PublicValuesStruct memory pv = vddRslhve.verifyVDDProof(
             fixture.publicValues,
             fixture.proof
         );
 
         assertEq(pv.cOrigin, fixture.cOrigin, "cOrigin mismatch");
         assertEq(pv.cKey, fixture.cKey, "cKey mismatch");
-        assertEq(
-            keccak256(pv.cCipher),
-            keccak256(fixture.cCipher),
-            "cCipher mismatch"
-        );
-        assertEq(pv.dataLength, fixture.dataLength, "dataLength mismatch");
+        assertEq(keccak256(pv.cCipher), keccak256(fixture.cCipher), "cCipher mismatch");
     }
 
-    function testRevert_InvalidVDDProof() public {
-        SP1ProofFixtureJson memory fixture = loadFixture(
-            "vdd-filecoin-groth16-fixture.json"
-        );
+    function testRevert_InvalidRSLHVEProof() public {
+        RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
 
         vm.expectRevert();
         bytes memory fakeProof = new bytes(fixture.proof.length);
-        vdd.verifyVDDProof(fixture.publicValues, fakeProof);
+        vddRslhve.verifyVDDProof(fixture.publicValues, fakeProof);
     }
 }

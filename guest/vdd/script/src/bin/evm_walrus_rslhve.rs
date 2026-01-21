@@ -176,7 +176,7 @@ fn write_fixture_data(
     let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
     
-    let filename = format!("walrus-{:?}-fixture.json", system).to_lowercase();
+    let filename = format!("vdd-walrus-rslh-{:?}-fixture.json", system).to_lowercase();
     std::fs::write(
         fixture_path.join(filename),
         serde_json::to_string_pretty(&fixture).unwrap()
