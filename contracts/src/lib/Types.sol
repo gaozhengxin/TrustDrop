@@ -1,3 +1,4 @@
+pragma solidity ^0.8.13;
 library Types {
     enum HashType {
         SHA256, // 0
@@ -38,6 +39,10 @@ library Types {
 
     function neq(Hash a, Hash b) internal pure returns (bool) {
         return Hash.unwrap(a) != Hash.unwrap(b);
+    }
+
+    function unwrap(Hash _hash) internal pure returns (bytes32) {
+        return Hash.unwrap(_hash);
     }
 
     function toHash(bytes32 b) internal pure returns (Hash) {

@@ -1,7 +1,56 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.0 ^0.8.20;
 
-import {Ownable} from "../lib/Ownable.sol";
+// src/lib/Ownable.sol
+
+abstract contract Ownable {
+    address public owner;
+    address public pendingOwner;
+
+    event OwnershipTransferStarted(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
+    event OwnershipTransferred(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
+    event OwnershipTransferCanceled(address indexed pendingOwner);
+
+    constructor(address _owner) {
+        owner = _owner;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    function transferOwner(address newOwner) public virtual onlyOwner {
+        require(newOwner != address(0), "Invalid address");
+        require(newOwner != owner, "Already owner");
+
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function cancelTransfer() public virtual onlyOwner {
+        require(pendingOwner != address(0), "No pending transfer");
+
+        emit OwnershipTransferCanceled(pendingOwner);
+        pendingOwner = address(0);
+    }
+
+    function claimOwnership() public virtual {
+        require(msg.sender == pendingOwner, "Not the pending owner");
+
+        emit OwnershipTransferred(owner, pendingOwner);
+        owner = pendingOwner;
+        pendingOwner = address(0); // 清空状态
+    }
+}
+
+// src/oracle/OracleProxy.sol
 
 interface IFunctionsConsumer {
     function executeRequest(
@@ -86,7 +135,6 @@ contract OracleProxy is Ownable {
                 )
             );
             delete requests[requestId];
-            emit CallbackResult(requestId, success);
             return;
         }
 

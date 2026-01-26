@@ -2,9 +2,11 @@
 pragma solidity ^0.8.13;
 
 import "./lib/Types.sol";
-import "./interfaces/IVerifier.sol";
+import {Ownable} from "./lib/Ownable.sol";
+import {Pausable} from "./lib/Pausable.sol";
+import {IVSSVerifier} from "./interfaces/IVerifier.sol";
 
-contract VSS {
+contract VSS is Pausable {
     using Types for *;
 
     struct AudienceInfo {
@@ -12,46 +14,44 @@ contract VSS {
         Types.Cipher32 encryptedVssKey;
     }
 
-    // --- zk 验证器 ---
-    IVerifier public verifier;
+    // --- 常量 ---
+    uint256 public constant BUCKET_SIZE = 256;
 
     // --- 状态变量 ---
-    address public owner;
+    IVSSVerifier public vssVerifier;
     Types.Pubkey public ownerPublicKey;
     Types.Hash public dataKeyCommitment;
 
-    // 全局版本号：每次 shareDataKey 时自增
-    uint256 public version;
+    // 核心重构：从单 uint256 扩展为映射：bucketId => bitmap
+    mapping(uint256 => uint256) public privyBitmaps;
 
-    // 位图：每个 bit 代表一个观众是否在当前 version 中被授权
-    // bit n 为 1 表示 index 为 n 的观众有权限
-    uint256 public privyBitmap;
-
-    // 最大 256 人，索引 0-255
-    AudienceInfo[256] public audienceList;
+    // 索引管理
+    AudienceInfo[] public audienceList;
     mapping(address => uint256) public audienceIndex;
-    // 记录地址是否已注册，区分 index 0 和未注册
     mapping(address => bool) public isRegistered;
-    uint256 public nextAudienceIndex = 0;
 
     // --- 事件 ---
     event Joined(address indexed user, uint256 index);
-    event VssKeyUpdated(address indexed user, Types.Hash newVssKeyCommitment);
-    event DataKeyShared(uint256 newPrivyBitmap, uint256 newVersion);
+    event DataKeyShared(address[] audiences, Types.Cipher32[] encryptedDataKeys);
     event DataKeyCommitmentUpdated(Types.Hash newCommitment);
-    event OwnershipTransferred(
-        address indexed previousOwner,
-        address indexed newOwner
-    );
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
+    constructor(
+        Types.Pubkey memory _ownerPubKey,
+        address owner,
+        address _vssVerifier
+    ) Ownable(owner) {
+        ownerPublicKey = _ownerPubKey;
+        vssVerifier = IVSSVerifier(_vssVerifier);
     }
 
-    constructor(Types.Pubkey memory _ownerPubKey) {
-        owner = msg.sender;
+    function init_VSS(
+        Types.Pubkey memory _ownerPubKey,
+        address owner,
+        address _vssVerifier
+    ) internal {
+        init_owner(owner);
         ownerPublicKey = _ownerPubKey;
+        vssVerifier = IVSSVerifier(_vssVerifier);
     }
 
     // --- 内部逻辑 ---
@@ -61,17 +61,18 @@ contract VSS {
         Types.Hash vssKeyCommitment,
         Types.Cipher32 encryptedVssKey
     ) internal {
-        require(nextAudienceIndex < 256, "Audience list full");
         require(!isRegistered[user], "Audience exists");
 
-        uint256 idx = nextAudienceIndex++;
+        uint256 idx = audienceList.length;
         audienceIndex[user] = idx;
         isRegistered[user] = true;
 
-        audienceList[idx] = AudienceInfo({
-            vssKeyCommitment: vssKeyCommitment,
-            encryptedVssKey: encryptedVssKey
-        });
+        audienceList.push(
+            AudienceInfo({
+                vssKeyCommitment: vssKeyCommitment,
+                encryptedVssKey: encryptedVssKey
+            })
+        );
 
         emit Joined(user, idx);
     }
@@ -81,54 +82,30 @@ contract VSS {
     function join(
         Types.Hash vssKeyCommitment,
         Types.Cipher32 encryptedVssKey
-    ) external {
+    ) external virtual whenNotPaused {
         _addAudience(msg.sender, vssKeyCommitment, encryptedVssKey);
     }
 
-    function updateVssKey(
-        Types.Hash vssKeyCommitment,
-        Types.Cipher32 encryptedVssKey
-    ) public {
-        _updateVssKeyInternal(msg.sender, vssKeyCommitment, encryptedVssKey);
-    }
-
-    function _updateVssKeyInternal(
-        address user,
-        Types.Hash vssKeyCommitment,
-        Types.Cipher32 encryptedVssKey
-    ) internal {
-        _revokePrivyInternal(user);
-        uint256 idx = audienceIndex[user];
-
-        audienceList[idx].vssKeyCommitment = vssKeyCommitment;
-        audienceList[idx].encryptedVssKey = encryptedVssKey;
-
-        emit VssKeyUpdated(user, vssKeyCommitment);
-    }
-
     function isPrivy(address user) public view returns (bool) {
-        if (version == 0 || !isRegistered[user]) return false;
+        if (!isRegistered[user]) return false;
 
         uint256 idx = audienceIndex[user];
-        return (privyBitmap & (uint256(1) << idx)) != 0;
-    }
+        uint256 bucketId = idx / BUCKET_SIZE;
+        uint256 offset = idx % BUCKET_SIZE;
 
-    function _revokePrivyInternal(address user) internal {
-        require(isRegistered[user], "Not an audience");
-        uint256 idx = audienceIndex[user];
-
-        privyBitmap &= ~(uint256(1) << idx);
+        return (privyBitmaps[bucketId] & (uint256(1) << offset)) != 0;
     }
 
     function submitDataKeyCommitment(Types.Hash _commitment) public onlyOwner {
+        if (Types.Hash.unwrap(dataKeyCommitment) != bytes32(0)) {
+            revert("Cannot submit data key commitment again");
+        }
         dataKeyCommitment = _commitment;
         emit DataKeyCommitmentUpdated(_commitment);
     }
 
     /**
      * @notice 分发数据密钥并同步更新位图
-     * @param audiences 此次获得授权的观众地址列表
-     * @param encryptedDataKeys 对应的加密数据密钥
      */
     function shareDataKey(
         bytes calldata proof,
@@ -141,36 +118,32 @@ contract VSS {
             "Mismatched input"
         );
 
-        // TODO verify public values
-        // 1. origin msg hash
-        // 2. vssKeyCommitment
-        // 3. encryptedDataKeys
+        bytes32[] memory pubkeys = new bytes32[](audiences.length);
+        for (uint256 i = 0; i < audiences.length; i++) {
+            require(isRegistered[audiences[i]], "Unregistered");
+            pubkeys[i] = audienceList[audienceIndex[audiences[i]]].vssKeyCommitment.unwrap();
+        }
+
+        bytes32 bindingHash = keccak256(
+            abi.encode(dataKeyCommitment, pubkeys, encryptedDataKeys)
+        );
+
         require(
-            verifier.verifyVSS(proof, publicValues),
+            vssVerifier.verifyVSS(proof, publicValues, bindingHash),
             "VSS verification failed"
         );
 
-        version += 1;
-
-        uint256 updatedBitmap = privyBitmap;
-
         for (uint256 i = 0; i < audiences.length; i++) {
             address user = audiences[i];
-
             if (isRegistered[user]) {
                 uint256 idx = audienceIndex[user];
-                updatedBitmap |= (uint256(1) << idx);
+                uint256 bucketId = idx / BUCKET_SIZE;
+                uint256 offset = idx % BUCKET_SIZE;
+
+                privyBitmaps[bucketId] |= (uint256(1) << offset);
             }
         }
 
-        privyBitmap = updatedBitmap;
-
-        emit DataKeyShared(updatedBitmap, version);
-    }
-
-    function transferOwner(address newOwner) public onlyOwner {
-        require(newOwner != address(0), "Invalid address");
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+        emit DataKeyShared(audiences, encryptedDataKeys);
     }
 }

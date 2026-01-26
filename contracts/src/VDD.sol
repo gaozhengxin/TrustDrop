@@ -2,8 +2,10 @@
 pragma solidity ^0.8.13;
 
 import "./VSS.sol";
+import {Types} from "./lib/Types.sol";
 import "./interfaces/IOracleClient.sol";
 import "./interfaces/IOracleProxy.sol";
+import {IVDDVerifier} from "./interfaces/IVerifier.sol";
 
 contract VDD is VSS, IOracleClient {
     using Types for *;
@@ -12,10 +14,11 @@ contract VDD is VSS, IOracleClient {
 
     struct DataInfo {
         Types.DataCommitment commitment;
-        uint256 size;
-        string info;
         uint256 timestamp;
     }
+
+    // --- zk 验证器 ---
+    IVDDVerifier public vddVerifier;
 
     // 使用 commitment 的哈希值作为 key
     mapping(bytes32 => DataInfo) public dataInfoList;
@@ -26,62 +29,110 @@ contract VDD is VSS, IOracleClient {
     // State 2: oracleSuccessUntil[cCipher] = timestamp.
     mapping(bytes => uint256) public oracleSuccessUntil;
 
-    uint256 public immutable GRACE_PERIOD = 3 days;
+    uint256 public immutable GRACE_PERIOD = 1 days;
 
-    event DataListed(bytes32 indexed dataId, uint256 size);
+    // lastOracleRequestAt[cCipher] = timestamp
+    mapping(bytes => uint256) public lastOracleRequestAt;
+
+    mapping(bytes32 => uint256) public dataReferenceCount;
+
+    uint256 public constant ORACLE_COOLDOWN = 1 minutes;
+
+    event DataListed(bytes32 indexed dataId);
+    event DataDelisted(bytes32 indexed dataId);
     event VDDProofSubmitted(bytes cCipher);
+    event OracleRequestSkipped(bytes cCipher, string msg);
 
     constructor(
         Types.Pubkey memory _ownerPubKey,
-        address _oracleWrapper
-    ) VSS(_ownerPubKey) {
+        address _oracleWrapper,
+        address _owner,
+        address _vssVerifier,
+        address _vddVerifier
+    ) VSS(_ownerPubKey, _owner, _vssVerifier) {
         oracleWrapper = IOracleProxy(_oracleWrapper);
+        vddVerifier = IVDDVerifier(_vddVerifier);
+    }
+
+    function init_VDD(
+        Types.Pubkey memory _ownerPubKey,
+        address _oracleWrapper,
+        address _owner,
+        address _vssVerifier,
+        address _vddVerifier
+    ) internal {
+        init_VSS(_ownerPubKey, _owner, _vssVerifier);
+        oracleWrapper = IOracleProxy(_oracleWrapper);
+        vddVerifier = IVDDVerifier(_vddVerifier);
+    }
+
+    function getDataId(
+        bytes memory dataCommitment
+    ) public pure returns (bytes32) {
+        return keccak256(dataCommitment);
     }
 
     // 根据 commitment 原始字节查询
-    function retrieveDataInfo(
+    function retrieveDataInfoById(
         bytes memory commitment
     ) public view returns (DataInfo memory) {
-        bytes32 dataId = keccak256(commitment);
+        bytes32 dataId = getDataId(commitment);
         return dataInfoList[dataId];
     }
 
     // 由 Owner 上架数据元信息
     function listDataInfo(
-        Types.DataCommitment memory _commitment,
-        uint256 _size,
-        string memory _info
-    ) public onlyOwner {
-        bytes32 dataId = keccak256(_commitment.data);
-        dataInfoList[dataId] = DataInfo({
-            commitment: _commitment,
-            size: _size,
-            info: _info,
-            timestamp: block.timestamp
-        });
-        emit DataListed(dataId, _size);
+        Types.DataCommitment memory _commitment
+    ) public onlyOwner returns (bytes32) {
+        return _listDataInfo(_commitment);
+    }
+
+    function _listDataInfo(
+        Types.DataCommitment memory _commitment
+    ) internal whenNotPaused returns (bytes32) {
+        bytes32 dataId = getDataId(_commitment.data);
+        if (dataReferenceCount[dataId] == 0) {
+            dataInfoList[dataId] = DataInfo({
+                commitment: _commitment,
+                timestamp: block.timestamp
+            });
+        }
+        dataReferenceCount[dataId]++;
+        emit DataListed(dataId);
+        return dataId;
+    }
+
+    /**
+     * @notice Owner cannot delist data directly, extra logic required.
+     */
+    function _delistDataInfo(bytes32 dataId) internal whenNotPaused {
+        dataReferenceCount[dataId]--;
+        if (dataReferenceCount[dataId] == 0) {
+            delete dataInfoList[dataId];
+        }
+        emit DataDelisted(dataId);
     }
 
     // 提交 VDD 证明并触发 Oracle 检查
     function submitVDDProof(
         bytes calldata proof,
         bytes calldata publicValues,
-        bytes calldata dataCommitment,
+        bytes calldata cOrigin,
         bytes memory cCipher // 加密后的密文，用于 Oracle 校验存储节点
     ) public onlyOwner {
+        bytes32 bindHash = keccak256(
+            abi.encode(cOrigin, dataKeyCommitment, cCipher)
+        );
+        // ======
         // 1. ZK Verification
-        // TODO verify public values
-        // 1. data commitment
-        // 2. dataKeyCommitment
-        // 3. cCipher
         require(
-            verifier.verifyVDD(proof, publicValues),
+            vddVerifier.verifyVDD(proof, publicValues, bindHash),
             "VDD verification failed"
         );
 
         vddVerified[cCipher] = true;
 
-        oracleWrapper.request(cCipher, address(this));
+        _triggerOracle(cCipher);
         emit VDDProofSubmitted(cCipher);
     }
 
@@ -91,6 +142,13 @@ contract VDD is VSS, IOracleClient {
 
     function _triggerOracle(bytes memory cCipher) internal {
         require(vddVerified[cCipher], "VDD not verified");
+
+        if (block.timestamp < lastOracleRequestAt[cCipher] + ORACLE_COOLDOWN) {
+            emit OracleRequestSkipped(cCipher, "Cooldown active");
+            return;
+        }
+
+        lastOracleRequestAt[cCipher] = block.timestamp;
         oracleWrapper.request(cCipher, address(this));
     }
 
@@ -98,24 +156,36 @@ contract VDD is VSS, IOracleClient {
         bytes memory cCipher,
         bytes memory response
     ) external virtual {
-        if (response.length >= 64) {
-            (uint256 status, uint256 endTime) = abi.decode(
-                response,
-                (uint256, uint256)
-            );
-            assert(endTime < block.timestamp + 1000 days);
-            if (status == 2) {
-                // Ensured
-                onFail(cCipher);
-            }
-            if (status == 1) {
-                // Retriveable
-                onSuccess(cCipher, block.timestamp + GRACE_PERIOD);
-            }
-            if (status == 0) {
-                // Not retrievable
-                onSuccess(cCipher, endTime);
-            }
+        require(msg.sender == address(oracleWrapper), "Only oracle proxy");
+
+        // 1. 基础长度校验，防止 abi.decode 溢出或报错
+        require(response.length == 64, "Invalid response length");
+
+        (uint256 status, uint256 endTime) = abi.decode(
+            response,
+            (uint256, uint256)
+        );
+
+        // 2. 业务边界校验（注入防范）
+        // 防止 Oracle 返回一个极大的时间戳导致系统逻辑溢出
+        require(endTime < block.timestamp + 10 * 365 days, "EndTime too far");
+
+        // 3. 状态校验
+        if (status > 2) revert("Unknown status from oracle");
+
+        delete lastOracleRequestAt[cCipher];
+
+        if (status == 2) {
+            // Ensured
+            onSuccess(cCipher, endTime);
+        }
+        if (status == 1) {
+            // Retriveable
+            onSuccess(cCipher, block.timestamp + GRACE_PERIOD);
+        }
+        if (status == 0) {
+            // Not retrievable
+            onFail(cCipher);
         }
     }
 
@@ -125,7 +195,7 @@ contract VDD is VSS, IOracleClient {
         if (!vddVerified[cCipher]) {
             return;
         }
-        oracleSuccessUntil[cCipher] = block.timestamp + endTime;
+        oracleSuccessUntil[cCipher] = endTime;
     }
 
     // Oracle 异步回调：验证失败

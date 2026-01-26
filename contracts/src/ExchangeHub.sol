@@ -1,27 +1,43 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import "./TradeChannel.sol";
-import "./interfaces/ITradeHub.sol";
+import "./ExchangeChannel.sol";
+import "./interfaces/IExchangeHub.sol";
+import "./interfaces/IOracleProxy.sol";
+import "./interfaces/IVerifier.sol";
+import "./lib/Ownable.sol";
+import {ExchangeInfo} from "./ExchangeChannel.sol";
 
-contract TradeHub is ITradeHub {
-    address public immutable oracleWrapper;
+import "@openzeppelin/contracts/proxy/Clones.sol";
+
+contract ExchangeHub is IExchangeHub, Ownable {
+    address public immutable implementation;
+
+    IOracleProxy public immutable oracleWrapper;
+    IVSSVerifier vssVerifier;
+    IVDDVerifier vddVerifier;
+
     mapping(address => bool) public isRegisteredChannel;
 
-    event TradeChannelCreated(address indexed owner, address indexed channel);
+    event ExchangeChannelCreated(
+        address indexed owner,
+        address indexed channel
+    );
     event SaleListed(
         address indexed channel,
         bytes32 indexed saleId,
         bytes dataCommitment,
         uint256 price,
-        uint256 version
+        bytes32 version,
+        string info
     );
     event SaleUpdated(
         address indexed channel,
         bytes32 indexed saleId,
         bytes dataCommitment,
         uint256 newPrice,
-        uint256 version
+        bytes32 version,
+        string info
     );
     event SaleDelisted(address indexed channel, bytes32 indexed saleId);
     event PurchaseEvent(
@@ -29,7 +45,8 @@ contract TradeHub is ITradeHub {
         bytes32 indexed saleId,
         bytes dataCommitment,
         address indexed buyer,
-        uint256 price
+        uint256 price,
+        ExchangeInfo exchangeInfo
     );
     event SettleEvent(
         address indexed channel,
@@ -50,42 +67,67 @@ contract TradeHub is ITradeHub {
         _;
     }
 
-    constructor(address _oracleWrapper) {
-        oracleWrapper = _oracleWrapper;
+    constructor(
+        address _oracleWrapper,
+        address _vssVerifier,
+        address _vddVerifier,
+        address _implementation
+    ) Ownable(msg.sender) {
+        oracleWrapper = IOracleProxy(_oracleWrapper);
+        vssVerifier = IVSSVerifier(vssVerifier);
+        vddVerifier = IVDDVerifier(_vddVerifier);
+        implementation = _implementation;
     }
 
-    function createTradeChannel(
+    function createExchangeChannel(
         Types.Pubkey memory ownerPubKey
     ) public returns (address) {
-        // TradeHub -> TradeChannel (One-way dependency in bytecode)
-        TradeChannel newChannel = new TradeChannel(
+        address proxy = Clones.clone(implementation);
+        ExchangeChannelStorage(proxy).initialize(
             ownerPubKey,
-            oracleWrapper,
-            address(this)
+            address(oracleWrapper),
+            address(this),
+            msg.sender, // owner
+            address(vssVerifier),
+            address(vddVerifier)
         );
-        address channelAddr = address(newChannel);
-        isRegisteredChannel[channelAddr] = true;
 
-        emit TradeChannelCreated(msg.sender, channelAddr);
-        return channelAddr;
+        emit ExchangeChannelCreated(msg.sender, proxy);
+        return proxy;
     }
 
     function reportListEvent(
         bytes32 saleId,
         bytes memory dataCommitment,
         uint256 price,
-        uint256 version
+        bytes32 version,
+        string memory info
     ) external override onlyRegisteredChannel {
-        emit SaleListed(msg.sender, saleId, dataCommitment, price, version);
+        emit SaleListed(
+            msg.sender,
+            saleId,
+            dataCommitment,
+            price,
+            version,
+            info
+        );
     }
 
     function reportUpdateEvent(
         bytes32 saleId,
         bytes memory dataCommitment,
         uint256 newPrice,
-        uint256 version
+        bytes32 version,
+        string memory info
     ) external override onlyRegisteredChannel {
-        emit SaleUpdated(msg.sender, saleId, dataCommitment, newPrice, version);
+        emit SaleUpdated(
+            msg.sender,
+            saleId,
+            dataCommitment,
+            newPrice,
+            version,
+            info
+        );
     }
 
     function reportDelistEvent(
@@ -98,9 +140,17 @@ contract TradeHub is ITradeHub {
         bytes32 saleId,
         bytes memory dataCommitment,
         address buyer,
-        uint256 price
+        uint256 price,
+        ExchangeInfo memory exchangeInfo
     ) external override onlyRegisteredChannel {
-        emit PurchaseEvent(msg.sender, saleId, dataCommitment, buyer, price);
+        emit PurchaseEvent(
+            msg.sender,
+            saleId,
+            dataCommitment,
+            buyer,
+            price,
+            exchangeInfo
+        );
     }
 
     function reportSettleEvent(
