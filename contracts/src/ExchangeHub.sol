@@ -74,7 +74,7 @@ contract ExchangeHub is IExchangeHub, Ownable {
         address _implementation
     ) Ownable(msg.sender) {
         oracleWrapper = IOracleProxy(_oracleWrapper);
-        vssVerifier = IVSSVerifier(vssVerifier);
+        vssVerifier = IVSSVerifier(_vssVerifier);
         vddVerifier = IVDDVerifier(_vddVerifier);
         implementation = _implementation;
     }
@@ -92,6 +92,7 @@ contract ExchangeHub is IExchangeHub, Ownable {
             address(vddVerifier)
         );
 
+        isRegisteredChannel[proxy] = true;
         emit ExchangeChannelCreated(msg.sender, proxy);
         return proxy;
     }

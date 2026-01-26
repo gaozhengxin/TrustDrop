@@ -37,19 +37,19 @@ contract VSS is Pausable {
 
     constructor(
         Types.Pubkey memory _ownerPubKey,
-        address owner,
+        address _owner,
         address _vssVerifier
-    ) Ownable(owner) {
+    ) Ownable(_owner) {
         ownerPublicKey = _ownerPubKey;
         vssVerifier = IVSSVerifier(_vssVerifier);
     }
 
     function init_VSS(
         Types.Pubkey memory _ownerPubKey,
-        address owner,
+        address _owner,
         address _vssVerifier
     ) internal {
-        init_owner(owner);
+        init_owner(_owner);
         ownerPublicKey = _ownerPubKey;
         vssVerifier = IVSSVerifier(_vssVerifier);
     }

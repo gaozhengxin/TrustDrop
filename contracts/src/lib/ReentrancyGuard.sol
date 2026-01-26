@@ -1,10 +1,10 @@
 pragma solidity ^0.8.0;
 
 contract ReentrancyGuard {
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
+    uint256 private constant _NOT_ENTERED = 0;
+    uint256 private constant _ENTERED = 1;
 
-    uint256 private _status = _NOT_ENTERED;
+    uint256 private _status;
 
     modifier nonReentrant() {
         require(_status == _NOT_ENTERED, "ReentrancyGuard: reentrant call");

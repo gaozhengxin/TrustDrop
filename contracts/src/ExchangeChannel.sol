@@ -122,7 +122,6 @@ contract ExchangeChannelImplementation is ExchangeChannelStorage {
     function updateFile(
         bytes32 saleId,
         Types.DataCommitment memory _commitment,
-        uint256 _size,
         uint256 newPrice,
         string memory info
     ) public onlyOwner {

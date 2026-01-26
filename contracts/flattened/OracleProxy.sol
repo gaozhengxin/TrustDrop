@@ -21,6 +21,10 @@ abstract contract Ownable {
         owner = _owner;
     }
 
+    function init_owner(address _owner) internal {
+        owner = _owner;
+    }
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
         _;
@@ -98,7 +102,10 @@ contract OracleProxy is Ownable {
         controller = newController;
     }
 
-    function request(bytes memory c_cipher, address callback) external onlyWhitelisted(msg.sender) {
+    function request(
+        bytes memory c_cipher,
+        address callback
+    ) external onlyWhitelisted(msg.sender) {
         string[] memory args = new string[](1);
         args[0] = string(c_cipher);
 
@@ -127,7 +134,7 @@ contract OracleProxy is Ownable {
 
         // 如果 err 不为空，说明 DON 执行 JS 失败（API 报错、超时等）
         if (err.length > 0) {
-            (bool success, ) = ctx.client.call(
+            (bool success_err, ) = ctx.client.call(
                 abi.encodeWithSignature(
                     "onOracleError(bytes,bytes)",
                     ctx.cid,
@@ -135,6 +142,7 @@ contract OracleProxy is Ownable {
                 )
             );
             delete requests[requestId];
+            emit CallbackResult(requestId, success_err);
             return;
         }
 

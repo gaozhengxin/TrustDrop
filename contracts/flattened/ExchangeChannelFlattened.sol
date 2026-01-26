@@ -69,6 +69,10 @@ abstract contract Ownable {
         owner = _owner;
     }
 
+    function init_owner(address _owner) internal {
+        owner = _owner;
+    }
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Not owner");
         _;
@@ -242,18 +246,19 @@ contract VSS is Pausable {
 
     constructor(
         Types.Pubkey memory _ownerPubKey,
-        address owner,
+        address _owner,
         address _vssVerifier
-    ) Ownable(owner) {
+    ) Ownable(_owner) {
         ownerPublicKey = _ownerPubKey;
         vssVerifier = IVSSVerifier(_vssVerifier);
     }
 
     function init_VSS(
         Types.Pubkey memory _ownerPubKey,
-        address owner,
+        address _owner,
         address _vssVerifier
     ) internal {
+        init_owner(_owner);
         ownerPublicKey = _ownerPubKey;
         vssVerifier = IVSSVerifier(_vssVerifier);
     }
@@ -615,6 +620,7 @@ contract ExchangeChannelStorage is VDD, ReentrancyGuard {
         address vddVerifier
     ) VDD(_ownerPubKey, _oracleWrapper, _owner, vssVerifier, vddVerifier) {
         hub = IExchangeHub(_hub);
+        isInitialized = true;
     }
 
     function initialize(
@@ -634,6 +640,7 @@ contract ExchangeChannelStorage is VDD, ReentrancyGuard {
             vddVerifier
         );
         hub = IExchangeHub(_hub);
+        isInitialized = true;
     }
 }
 
@@ -682,7 +689,6 @@ contract ExchangeChannelImplementation is ExchangeChannelStorage {
     function updateFile(
         bytes32 saleId,
         Types.DataCommitment memory _commitment,
-        uint256 _size,
         uint256 newPrice,
         string memory info
     ) public onlyOwner {
