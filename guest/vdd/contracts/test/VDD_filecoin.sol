@@ -3,8 +3,8 @@ pragma solidity ^0.8.20;
 
 import {Test, console} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {VDD} from "../src/VDD.sol";
-import {VDDPublicValues} from "../src/VDD.sol";
+import {VDD} from "../src/VDD_filecoin.sol";
+import {VDDPublicValues} from "../src/VDD_filecoin.sol";
 import {SP1VerifierGateway} from "@sp1-contracts/SP1VerifierGateway.sol";
 
 struct SP1ProofFixtureJson {

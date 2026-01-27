@@ -3,7 +3,6 @@ pragma solidity ^0.8.20;
 
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 
-// 保持接口一致性
 interface IVDDVerifier {
     function verifyVDD(
         bytes calldata proof,
@@ -12,29 +11,35 @@ interface IVDDVerifier {
     ) external returns (bool);
 }
 
-library VDD_RSLH_PublicValues {
-    struct VDD_RSLH_PublicValuesStruct {
+library VDDPublicValues {
+    struct VDDPublicValuesStruct {
         bytes32 cOrigin;
         bytes32 cKey;
+        uint256 dataLength;
         bytes cCipher;
     }
 
-    function decodeRSLHVE(
+    function decodeVDD(
         bytes memory data
-    ) internal pure returns (VDD_RSLH_PublicValuesStruct memory r) {
-        require(data.length >= 64, "Invalid RSLHVE data length");
+    ) internal pure returns (VDDPublicValuesStruct memory r) {
+        require(data.length >= 68, "Invalid data length");
 
-        uint256 cipherLen = data.length - 64;
+        uint256 totalLen = data.length;
+        uint256 cipherLen = totalLen - 68;
 
         assembly {
             let ptr := add(data, 32)
-            // 存储 cOrigin
+            // cOrigin (bytes32)
             mstore(r, mload(ptr))
-            // 存储 cKey
+            // cKey (bytes32)
             mstore(add(r, 32), mload(add(ptr, 32)))
+            // dataLength (uint256) - 从末尾取 4 字节转 uint32/256
+            let lenPtr := add(ptr, sub(totalLen, 4))
+            let w := mload(lenPtr)
+            w := shr(224, w)
+            mstore(add(r, 64), w)
         }
 
-        // 提取剩余的动态 cCipher
         bytes memory cipherBytes = new bytes(cipherLen);
         for (uint256 i = 0; i < cipherLen; i++) {
             cipherBytes[i] = data[i + 64];
@@ -45,9 +50,8 @@ library VDD_RSLH_PublicValues {
     }
 }
 
-/// @title VDD_RSLH
-contract VDD_RSLH is IVDDVerifier {
-    using VDD_RSLH_PublicValues for bytes;
+contract VDD is IVDDVerifier {
+    using VDDPublicValues for bytes;
 
     address public verifier;
     bytes32 public VDDProgramVKey;
@@ -58,19 +62,19 @@ contract VDD_RSLH is IVDDVerifier {
     }
 
     /**
-     * @notice 实现 IVDDVerifier 接口。
+     * @notice 实现 IVDDVerifier 接口，用于主流程调用。
      */
     function verifyVDD(
         bytes calldata proof,
         bytes calldata publicValues,
         bytes32 bindingHash
     ) external override returns (bool) {
-        // 1. ZK 证明校验 (保持与原测试逻辑一致)
+        // 1. 底层 ZK 证明校验
         this.verifyVDDProof(publicValues, proof);
 
-        // 2. 解码并进行 Binding 检查
-        VDD_RSLH_PublicValues.VDD_RSLH_PublicValuesStruct
-            memory pv = publicValues.decodeRSLHVE();
+        // 2. 解码并校验 BindingHash 一致性
+        VDDPublicValues.VDDPublicValuesStruct memory pv = publicValues
+            .decodeVDD();
 
         bytes32 computedHash = computeBindingHash(
             abi.encodePacked(pv.cOrigin),
@@ -78,7 +82,7 @@ contract VDD_RSLH is IVDDVerifier {
             pv.cCipher
         );
 
-        require(computedHash == bindingHash, "VDD_RSLH: Binding hash mismatch");
+        require(computedHash == bindingHash, "VDD: Binding hash mismatch");
 
         return true;
     }
@@ -89,21 +93,20 @@ contract VDD_RSLH is IVDDVerifier {
     function verifyVDDProof(
         bytes calldata _publicValues,
         bytes calldata _proofBytes
-    )
-        public
-        view
-        returns (VDD_RSLH_PublicValues.VDD_RSLH_PublicValuesStruct memory)
-    {
+    ) public view returns (VDDPublicValues.VDDPublicValuesStruct memory) {
         ISP1Verifier(verifier).verifyProof(
             VDDProgramVKey,
             _publicValues,
             _proofBytes
         );
-        return _publicValues.decodeRSLHVE();
+        return _publicValues.decodeVDD();
     }
 
     /**
-     * @notice Pure 函数，供测试使用，计算符合主流程要求的 bindingHash。
+     * @notice Pure 函数，用于在测试或外部计算 bindingHash。
+     * @param cOrigin 原始数据标识 (bytes)
+     * @param dataKeyCommitment 密钥承诺 (bytes32)
+     * @param cCipher 密文 (bytes)
      */
     function computeBindingHash(
         bytes memory cOrigin,

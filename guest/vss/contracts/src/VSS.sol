@@ -3,6 +3,14 @@ pragma solidity ^0.8.20;
 
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 
+interface IVSSVerifier {
+    function verifyVSS(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        bytes32 bindingHash
+    ) external returns (bool);
+}
+
 library VSSPublicValues {
     struct VSSPublicValuesStruct {
         uint64 length;
@@ -52,10 +60,7 @@ library VSSPublicValues {
             cipherLen = w;
             slot += 1;
         }
-
         r.cipherBlock = new bytes32[](cipherLen);
-
-        // ---- cipherBlock[i] ----
         for (uint256 i = 0; i < cipherLen; i++) {
             bytes32 w;
             assembly {
@@ -75,10 +80,7 @@ library VSSPublicValues {
             hkLen = w;
             slot += 1;
         }
-
         r.hKCommitment = new bytes32[](hkLen);
-
-        // ---- hKCommitment[i] ----
         for (uint256 i = 0; i < hkLen; i++) {
             bytes32 w;
             assembly {
@@ -98,10 +100,7 @@ library VSSPublicValues {
             nonceLen = w;
             slot += 1;
         }
-
         r.nonce = new bytes12[](nonceLen);
-
-        // ---- nonce[i] ----
         for (uint256 i = 0; i < nonceLen; i++) {
             bytes32 w;
             assembly {
@@ -114,23 +113,42 @@ library VSSPublicValues {
     }
 }
 
-/// @title VSS.
-contract VSS {
+contract VSS is IVSSVerifier {
     using VSSPublicValues for bytes;
 
-    /// @notice The address of the SP1 verifier contract.
-    /// @dev This can either be a specific SP1Verifier for a specific version, or the
-    ///      SP1VerifierGateway which can be used to verify proofs for any version of SP1.
-    ///      For the list of supported verifiers on each chain, see:
-    ///      https://github.com/succinctlabs/sp1-contracts/tree/main/contracts/deployments
     address public verifier;
-
-    /// @notice The verification key for the fibonacci program.
     bytes32 public VSSProgramVKey;
 
     constructor(address _verifier, bytes32 _VSSProgramVKey) {
         verifier = _verifier;
         VSSProgramVKey = _VSSProgramVKey;
+    }
+
+    /**
+     * @notice 实现 IVSSVerifier 接口，用于主流程调用。
+     * @dev 增加了 bindingHash 的校验。
+     */
+    function verifyVSS(
+        bytes calldata proof,
+        bytes calldata publicValues,
+        bytes32 bindingHash
+    ) external override returns (bool) {
+        // 1. 底层 ZK 证明校验 (逻辑复用原有的 verifyVSSProof)
+        this.verifyVSSProof(publicValues, proof);
+
+        // 2. 解码并校验 BindingHash 一致性
+        VSSPublicValues.VSSPublicValuesStruct memory pv = publicValues
+            .decodeVSS();
+
+        bytes32 computedHash = computeBindingHash(
+            pv.hOrigBlock,
+            pv.hKCommitment,
+            pv.cipherBlock
+        );
+
+        require(computedHash == bindingHash, "VSS: Binding hash mismatch");
+
+        return true;
     }
 
     /// @notice The entrypoint for verifying the proof of a fibonacci number.
@@ -145,8 +163,17 @@ contract VSS {
             _publicValues,
             _proofBytes
         );
-        VSSPublicValues.VSSPublicValuesStruct
-            memory publicValues = _publicValues.decodeVSS();
-        return publicValues;
+        return _publicValues.decodeVSS();
+    }
+
+    /**
+     * @notice Pure 函数，用于在测试或外部计算 bindingHash。
+     */
+    function computeBindingHash(
+        bytes32 hOrigBlock,
+        bytes32[] memory hKCommitment,
+        bytes32[] memory cipherBlock
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encode(hOrigBlock, hKCommitment, cipherBlock));
     }
 }
