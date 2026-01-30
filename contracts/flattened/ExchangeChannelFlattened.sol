@@ -105,10 +105,10 @@ abstract contract Ownable {
 // src/lib/ReentrancyGuard.sol
 
 contract ReentrancyGuard {
-    uint256 private constant _NOT_ENTERED = 1;
-    uint256 private constant _ENTERED = 2;
+    uint256 private constant _NOT_ENTERED = 0;
+    uint256 private constant _ENTERED = 1;
 
-    uint256 private _status = _NOT_ENTERED;
+    uint256 private _status;
 
     modifier nonReentrant() {
         require(_status == _NOT_ENTERED, "ReentrancyGuard: reentrant call");
@@ -327,14 +327,14 @@ contract VSS is Pausable {
             "Mismatched input"
         );
 
-        bytes32[] memory pubkeys = new bytes32[](audiences.length);
+        bytes32[] memory c_keys = new bytes32[](audiences.length);
         for (uint256 i = 0; i < audiences.length; i++) {
             require(isRegistered[audiences[i]], "Unregistered");
-            pubkeys[i] = audienceList[audienceIndex[audiences[i]]].vssKeyCommitment.unwrap();
+            c_keys[i] = audienceList[audienceIndex[audiences[i]]].vssKeyCommitment.unwrap();
         }
 
         bytes32 bindingHash = keccak256(
-            abi.encode(dataKeyCommitment, pubkeys, encryptedDataKeys)
+            abi.encode(dataKeyCommitment, c_keys, encryptedDataKeys)
         );
 
         require(
@@ -855,7 +855,10 @@ contract ExchangeChannelImplementation is ExchangeChannelStorage {
         // 1. Buyer has keys (VSS Privy)
         require(isPrivy(buyer), "Buyer not privy");
 
-        // 2. Data accessibility is confirmed
+        // 2. Cipher vdd is confirmed
+        require(vddVerified[cCipher], "VDD not verified for this cipher");
+
+        // 3. Data accessibility is confirmed
         require(
             oracleSuccessUntil[cCipher] > info.initTime + LIVING_WINDOW,
             "Oracle proof expired or missing"

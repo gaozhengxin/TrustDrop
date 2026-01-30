@@ -288,7 +288,10 @@ contract ExchangeChannelImplementation is ExchangeChannelStorage {
         // 1. Buyer has keys (VSS Privy)
         require(isPrivy(buyer), "Buyer not privy");
 
-        // 2. Data accessibility is confirmed
+        // 2. Cipher vdd is confirmed
+        require(vddVerified[cCipher], "VDD not verified for this cipher");
+
+        // 3. Data accessibility is confirmed
         require(
             oracleSuccessUntil[cCipher] > info.initTime + LIVING_WINDOW,
             "Oracle proof expired or missing"

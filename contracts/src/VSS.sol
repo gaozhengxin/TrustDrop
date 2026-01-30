@@ -118,14 +118,14 @@ contract VSS is Pausable {
             "Mismatched input"
         );
 
-        bytes32[] memory pubkeys = new bytes32[](audiences.length);
+        bytes32[] memory c_keys = new bytes32[](audiences.length);
         for (uint256 i = 0; i < audiences.length; i++) {
             require(isRegistered[audiences[i]], "Unregistered");
-            pubkeys[i] = audienceList[audienceIndex[audiences[i]]].vssKeyCommitment.unwrap();
+            c_keys[i] = audienceList[audienceIndex[audiences[i]]].vssKeyCommitment.unwrap();
         }
 
         bytes32 bindingHash = keccak256(
-            abi.encode(dataKeyCommitment, pubkeys, encryptedDataKeys)
+            abi.encode(dataKeyCommitment, c_keys, encryptedDataKeys)
         );
 
         require(

@@ -32,10 +32,10 @@ contract LighthouseFunctionsConsumer is FunctionsClient, ConfirmedOwner {
         "  if (!lhRes.error && Array.isArray(lhRes.data) && lhRes.data.length > 0) {"
         "    const dealId = lhRes.data[lhRes.data.length - 1].DealID;"
         "    const ffRes = await Functions.makeHttpRequest({url:`https://filfox.info/api/v1/deal/${dealId}`,timeout:3000});"
-        "    if (!ffRes.error && ffRes.status === 200) { status = 0; endTime = ffRes.data.endTimestamp; }"
+        "    if (!ffRes.error && ffRes.status === 200) { status = 2; endTime = ffRes.data.endTimestamp; }"
         "  }"
         "  return encodeResponse(status, endTime);"
-        "} catch (e) { return encodeResponse(2, 0); }";
+        "} catch (e) { return encodeResponse(0, 0); }";
 
     constructor(address router) FunctionsClient(router) ConfirmedOwner(msg.sender) {}
 
