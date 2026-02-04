@@ -78,7 +78,8 @@ impl StorageNetwork for WalrusClient {
         let resp = self.http
             .put(&url)
             .header("Content-Type", "application/octet-stream")
-            .header("Content-Length", data.len())
+            .header("Transfer-Encoding", "chunked")
+            //.header("Content-Length", data.len())
             .body(data)
             .send().await
             .map_err(|e|
