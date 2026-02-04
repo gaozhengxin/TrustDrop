@@ -26,7 +26,7 @@ const HUB_ADDRESS: &str = "0x2F0E2DeA5385e8Ea5234ea5c1f46A255fC330b5F";
 const RPC_URL: &str = "https://sepolia-rollup.arbitrum.io/rpc";
 const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
 
-// 锁定基准 ABI
+// 黄金基准 ABI 锁定
 abigen!(
     ExchangeHubContract,
     r#"[
@@ -56,8 +56,29 @@ abigen!(
     ]"#;
     ExchangeChannelContract,
     r#"[
-        {"inputs":[],"name":"nonce","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-        {"inputs":[{"components":[{"internalType":"bytes","name":"data","type":"bytes"},{"internalType":"bytes32","name":"data_id","type":"bytes32"}],"internalType":"struct Types.DataCommitment","name":"commitment","type":"tuple"},{"internalType":"uint256","name":"price","type":"uint256"},{"internalType":"string","name":"info","type":"string"}],"name":"listFile","outputs":[],"stateMutability":"nonpayable","type":"function"}
+        {
+            "inputs": [],
+            "name": "nonce",
+            "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function"
+        },
+        {
+            "inputs": [
+                {
+                    "components": [{"internalType": "bytes", "name": "data", "type": "bytes"}],
+                    "internalType": "struct Types.DataCommitment",
+                    "name": "_commitment",
+                    "type": "tuple"
+                },
+                {"internalType": "uint256", "name": "price", "type": "uint256"},
+                {"internalType": "string", "name": "info", "type": "string"}
+            ],
+            "name": "listFile",
+            "outputs": [],
+            "stateMutability": "nonpayable",
+            "type": "function"
+        }
     ]"#
 );
 
@@ -95,12 +116,10 @@ pub async fn stage_1_seller_list(
         _ => return Err(anyhow::anyhow!("Blob not confirmed yet.")),
     };
 
-    // 2. 核心逻辑：探测或创建 ExchangeChannel
+    // 2. 核心逻辑：探测或创建 ExchangeChannel (基准保留)
     println!(">>> [DEBUG] Step 3: Resolving ExchangeChannel...");
-    
     let mut channel_address: Address = Address::zero();
 
-    // 尝试从环境变量读取
     if let Ok(addr_str) = env::var("EXCHANGE_CHANNEL_ADDRESS") {
         if !addr_str.is_empty() {
             channel_address = addr_str.parse().map_err(|_| anyhow::anyhow!("Invalid address in .env"))?;
@@ -113,7 +132,6 @@ pub async fn stage_1_seller_list(
         let hub_addr: Address = HUB_ADDRESS.parse()?;
         let hub = ExchangeHubContract::new(hub_addr, eth_signer.clone());
 
-        // 基准熔断检查 (PRE-FLIGHT)
         let opk = Pubkey { data: seller_pubkey.into() };
         let call = hub.create_exchange_channel(opk);
         let calldata_hex = hex::encode(&call.tx.data().expect("Failed to get calldata").0);
@@ -138,7 +156,7 @@ pub async fn stage_1_seller_list(
         println!(">>> [ACTION] Please manually update EXCHANGE_CHANNEL_ADDRESS={:?} in your .env", channel_address);
     }
 
-    // 3. 计算 SaleID (基准逻辑)
+    // 3. 计算 SaleID (基准保留)
     println!(">>> [DEBUG] Step 4: Syncing state for SaleID...");
     let channel = ExchangeChannelContract::new(channel_address, eth_signer.clone());
     let current_nonce = channel.nonce().call().await?;
@@ -155,6 +173,28 @@ pub async fn stage_1_seller_list(
 
     let sale_id_hex = format!("0x{}", hex::encode(ethers::utils::keccak256(packed)));
     println!(">>> [DEBUG] Computed SaleID: {}", sale_id_hex);
+
+    // --- [物理新增：执行 listFile 正式挂牌 - 严格对齐浏览器 ABI] ---
+    println!(">>> [DEBUG] Step 5: Executing listFile on-chain...");
+    
+    // 构造 DataCommitment：严格对齐 struct { bytes data }
+    let blob_bytes = blob_id.0.as_bytes().to_vec();
+    let commitment = DataCommitment {
+        data: blob_bytes.into(),
+    };
+    
+    let price = ethers::utils::parse_ether("0.01")?;
+    let info = format!("Maenad Test Asset: {}", asset_path);
+
+    println!(">>> [DEBUG] Listing Params: Price={} wei, Info='{}'", price, info);
+    
+    let list_receipt = channel.list_file(commitment, price, info)
+        .gas(800000)
+        .send().await?
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("listFile transaction failed"))?;
+
+    println!(">>> [DEBUG] listFile Success! TxHash: {:?}", list_receipt.transaction_hash);
 
     Ok(TdpMetadata {
         sale_id: sale_id_hex,
