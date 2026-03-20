@@ -18,7 +18,7 @@ alloy-sol-types = { workspace = true }
 blake3 = { version = "1.8.2", default-features = false }
 sp1-lib = { version = "5.2.2", default-features = false }
 sp1-zkvm = { version = "5.0.8" }
-k256 = { version = "0.13", default-features = false, features = ["arithmetic"] }
+k256 = { version = "0.13.4", default-features = false, features = ["arithmetic", "ecdh", "ecdsa", "serde"] }
 chacha20 = { version = "0.9.1", default-features = false }
 sha256 = "1.6.0"
 sha2 = "0.10.9"
@@ -32,5 +32,5 @@ base64 = { version = "0.22", default-features = false }
 #walrus-core = { git = "https://github.com/MystenLabs/walrus", default-features = false }
 bytes = "1.0"
 walrus_core = { path = "../walrus-core" }
-
 cid = "0.11"
+anyhow = "1.0"

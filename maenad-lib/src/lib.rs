@@ -8,6 +8,7 @@ pub mod merkle;
 pub mod walrus_address;
 pub mod cid;
 pub mod rslh_ve;
+pub mod ecies;
 
 #[cfg(test)]
 mod tests {

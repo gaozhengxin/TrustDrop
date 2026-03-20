@@ -1,248 +1,246 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use ethers::prelude::*;
-use std::sync::Arc;
-use std::fs;
-use std::env;
-use dotenv::dotenv;
+use std::{sync::Arc, fs, env, time::{SystemTime, UNIX_EPOCH}};
+use tokio::io::AsyncReadExt;
 
-// 物理保留：存储 Trait 与配置
-use storage::{WalrusClient, BlobStatus, StorageNetwork, WalrusConfig};
+// 物理导入 Trait：启用 WalrusClient 异步流读取
+use storage::{WalrusClient, BlobId, StorageNetwork, WalrusConfig, BlobStatus};
 
-// --- [卖家核心配置 - 物理唯一源头] ---
-const SELLER_VSS_SECRET: [u8; 32] = [
-    0x6d, 0x61, 0x65, 0x6e, 0x61, 0x64, 0x5f, 0x74, 
-    0x65, 0x73, 0x74, 0x5f, 0x73, 0x65, 0x63, 0x72, 
-    0x65, 0x74, 0x5f, 0x6b, 0x65, 0x79, 0x5f, 0x30, 
-    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31
-];
+use maenad_lib::rslh_ve::derive_rslh_nonce;
+use maenad_lib::walrus_address::compute_blob_id_default;
+use maenad_lib::kdf::key_derive;
+use maenad_lib::ecies;
 
-fn derive_vss_pubkey(secret: &[u8; 32]) -> Vec<u8> {
-    let hash = blake3::hash(secret);
-    hash.as_bytes().to_vec() 
+// 重构后的内部模块引用
+use crate::chacha8::{chacha8_encrypt, chacha8_decrypt};
+use crate::proof::{run_vss_proof, run_vdd_proof};
+use crate::walrus::{compute_rs_id, upload_data_idempotent};
+
+// ABI 引用
+use crate::abi::exchange_hub_contract as hub_abi;
+use crate::abi::exchange_channel_contract as channel_abi;
+use crate::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter, PurchaseEventFilter};
+
+// --- [物理常量定义] ---
+pub const INPUT_ASSET_NAME: &str = "Mo.mp4";
+pub const RECOVERED_ASSET_NAME: &str = "Mo_recovered.mp4";
+
+pub const ARBITRUM_SEPOLIA_RPC: &str = "https://sepolia-rollup.arbitrum.io/rpc";
+pub const WALRUS_LOCAL_ENDPOINT: &str = "http://localhost:31415"; 
+
+pub const HUB_ADDRESS: &str = "0x2F0E2DeA5385e8Ea5234ea5c1f46A255fC330b5F";
+pub const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
+pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600; 
+
+// ==========================================================
+// --- [第一部分：原子工具函数] ---
+// ==========================================================
+
+pub fn compute_sale_id(channel_address: Address, chain_id: u64, nonce: U256) -> [u8; 32] {
+    let mut packed_bytes = Vec::new();
+    packed_bytes.extend_from_slice(channel_address.as_bytes());
+    packed_bytes.extend_from_slice(&(chain_id as u32).to_be_bytes()); 
+    let mut nonce_bytes = [0u8; 32]; 
+    nonce.to_big_endian(&mut nonce_bytes);
+    packed_bytes.extend_from_slice(&nonce_bytes);
+    ethers::utils::keccak256(packed_bytes).into()
 }
 
-// --- [合约环境] ---
-const HUB_ADDRESS: &str = "0x2F0E2DeA5385e8Ea5234ea5c1f46A255fC330b5F";
-const RPC_URL: &str = "https://sepolia-rollup.arbitrum.io/rpc";
-const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
-
-// 黄金基准 ABI 锁定
-abigen!(
-    ExchangeHubContract,
-    r#"[
-        {
-            "inputs": [
-                {
-                    "components": [{"internalType": "bytes", "name": "data", "type": "bytes"}],
-                    "internalType": "struct Types.Pubkey",
-                    "name": "ownerPubKey",
-                    "type": "tuple"
-                }
-            ],
-            "name": "createExchangeChannel",
-            "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-            "stateMutability": "nonpayable",
-            "type": "function"
-        },
-        {
-            "anonymous": false,
-            "inputs": [
-                {"indexed": true, "internalType": "address", "name": "owner", "type": "address"},
-                {"indexed": true, "internalType": "address", "name": "channel", "type": "address"}
-            ],
-            "name": "ExchangeChannelCreated",
-            "type": "event"
-        }
-    ]"#;
-    ExchangeChannelContract,
-    r#"[
-        {
-            "inputs": [],
-            "name": "nonce",
-            "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
-            "stateMutability": "view",
-            "type": "function"
-        },
-        {
-            "inputs": [
-                {
-                    "components": [{"internalType": "bytes", "name": "data", "type": "bytes"}],
-                    "internalType": "struct Types.DataCommitment",
-                    "name": "_commitment",
-                    "type": "tuple"
-                },
-                {"internalType": "uint256", "name": "price", "type": "uint256"},
-                {"internalType": "string", "name": "info", "type": "string"}
-            ],
-            "name": "listFile",
-            "outputs": [],
-            "stateMutability": "nonpayable",
-            "type": "function"
-        }
-    ]"#
-);
-
-pub struct TdpMetadata {
-    pub sale_id: String,
-    pub blob_id: String,
-    pub end_epoch: u64,
-    pub nonce: u64,
-    pub channel_address: String,
+pub async fn get_or_create_channel(signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>) -> Result<Address> {
+    let hub_addr = HUB_ADDRESS.parse::<Address>().map_err(|_| anyhow!("Invalid HUB_ADDRESS"))?;
+    let hub_contract = hub_abi::ExchangeHubContract::new(hub_addr, signer.clone());
+    let initial_vss_pubkey = hub_abi::Pubkey { data: vec![0u8; 32].into() }; 
+    
+    let receipt = hub_contract.create_exchange_channel(initial_vss_pubkey).send().await?.await?.ok_or(anyhow!("Hub fail"))?;
+    let ev = hub_contract.decode_event::<ExchangeChannelCreatedFilter>("ExchangeChannelCreated", receipt.logs[0].topics.clone(), receipt.logs[0].data.clone())?;
+    Ok(ev.channel)
 }
 
-// --- [阶段 1] 卖家：注册身份与挂牌 ---
-pub async fn stage_1_seller_list(
-    walrus: WalrusClient,
-    eth_signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>,
-) -> Result<TdpMetadata> {
-    println!("\n>>> [STAGE 1] STARTING SELLER REGISTRATION FLOW");
-
-    let seller_pubkey = derive_vss_pubkey(&SELLER_VSS_SECRET);
-    println!(">>> [DEBUG] Crypto: Derived Public Key: 0x{}", hex::encode(&seller_pubkey));
-
-    // 1. Walrus 物理上传输出 (基准保留)
-    let asset_path = "Mo.mp4";
-    let file_data = fs::read(asset_path).map_err(|_| anyhow::anyhow!("File Mo.mp4 not found"))?;
-    println!(">>> [DEBUG] Walrus: Uploading 18MB payload...");
-    let blob_id = walrus.upload_blob(file_data.into(), Some("4")).await?;
-    println!(">>> [DEBUG] Walrus: BlobID generated -> {}", blob_id.0);
-
-    let status = walrus.get_status(&blob_id).await?;
-    let end_epoch = match status {
-        BlobStatus::Info { end_epoch, .. } => {
-            println!(">>> [DEBUG] Walrus: EndEpoch confirmed at {}", end_epoch);
-            end_epoch
-        },
-        _ => return Err(anyhow::anyhow!("Blob not confirmed yet.")),
+pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_hash: H256, channel_address: Address) -> Result<(Address, channel_abi::ExchangeInfo)> {
+    let receipt = client.get_transaction_receipt(transaction_hash).await?.ok_or(anyhow!("TX missing"))?;
+    let log = receipt.logs.iter().find(|l| l.address == channel_address).ok_or(anyhow!("No Log"))?;
+    let channel_inst = channel_abi::ExchangeChannelContract::new(channel_address, Arc::new(client.clone()));
+    let purchase_ev = channel_inst.decode_event::<PurchaseEventFilter>("PurchaseEvent", log.topics.clone(), log.data.clone())?;
+    
+    let h = purchase_ev.exchange_info;
+    let channel_info = channel_abi::ExchangeInfo {
+        sale_digest: h.sale_digest,
+        price: h.price,
+        init_time: h.init_time,
+        deadline: h.deadline,
+        data_commitment: h.data_commitment,
+        vss_key_commitment: h.vss_key_commitment,
     };
-
-    // 2. 核心逻辑：探测或创建 ExchangeChannel (基准保留)
-    println!(">>> [DEBUG] Step 3: Resolving ExchangeChannel...");
-    let mut channel_address: Address = Address::zero();
-
-    if let Ok(addr_str) = env::var("EXCHANGE_CHANNEL_ADDRESS") {
-        if !addr_str.is_empty() {
-            channel_address = addr_str.parse().map_err(|_| anyhow::anyhow!("Invalid address in .env"))?;
-            println!(">>> [DEBUG] Found existing Channel in .env: {:?}", channel_address);
-        }
-    }
-
-    if channel_address.is_zero() {
-        println!(">>> [DEBUG] No existing Channel found. Creating new one via Hub...");
-        let hub_addr: Address = HUB_ADDRESS.parse()?;
-        let hub = ExchangeHubContract::new(hub_addr, eth_signer.clone());
-
-        let opk = Pubkey { data: seller_pubkey.into() };
-        let call = hub.create_exchange_channel(opk);
-        let calldata_hex = hex::encode(&call.tx.data().expect("Failed to get calldata").0);
-        
-        println!(">>> [PRE-FLIGHT] Full Calldata: 0x{}", calldata_hex);
-        if !calldata_hex.starts_with("34cdaf40") {
-            panic!("FATAL: Selector mismatch! Expected 0x34cdaf40, got 0x{}. Gas protected.", &calldata_hex[..8]);
-        }
-
-        let tx_receipt = call.gas(1500000).send().await?.await?
-            .ok_or_else(|| anyhow::anyhow!("Hub transaction failed"))?;
-
-        for log in &tx_receipt.logs {
-            if let Ok(event) = hub.decode_event::<ExchangeChannelCreatedFilter>("ExchangeChannelCreated", log.topics.clone(), log.data.clone()) {
-                channel_address = event.channel;
-                break;
-            }
-        }
-        
-        if channel_address.is_zero() { return Err(anyhow::anyhow!("Failed to parse new Channel address")); }
-        println!(">>> [DEBUG] NEW Channel deployed at: {:?}", channel_address);
-        println!(">>> [ACTION] Please manually update EXCHANGE_CHANNEL_ADDRESS={:?} in your .env", channel_address);
-    }
-
-    // 3. 计算 SaleID (基准保留)
-    println!(">>> [DEBUG] Step 4: Syncing state for SaleID...");
-    let channel = ExchangeChannelContract::new(channel_address, eth_signer.clone());
-    let current_nonce = channel.nonce().call().await?;
-    let chain_id = eth_signer.get_chainid().await?;
-
-    let mut packed = Vec::new();
-    packed.extend_from_slice(channel_address.as_bytes()); 
-    let mut cb = [0u8; 32];
-    U256::from(chain_id.as_u64()).to_big_endian(&mut cb);
-    packed.extend_from_slice(&cb); 
-    let mut nb = [0u8; 32];
-    current_nonce.to_big_endian(&mut nb);
-    packed.extend_from_slice(&nb); 
-
-    let sale_id_hex = format!("0x{}", hex::encode(ethers::utils::keccak256(packed)));
-    println!(">>> [DEBUG] Computed SaleID: {}", sale_id_hex);
-
-    // --- [物理新增：执行 listFile 正式挂牌 - 严格对齐浏览器 ABI] ---
-    println!(">>> [DEBUG] Step 5: Executing listFile on-chain...");
-    
-    // 构造 DataCommitment：严格对齐 struct { bytes data }
-    let blob_bytes = blob_id.0.as_bytes().to_vec();
-    let commitment = DataCommitment {
-        data: blob_bytes.into(),
-    };
-    
-    let price = ethers::utils::parse_ether("0.01")?;
-    let info = format!("Maenad Test Asset: {}", asset_path);
-
-    println!(">>> [DEBUG] Listing Params: Price={} wei, Info='{}'", price, info);
-    
-    let list_receipt = channel.list_file(commitment, price, info)
-        .gas(800000)
-        .send().await?
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("listFile transaction failed"))?;
-
-    println!(">>> [DEBUG] listFile Success! TxHash: {:?}", list_receipt.transaction_hash);
-
-    Ok(TdpMetadata {
-        sale_id: sale_id_hex,
-        blob_id: blob_id.0,
-        end_epoch,
-        nonce: current_nonce.as_u64(),
-        channel_address: format!("{:?}", channel_address),
-    })
+    Ok((purchase_ev.buyer, channel_info))
 }
 
-// --- [阶段 2 & 3 物理基准保留] ---
-pub async fn stage_2_buyer_buy(_signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>, meta: &TdpMetadata) -> Result<()> {
-    println!("\n>>> [STAGE 2] BUYER PURCHASE LOGIC");
-    println!(">>> [DEBUG] Working with SaleID: {}", meta.sale_id);
+// ==========================================================
+// --- [第二部分：协议阶段实现 - 语义化重构] ---
+// ==========================================================
+
+/// STAGE 1: Listing
+pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Result<([u8; 32], [u8; 32], String, Address, [u8; 32], [u8; 32])> {
+    println!(">>> [STAGE 1] LISTING...");
+    let file_payload = fs::read(INPUT_ASSET_NAME)?;
+    let original_asset_id = compute_rs_id(&file_payload)?;
+    
+    let asset_nonce = derive_rslh_nonce(&ctx.asset_encryption_key, b"maenad_v1");
+    let encrypted_asset_data = chacha8_encrypt(&file_payload, &ctx.asset_encryption_key, &asset_nonce, 0)?;
+    let encrypted_blob_id = compute_rs_id(&encrypted_asset_data)?;
+    let walrus_blob_id = upload_data_idempotent(walrus, encrypted_asset_data).await?;
+
+    let channel_addr = get_or_create_channel(ctx.signer.clone()).await?;
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_addr, ctx.signer.clone());
+    
+    let sale_nonce = channel_contract.nonce().call().await?;
+    let unique_sale_id = compute_sale_id(channel_addr, ARBITRUM_SEPOLIA_CHAIN_ID, sale_nonce);
+    let onchain_data_version = ethers::utils::keccak256(original_asset_id);
+    
+    let arg_commit = channel_abi::DataCommitment { data: original_asset_id.to_vec().into() };
+    let arg_price = 10u128.pow(16).into(); // 0.01 ETH
+    let arg_meta = "Maenad Asset v1".to_string();
+
+    channel_contract.list_file(arg_commit, arg_price, arg_meta).send().await?.await?;
+    Ok((unique_sale_id, onchain_data_version.into(), walrus_blob_id, channel_addr, original_asset_id, encrypted_blob_id))
+}
+
+/// STAGE 2: Purchase
+pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onchain_data_version: [u8; 32], channel_address: Address, original_asset_id: [u8; 32], seller_vss_pub: &[u8]) -> Result<([u8; 32], H256)> {
+    println!(">>> [STAGE 2] PURCHASE...");
+    let secret_sharing_key = key_derive(&[0xbb; 32], &original_asset_id).map_err(|e| anyhow!(e))?;
+    let (encrypted_vss_key, eph_pk) = ecies::encrypt(seller_vss_pub, &secret_sharing_key)?;
+    
+    let arg_deadline = U256::from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + LIVING_WINDOW_SECS + 86400);
+    let arg_price = 10u128.pow(16).into();
+    let arg_vss_commit = blake3::hash(&secret_sharing_key).into();
+
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
+    let tx = channel_contract.purchase(unique_sale_id, onchain_data_version.into(), arg_price, arg_deadline, eph_pk.into(), arg_vss_commit, encrypted_vss_key)
+        .value(arg_price).send().await?.await?;
+    Ok((secret_sharing_key, tx.unwrap().transaction_hash))
+}
+
+/// STAGE 3: Fulfill
+pub async fn stage_3_fulfill(ctx: &SellerContext, channel_address: Address, purchase_tx_hash: H256, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
+    println!(">>> [STAGE 3] FULFILL...");
+    let (buyer, exchange_info) = get_purchase_info_from_event(ctx.signer.provider(), purchase_tx_hash, channel_address).await?;
+    
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
+    let buyer_idx = channel_contract.audience_index(buyer).call().await?;
+    let (_, encrypted_vss_from_chain) = channel_contract.audience_list(buyer_idx).call().await?;
+    
+    let secret_sharing_key = ecies::decrypt(&ctx.owner_sk_bytes, &encrypted_vss_from_chain, &exchange_info.data_commitment.to_vec())?;
+    let wrapped_asset_key_vec = chacha8_encrypt(&ctx.asset_encryption_key.to_vec(), &secret_sharing_key, &[0u8; 12], 0)?;
+    
+    let (v_proof, v_pv) = run_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await?;
+    let (d_proof, d_pv) = run_vdd_proof(original_asset_id, encrypted_blob_id, ctx.asset_encryption_key).await?;
+
+    let arg_vss = channel_abi::Vssargs { 
+        encrypted_data_key: wrapped_asset_key_vec.try_into().unwrap(), 
+        proof: v_proof, public_values: v_pv 
+    };
+    let arg_vdd = channel_abi::Vddargs { 
+        proof: d_proof, public_values: d_pv, c_cipher: encrypted_blob_id.to_vec().into() 
+    };
+    let arg_ver = ethers::utils::keccak256(original_asset_id).into();
+
+    channel_contract.fulfill(buyer, exchange_info, arg_ver, arg_vss, arg_vdd).send().await?.await?;
     Ok(())
 }
 
-pub async fn stage_3_seller_finalize(_signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>, meta: &TdpMetadata) -> Result<()> {
-    println!("\n>>> [STAGE 3] SELLER FINALIZE LOGIC");
-    println!(">>> [DEBUG] Finalizing for Channel: {}", meta.channel_address);
+/// STAGE 4: Recovery
+pub async fn stage_4_recovery(walrus: &WalrusClient, ctx: &BuyerContext, blob_id: String, secret_sharing_key: [u8; 32]) -> Result<()> {
+    println!(">>> [STAGE 4] RECOVERY...");
+    let hub_inst = hub_abi::ExchangeHubContract::new(HUB_ADDRESS.parse()?, ctx.signer.clone());
+    let log = ctx.signer.get_logs(&Filter::new().address(vec![HUB_ADDRESS.parse()?]).event("DataKeyShared(address[],bytes32[])")).await?.pop().ok_or(anyhow!("No key log"))?;
+    let shared_ev = hub_inst.decode_event::<DataKeySharedFilter>("DataKeyShared", log.topics, log.data)?;
+    
+    let pos = shared_ev.audiences.iter().position(|&a| a == ctx.signer.address()).unwrap();
+    let asset_key_vec = chacha8_decrypt(&shared_ev.encrypted_data_keys[pos].to_vec(), &secret_sharing_key, &[0u8; 12], 0)?;
+    let asset_key: [u8; 32] = asset_key_vec.try_into().unwrap();
+
+    let mut reader = walrus.download_blob(&BlobId(blob_id)).await?;
+    let mut ciphertext = Vec::new(); reader.read_to_end(&mut ciphertext).await?; 
+    
+    let nonce = derive_rslh_nonce(&asset_key, b"maenad_v1");
+    let recovered_data = chacha8_decrypt(&ciphertext, &asset_key, &nonce, 0)?;
+    fs::write(RECOVERED_ASSET_NAME, recovered_data)?;
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// 核心修正：监听 Oracle 成功信号 (物理探测从 0 变为非 0)
+pub async fn wait_for_oracle_signal(channel_address: Address, encrypted_blob_id: [u8; 32], signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>) -> Result<()> {
+    println!(">>> [MONITOR] WAITING FOR ORACLE PULSE...");
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, signer.clone());
+    let blob_id_vec = encrypted_blob_id.to_vec();
 
-    #[tokio::test]
-    async fn test_main() -> Result<()> {
-        dotenv().ok();
-        let private_key = env::var("ETH_PRIVATE_KEY").expect("Need PK");
-        let provider = Provider::<Http>::try_from(RPC_URL)?;
-        let wallet = private_key.parse::<LocalWallet>()?.with_chain_id(ARBITRUM_SEPOLIA_CHAIN_ID);
-        let signer = Arc::new(SignerMiddleware::new(provider, wallet));
-
-        let walrus_client = WalrusClient::new(WalrusConfig {
-            publisher_url: "http://127.0.0.1:31415".into(),
-            aggregator_url: "http://127.0.0.1:31415".into(),
-            blockberry_base: "https://api.blockberry.one/walrus-mainnet".into(),
-            api_key: "eNx0cS4PemfQtVaArXbRbHcyJTnP0l".into(),
-            send_object_to: None,
-        });
-
-        let meta = stage_1_seller_list(walrus_client, signer.clone()).await?;
-        stage_2_buyer_buy(signer.clone(), &meta).await?;
-        stage_3_seller_finalize(signer.clone(), &meta).await?;
-
-        println!("\n[SUCCESS] TDP Sequence Complete.");
-        Ok(())
+    loop {
+        let success_until = channel_contract.oracle_success_until(blob_id_vec.clone().into()).call().await?;
+        if success_until > U256::zero() {
+            println!(">>> [SIGNAL] ORACLE VERIFIED. SUCCESS UNTIL: {}", success_until);
+            break;
+        }
+        println!(">>> [WAIT] Oracle pulse not found. Retrying in 15s...");
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
     }
+    Ok(())
+}
+
+/// STAGE 5: Settle
+pub async fn stage_5_settle(ctx: &SellerContext, channel_address: Address, buyer: Address, info: channel_abi::ExchangeInfo, data_ver: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
+    println!(">>> [STAGE 5] SETTLEMENT...");
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
+    
+    let arg_ver = data_ver.into();
+    let arg_cipher = encrypted_blob_id.to_vec().into();
+
+    channel_contract.settle(buyer, info, arg_ver, arg_cipher).send().await?.await?;
+    Ok(())
+}
+
+// ==========================================================
+// --- [Main 运行闭环] ---
+// ==========================================================
+
+pub struct SellerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>, pub owner_sk_bytes: [u8; 32], pub asset_encryption_key: [u8; 32] }
+pub struct BuyerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>> }
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let provider = Provider::<Http>::try_from(ARBITRUM_SEPOLIA_RPC)?;
+    let walrus_config = WalrusConfig {
+        aggregator_url: WALRUS_LOCAL_ENDPOINT.to_string(),
+        publisher_url: WALRUS_LOCAL_ENDPOINT.to_string(),
+        api_key: "".into(), blockberry_base: "".into(), send_object_to: None,
+    };
+    let walrus_client = WalrusClient::new(walrus_config);
+
+    let seller_ctx = SellerContext {
+        signer: Arc::new(SignerMiddleware::new(provider.clone(), env::var("SELLER_KEY")?.parse()?)),
+        owner_sk_bytes: [0x11; 32], asset_encryption_key: [0x22; 32]
+    };
+    let buyer_ctx = BuyerContext {
+        signer: Arc::new(SignerMiddleware::new(provider.clone(), env::var("BUYER_KEY")?.parse()?))
+    };
+
+    // 1. 挂牌
+    let (unique_sale_id, onchain_data_version, walrus_blob_id, channel_address, original_asset_id, encrypted_blob_id) = stage_1_listing(&walrus_client, &seller_ctx).await?;
+    
+    // 2. 支付
+    let (secret_sharing_key, purchase_transaction_hash) = stage_2_purchase(&buyer_ctx, unique_sale_id, onchain_data_version, channel_address, original_asset_id, &[0x02; 33]).await?;
+    
+    // 3. 履行
+    stage_3_fulfill(&seller_ctx, channel_address, purchase_transaction_hash, original_asset_id, encrypted_blob_id).await?;
+    
+    // 4. 等待 Oracle 确认 (物理心跳)
+    wait_for_oracle_signal(channel_address, encrypted_blob_id, seller_ctx.signer.clone()).await?;
+
+    // 5. 结算
+    let (buyer_address, exchange_info) = get_purchase_info_from_event(provider.provider(), purchase_transaction_hash, channel_address).await?;
+    stage_5_settle(&seller_ctx, channel_address, buyer_address, exchange_info, onchain_data_version, encrypted_blob_id).await?;
+
+    // 6. 买家数据恢复
+    stage_4_recovery(&walrus_client, &buyer_ctx, walrus_blob_id, secret_sharing_key).await?;
+
+    Ok(())
 }
