@@ -1,0 +1,14 @@
+[package]
+name = "maenad-script"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+maenad-sdk = { path = "../sdk" }
+anyhow = "1.0.100"
+ethers = { version = "2.0.14", features = ["rustls"] }
+tokio = { version = "1.0", features = ["full"] }
+dotenv = "0.15.0"
+storage = { path = "../storage" }
+maenad-lib = { path = "../maenad-lib"}
+blake3 = "1.8.2"

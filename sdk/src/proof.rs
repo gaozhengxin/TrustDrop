@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use ethers::prelude::*;
 use sp1_sdk::SP1Stdin;
 

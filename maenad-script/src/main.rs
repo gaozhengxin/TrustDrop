@@ -4,22 +4,22 @@ use std::{sync::Arc, fs, env, time::{SystemTime, UNIX_EPOCH}};
 use tokio::io::AsyncReadExt;
 
 // 物理导入 Trait：启用 WalrusClient 异步流读取
-use storage::{WalrusClient, BlobId, StorageNetwork, WalrusConfig, BlobStatus};
+use storage::{WalrusClient, BlobId, StorageNetwork, WalrusConfig};
 
 use maenad_lib::rslh_ve::derive_rslh_nonce;
-use maenad_lib::walrus_address::compute_blob_id_default;
+
 use maenad_lib::kdf::key_derive;
 use maenad_lib::ecies;
 
 // 重构后的内部模块引用
-use crate::chacha8::{chacha8_encrypt, chacha8_decrypt};
-use crate::proof::{run_vss_proof, run_vdd_proof};
-use crate::walrus::{compute_rs_id, upload_data_idempotent};
+use maenad_sdk::chacha8::{chacha8_encrypt, chacha8_decrypt};
+use maenad_sdk::proof::{run_vss_proof, run_vdd_proof};
+use maenad_sdk::walrus::{compute_rs_id, upload_data_idempotent};
 
 // ABI 引用
-use crate::abi::exchange_hub_contract as hub_abi;
-use crate::abi::exchange_channel_contract as channel_abi;
-use crate::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter, PurchaseEventFilter};
+use maenad_sdk::abi::exchange_hub_contract as hub_abi;
+use maenad_sdk::abi::exchange_channel_contract as channel_abi;
+use maenad_sdk::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter, PurchaseEventFilter};
 
 // --- [物理常量定义] ---
 pub const INPUT_ASSET_NAME: &str = "Mo.mp4";
@@ -151,8 +151,8 @@ pub async fn stage_3_fulfill(ctx: &SellerContext, channel_address: Address, purc
 /// STAGE 4: Recovery
 pub async fn stage_4_recovery(walrus: &WalrusClient, ctx: &BuyerContext, blob_id: String, secret_sharing_key: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 4] RECOVERY...");
-    let hub_inst = hub_abi::ExchangeHubContract::new(HUB_ADDRESS.parse()?, ctx.signer.clone());
-    let log = ctx.signer.get_logs(&Filter::new().address(vec![HUB_ADDRESS.parse()?]).event("DataKeyShared(address[],bytes32[])")).await?.pop().ok_or(anyhow!("No key log"))?;
+    let hub_inst = hub_abi::ExchangeHubContract::new(HUB_ADDRESS.parse::<Address>()?, ctx.signer.clone());
+    let log = ctx.signer.get_logs(&Filter::new().address(vec![HUB_ADDRESS.parse::<Address>()?]).event("DataKeyShared(address[],bytes32[])")).await?.pop().ok_or(anyhow!("No key log"))?;
     let shared_ev = hub_inst.decode_event::<DataKeySharedFilter>("DataKeyShared", log.topics, log.data)?;
     
     let pos = shared_ev.audiences.iter().position(|&a| a == ctx.signer.address()).unwrap();

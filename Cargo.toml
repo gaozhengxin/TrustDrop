@@ -12,18 +12,15 @@ members = [
     "app/gui/src-tauri",
     "storage",
     "walrus-core",
+    "maenad-script",
 ]
 
 [workspace.dependencies]
 alloy-sol-types = "1.0"
 
 [dependencies]
+maenad-sdk = { path = "sdk" }
 maenad_gui = { path = "app/gui/src-tauri" }
-
-[lib]
-name = "sdk"
-path = "sdk/src/lib.rs"
-crate-type = ["rlib"]
 
 [[bin]]
 name = "maenad_gui"

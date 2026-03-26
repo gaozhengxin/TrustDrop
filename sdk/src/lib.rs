@@ -1,8 +1,7 @@
-mod abi;
-mod chacha8;
-mod proof;
-mod script;
-mod walrus;
+pub mod abi;
+pub mod chacha8;
+pub mod proof;
+pub mod walrus;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
