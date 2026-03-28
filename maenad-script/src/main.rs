@@ -6,20 +6,24 @@ use tokio::io::AsyncReadExt;
 // 物理导入 Trait：启用 WalrusClient 异步流读取
 use storage::{WalrusClient, BlobId, StorageNetwork, WalrusConfig};
 
-use maenad_lib::rslh_ve::derive_rslh_nonce;
-
 use maenad_lib::kdf::key_derive;
 use maenad_lib::ecies;
 
 // 重构后的内部模块引用
 use maenad_sdk::chacha8::{chacha8_encrypt, chacha8_decrypt};
-use maenad_sdk::proof::{run_vss_proof, run_vdd_proof};
+// use maenad_sdk::proof::{run_vdd_proof};
 use maenad_sdk::walrus::{compute_rs_id, upload_data_idempotent};
+use sp1_sdk::{ProverClient, SP1Stdin};
+use sha2::{Sha256, Digest};
+use maenad_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT};
 
 // ABI 引用
 use maenad_sdk::abi::exchange_hub_contract as hub_abi;
 use maenad_sdk::abi::exchange_channel_contract as channel_abi;
 use maenad_sdk::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter, PurchaseEventFilter};
+
+const VSS_ELF: &[u8] = include_bytes!("../../guest/vss/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/vss-program");
+const VDD_ELF: &[u8] = include_bytes!("../../guest/vdd/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/program-vdd-walrus-rslhve");
 
 // --- [物理常量定义] ---
 pub const INPUT_ASSET_NAME: &str = "Mo.mp4";
@@ -121,7 +125,7 @@ pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onch
 }
 
 /// STAGE 3: Fulfill
-pub async fn stage_3_fulfill(ctx: &SellerContext, channel_address: Address, purchase_tx_hash: H256, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
+pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, channel_address: Address, purchase_tx_hash: H256, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 3] FULFILL...");
     let (buyer, exchange_info) = get_purchase_info_from_event(ctx.signer.provider(), purchase_tx_hash, channel_address).await?;
     
@@ -132,8 +136,8 @@ pub async fn stage_3_fulfill(ctx: &SellerContext, channel_address: Address, purc
     let secret_sharing_key = ecies::decrypt(&ctx.owner_sk_bytes, &encrypted_vss_from_chain, &exchange_info.data_commitment.to_vec())?;
     let wrapped_asset_key_vec = chacha8_encrypt(&ctx.asset_encryption_key.to_vec(), &secret_sharing_key, &[0u8; 12], 0)?;
     
-    let (v_proof, v_pv) = run_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await?;
-    let (d_proof, d_pv) = run_vdd_proof(original_asset_id, encrypted_blob_id, ctx.asset_encryption_key).await?;
+    let (v_proof, v_pv) = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await?;
+    let (d_proof, d_pv) = generate_vdd_proof(walrus_client, walrus_blob_id, ctx, original_asset_id, encrypted_blob_id).await?;
 
     let arg_vss = channel_abi::Vssargs { 
         encrypted_data_key: wrapped_asset_key_vec.try_into().unwrap(), 
@@ -147,6 +151,75 @@ pub async fn stage_3_fulfill(ctx: &SellerContext, channel_address: Address, purc
     channel_contract.fulfill(buyer, exchange_info, arg_ver, arg_vss, arg_vdd).send().await?.await?;
     Ok(())
 }
+
+pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<(Bytes, Bytes)> {
+    // 1. === Prepare inputs on host ===
+    let origin_data = fs::read(INPUT_ASSET_NAME)?;
+
+    let mut reader = walrus_client.download_blob(&BlobId(walrus_blob_id.to_string())).await?;
+    let mut cipher_data = Vec::new();
+    reader.read_to_end(&mut cipher_data).await?;
+
+    let c_key_bytes: [u8; 32] = Sha256::digest(&ctx.asset_encryption_key).into();
+    let aux_data = b"maenad_v1";
+    let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
+
+    // 2. === Build SP1 stdin ===
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&original_asset_id);
+    stdin.write(&encrypted_blob_id);
+    stdin.write(&c_key_bytes);
+    stdin.write(&aux_data.to_vec());
+    stdin.write(&ctx.asset_encryption_key);
+
+    // Generate sampling proofs
+    let mut seed_h = Sha256::new();
+    seed_h.update(&original_asset_id);
+    seed_h.update(&encrypted_blob_id);
+    seed_h.update(&c_key_bytes);
+    let seed = seed_h.finalize();
+
+    for i in 0..DEFAULT_SAMPLE_COUNT {
+        let mut h = Sha256::new();
+        h.update(&seed);
+        h.update(&(i as u32).to_le_bytes());
+        let idx = u32::from_le_bytes(h.finalize()[0..4].try_into().unwrap()) % 1000;
+
+        let proof = create_honest_proof(&ctx.asset_encryption_key, &nonce, idx, &origin_data, &cipher_data);
+        stdin.write(&proof.global_index);
+        stdin.write_vec(proof.origin_shard);
+        stdin.write_vec(proof.cipher_shard);
+    }
+
+    // 3. === Setup & Prove ===
+    let client = ProverClient::from_env();
+    let (pk, _) = client.setup(VDD_ELF);
+    let proof = client.prove(&pk, &stdin).plonk().run().expect("proving failed");
+
+    let public_values = proof.public_values.to_vec().into();
+    let proof_bytes = proof.bytes();
+
+    Ok((proof_bytes.into(), public_values))
+}
+
+
+pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes)> {
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&1u8);
+    stdin.write_vec(d_k.to_vec());
+    stdin.write_vec(v_k.to_vec());
+    stdin.write_vec(vec![0u8; 12]);
+
+    let client = ProverClient::from_env();
+    let (pk, _) = client.setup(VSS_ELF);
+    let proof = client.prove(&pk, &stdin).plonk().run().expect("proving failed");
+
+    let public_values = proof.public_values.to_vec().into();
+    let proof_bytes = proof.bytes();
+
+    Ok((proof_bytes.into(), public_values))
+}
+
 
 /// STAGE 4: Recovery
 pub async fn stage_4_recovery(walrus: &WalrusClient, ctx: &BuyerContext, blob_id: String, secret_sharing_key: [u8; 32]) -> Result<()> {
@@ -230,7 +303,7 @@ async fn main() -> Result<()> {
     let (secret_sharing_key, purchase_transaction_hash) = stage_2_purchase(&buyer_ctx, unique_sale_id, onchain_data_version, channel_address, original_asset_id, &[0x02; 33]).await?;
     
     // 3. 履行
-    stage_3_fulfill(&seller_ctx, channel_address, purchase_transaction_hash, original_asset_id, encrypted_blob_id).await?;
+    stage_3_fulfill(&walrus_client, &walrus_blob_id, &seller_ctx, channel_address, purchase_transaction_hash, original_asset_id, encrypted_blob_id).await?;
     
     // 4. 等待 Oracle 确认 (物理心跳)
     wait_for_oracle_signal(channel_address, encrypted_blob_id, seller_ctx.signer.clone()).await?;

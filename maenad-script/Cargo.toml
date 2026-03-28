@@ -12,3 +12,7 @@ dotenv = "0.15.0"
 storage = { path = "../storage" }
 maenad-lib = { path = "../maenad-lib"}
 blake3 = "1.8.2"
+sp1-sdk = "5.0.8"
+serde = "1.0.203"
+serde_json = "1.0.117"
+sha2 = "0.10.8"
