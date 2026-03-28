@@ -278,8 +278,11 @@ pub async fn stage_5_settle(ctx: &SellerContext, channel_address: Address, buyer
 pub struct SellerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>, pub owner_sk_bytes: [u8; 32], pub asset_encryption_key: [u8; 32] }
 pub struct BuyerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>> }
 
+mod config_check;
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    config_check::run_config_checks().await?;
     let provider = Provider::<Http>::try_from(ARBITRUM_SEPOLIA_RPC)?;
     let walrus_config = WalrusConfig {
         aggregator_url: WALRUS_LOCAL_ENDPOINT.to_string(),
