@@ -9,6 +9,8 @@ use storage::{WalrusClient, BlobId, StorageNetwork, WalrusConfig};
 use maenad_lib::kdf::key_derive;
 use maenad_lib::ecies;
 
+mod config_check;
+
 // 重构后的内部模块引用
 use maenad_sdk::chacha8::{chacha8_encrypt, chacha8_decrypt};
 // use maenad_sdk::proof::{run_vdd_proof};
@@ -40,6 +42,19 @@ pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600;
 // --- [第一部分：原子工具函数] ---
 // ==========================================================
 
+/// # [TOOL] 计算唯一销售 ID (Sale ID)
+/// 
+/// ## 作用
+/// 根据通道地址、链 ID 和当前 nonce 生成一个全局唯一的销售标识符。
+/// 这个 ID 用于在 `purchase` 和 `fulfill` 阶段精确指向一个特定的销售事件，防止重放攻击或混淆不同的交易。
+/// 
+/// ## 输入
+/// - `channel_address`: 销售通道的合约地址
+/// - `chain_id`: 当前区块链的 ID
+/// - `nonce`: 通道合约中记录的当前 nonce，每次销售递增
+///
+/// ## 输出
+/// - `[u8; 32]`: Keccak256 哈希结果，作为唯一 ID
 pub fn compute_sale_id(channel_address: Address, chain_id: u64, nonce: U256) -> [u8; 32] {
     let mut packed_bytes = Vec::new();
     packed_bytes.extend_from_slice(channel_address.as_bytes());
@@ -50,6 +65,20 @@ pub fn compute_sale_id(channel_address: Address, chain_id: u64, nonce: U256) -> 
     ethers::utils::keccak256(packed_bytes).into()
 }
 
+/// # [TOOL] 获取或创建交易通道
+///
+/// ## 角色
+/// 卖家
+///
+/// ## 作用
+/// 调用 Hub 合约的 `createExchangeChannel` 方法来创建一个新的个人交易通道。
+/// 如果已经存在，理论上可以复用，但这里为了演示总是创建一个新的。
+///
+/// ## 输入
+/// - `signer`: 卖家的钱包签名器
+///
+/// ## 输出
+/// - `Address`: 新创建的通道合约地址
 pub async fn get_or_create_channel(signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>) -> Result<Address> {
     let hub_addr = HUB_ADDRESS.parse::<Address>().map_err(|_| anyhow!("Invalid HUB_ADDRESS"))?;
     let hub_contract = hub_abi::ExchangeHubContract::new(hub_addr, signer.clone());
@@ -60,6 +89,22 @@ pub async fn get_or_create_channel(signer: Arc<SignerMiddleware<Provider<Http>, 
     Ok(ev.channel)
 }
 
+/// # [TOOL] 从购买事件中解析信息
+///
+/// ## 角色
+/// 卖家或任何需要验证购买信息的人
+///
+/// ## 作用
+/// 根据 `purchase` 交易的哈希，从链上日志中解析出买家地址和具体的交易信息 (`ExchangeInfo`)。
+/// 这是卖家履行订单（`fulfill`）前获取关键信息（如数据承诺、VSS 密钥承诺等）的必要步骤。
+///
+/// ## 输入
+/// - `client`: Ethers Provider 实例
+/// - `transaction_hash`: `purchase` 交易的哈希
+/// - `channel_address`: 发生购买的通道地址
+///
+/// ## 输出
+/// - `(Address, channel_abi::ExchangeInfo)`: 买家地址和该次购买的详细信息
 pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_hash: H256, channel_address: Address) -> Result<(Address, channel_abi::ExchangeInfo)> {
     let receipt = client.get_transaction_receipt(transaction_hash).await?.ok_or(anyhow!("TX missing"))?;
     let log = receipt.logs.iter().find(|l| l.address == channel_address).ok_or(anyhow!("No Log"))?;
@@ -82,7 +127,27 @@ pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_h
 // --- [第二部分：协议阶段实现 - 语义化重构] ---
 // ==========================================================
 
-/// STAGE 1: Listing
+/// # [STAGE 1] 卖家挂牌 (Listing)
+///
+/// ## 角色
+/// 卖家
+///
+/// ## 流程
+/// 1. **读取本地文件**: 从磁盘读取要出售的原始资产。
+/// 2. **计算原始资产 ID**: 对原始文件内容进行哈希，生成 `original_asset_id`，作为数据的唯一标识。
+/// 3. **加密资产**: 使用卖家的 `asset_encryption_key` 通过 ChaCha8 算法加密文件。
+/// 4. **上传加密数据**: 将加密后的文件上传到 Walrus 去中心化存储网络，并获取其 `walrus_blob_id`。
+/// 5. **创建/获取通道**: 在链上创建或获取一个个人交易通道。
+/// 6. **生成唯一销售 ID**: 结合通道信息和 nonce 生成本次挂牌的 `unique_sale_id`。
+/// 7. **链上挂牌**: 调用通道合约的 `listFile` 方法，将数据承诺 (`original_asset_id`)、价格等信息记录上链。
+///
+/// ## 输出
+/// - `unique_sale_id`: 本次销售的唯一链上 ID。
+/// - `onchain_data_version`: 原始资产 ID 的链上版本（哈希）。
+/// - `walrus_blob_id`: 加密数据在 Walrus 上的存储 ID。
+/// - `channel_addr`: 交易通道地址。
+/// - `original_asset_id`: 原始数据的哈希 ID。
+/// - `encrypted_blob_id`: 加密数据的哈希 ID。
 pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Result<([u8; 32], [u8; 32], String, Address, [u8; 32], [u8; 32])> {
     println!(">>> [STAGE 1] LISTING...");
     let file_payload = fs::read(INPUT_ASSET_NAME)?;
@@ -108,7 +173,20 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     Ok((unique_sale_id, onchain_data_version.into(), walrus_blob_id, channel_addr, original_asset_id, encrypted_blob_id))
 }
 
-/// STAGE 2: Purchase
+/// # [STAGE 2] 买家购买 (Purchase)
+///
+/// ## 角色
+/// 买家
+///
+/// ## 流程
+/// 1. **衍生共享密钥**: 使用买家固定的密钥和 `original_asset_id` 衍生出一个用于本次交易的 `secret_sharing_key`。
+/// 2. **加密共享密钥**: 使用卖家的 VSS 公钥 (此处为硬编码的模拟值) 通过 ECIES 算法加密 `secret_sharing_key`。
+/// 3. **计算 VSS 承诺**: 对 `secret_sharing_key` 进行哈希，生成 `vss_key_commitment`，用于后续 `fulfill` 阶段的验证。
+/// 4. **链上购买**: 调用通道合约的 `purchase` 方法，并支付指定价格的 ETH。交易中包含了加密后的共享密钥、VSS 承诺和有效期等信息。
+///
+/// ## 输出
+/// - `secret_sharing_key`: 买家本地保存的共享密钥，用于后续解密数据密钥。
+/// - `purchase_transaction_hash`: 本次购买交易的哈希。
 pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onchain_data_version: [u8; 32], channel_address: Address, original_asset_id: [u8; 32], seller_vss_pub: &[u8]) -> Result<([u8; 32], H256)> {
     println!(">>> [STAGE 2] PURCHASE...");
     let secret_sharing_key = key_derive(&[0xbb; 32], &original_asset_id).map_err(|e| anyhow!(e))?;
@@ -124,7 +202,24 @@ pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onch
     Ok((secret_sharing_key, tx.unwrap().transaction_hash))
 }
 
-/// STAGE 3: Fulfill
+/// # [STAGE 3] 卖家履行 (Fulfill)
+///
+/// ## 角色
+/// 卖家
+///
+/// ## 流程
+/// 1. **获取购买信息**: 从 `purchase` 交易事件中解析出买家和交易详情。
+/// 2. **解密共享密钥**: 从链上获取买家提交的加密共享密钥，并用自己的 VSS 私钥解密，得到 `secret_sharing_key`。
+/// 3. **封装数据密钥**: 使用解密出的 `secret_sharing_key` 加密真正的 `asset_encryption_key`。
+/// 4. **生成 VSS 证明**: 调用 SP1 ZKVM 生成 VSS (Verifiable Secret Sharing) 证明。
+///    - **作用**: 证明卖家正确地使用了 `secret_sharing_key` 来加密 `asset_encryption_key`。
+///    - **输入**: `secret_sharing_key`, `asset_encryption_key`。
+///    - **输出**: ZK 证明和公开值。
+/// 5. **生成 VDD 证明**: 调用 SP1 ZKVM 生成 VDD (Verifiable Data Decryption) 证明。
+///    - **作用**: 证明加密存储在 Walrus 上的数据 (`encrypted_blob_id`) 确实是由 `original_asset_id` 通过 `asset_encryption_key` 加密得来的。
+///    - **输入**: `original_asset_id`, `encrypted_blob_id`, `asset_encryption_key` 等。
+///    - **输出**: ZK 证明和公开值。
+/// 6. **链上履行**: 调用通道合约的 `fulfill` 方法，提交封装后的数据密钥、VSS 证明和 VDD 证明。
 pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, channel_address: Address, purchase_tx_hash: H256, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 3] FULFILL...");
     let (buyer, exchange_info) = get_purchase_info_from_event(ctx.signer.provider(), purchase_tx_hash, channel_address).await?;
@@ -152,10 +247,29 @@ pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str,
     Ok(())
 }
 
+/// # [PROOF] 生成 VDD (Verifiable Data Decryption) 证明
+///
+/// ## 角色
+/// 卖家 (证明者)
+///
+/// ## 作用
+/// 使用 SP1 ZKVM 生成一个 Plonk 证明，公开证明一个加密数据 `C` 是由一个公开的原始数据 `O` 使用一个私密密钥 `k` 加密得到的，
+/// 即 `C = Enc(O, k)`。合约在链上验证此证明，确保卖家没有欺诈 (例如，上传一个无关的加密文件)。
+///
+/// ## 流程
+/// 1. **准备数据**: 从本地和 Walrus 网络获取原始数据和加密数据。
+/// 2. **构建输入 (Stdin)**: 按照 Guest 程序 (`program-vdd-walrus-rslhve`) 的要求，将原始数据承诺、加密数据承诺、密钥承诺、采样证明等数据写入 `SP1Stdin`。
+/// 3. **生成诚实性采样**: 根据链上信息生成一系列随机采样点，并使用 `create_honest_proof` 创建这些点的局部同态证明，作为 ZK 电路的输入。
+/// 4. **调用 Prover**:
+///    - `client.setup(VDD_ELF)`: 加载 VDD Guest 程序的 ELF 文件，准备证明密钥 (pk) 和验证密钥 (vk)。
+///    - `client.prove(&pk, &stdin).plonk().run()`: 使用证明密钥和构造好的 Stdin 执行证明过程，生成 Plonk 证明。
+///
+/// ## 输出
+/// - `(Bytes, Bytes)`: Plonk 证明和公开值。
 pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<(Bytes, Bytes)> {
-    // 1. === Prepare inputs on host ===
+    // 1. === 准备 VDD 电路所需的全部输入 ===
     let origin_data = fs::read(INPUT_ASSET_NAME)?;
-
+    
     let mut reader = walrus_client.download_blob(&BlobId(walrus_blob_id.to_string())).await?;
     let mut cipher_data = Vec::new();
     reader.read_to_end(&mut cipher_data).await?;
@@ -164,7 +278,7 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
     let aux_data = b"maenad_v1";
     let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
 
-    // 2. === Build SP1 stdin ===
+    // 2. === 构建 SP1 Stdin ===
     let mut stdin = SP1Stdin::new();
     stdin.write(&original_asset_id);
     stdin.write(&encrypted_blob_id);
@@ -172,7 +286,7 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
     stdin.write(&aux_data.to_vec());
     stdin.write(&ctx.asset_encryption_key);
 
-    // Generate sampling proofs
+    // 生成 RSLH-VE 协议所需的诚实性采样证明
     let mut seed_h = Sha256::new();
     seed_h.update(&original_asset_id);
     seed_h.update(&encrypted_blob_id);
@@ -191,10 +305,12 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
         stdin.write_vec(proof.cipher_shard);
     }
 
-    // 3. === Setup & Prove ===
+    // 3. === 设置并运行 Prover ===
     let client = ProverClient::from_env();
     let (pk, _) = client.setup(VDD_ELF);
+    println!(">>> Generating VDD proof...");
     let proof = client.prove(&pk, &stdin).plonk().run().expect("proving failed");
+    println!(">>> VDD proof generated.");
 
     let public_values = proof.public_values.to_vec().into();
     let proof_bytes = proof.bytes();
@@ -202,7 +318,23 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
     Ok((proof_bytes.into(), public_values))
 }
 
-
+/// # [PROOF] 生成 VSS (Verifiable Secret Sharing) 证明
+///
+/// ## 角色
+/// 卖家 (证明者)
+///
+/// ## 作用
+/// 使用 SP1 ZKVM 生成一个 Plonk 证明，公开证明一个封装后的数据密钥 (`wrapped_asset_key_vec`) 是由一个公开的共享密钥 (`secret_sharing_key`)
+/// 正确加密一个私密的数据密钥 (`asset_encryption_key`) 得来的。这确保了卖家没有用错误的密钥进行封装。
+///
+/// ## 流程
+/// 1. **构建输入 (Stdin)**: 按照 Guest 程序 (`vss-program`) 的要求，将共享密钥、数据密钥和 nonce 等写入 `SP1Stdin`。
+/// 2. **调用 Prover**:
+///    - `client.setup(VSS_ELF)`: 加载 VSS Guest 程序的 ELF 文件。
+///    - `client.prove(&pk, &stdin).plonk().run()`: 执行证明过程，生成 Plonk 证明。
+///
+/// ## 输出
+/// - `(Bytes, Bytes)`: Plonk 证明和公开值。
 pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes)> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&1u8);
@@ -212,7 +344,10 @@ pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, 
 
     let client = ProverClient::from_env();
     let (pk, _) = client.setup(VSS_ELF);
+    println!(">>> Generating VSS proof...");
     let proof = client.prove(&pk, &stdin).plonk().run().expect("proving failed");
+    println!(">>> VSS proof generated.");
+
 
     let public_values = proof.public_values.to_vec().into();
     let proof_bytes = proof.bytes();
@@ -221,7 +356,17 @@ pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, 
 }
 
 
-/// STAGE 4: Recovery
+/// # [STAGE 4] 买家恢复数据 (Recovery)
+///
+/// ## 角色
+/// 买家
+///
+/// ## 流程
+/// 1. **监听事件**: 从 Hub 合约的 `DataKeyShared` 事件中获取所有买家对应的加密数据密钥列表。
+/// 2. **定位并解密**: 找到属于自己的那份加密数据密钥，并使用之前保存的 `secret_sharing_key` 对其解密，从而得到 `asset_encryption_key`。
+/// 3. **下载加密数据**: 使用 `walrus_blob_id` 从 Walrus 网络下载加密的资产文件。
+/// 4. **解密资产**: 使用恢复出的 `asset_encryption_key` 对下载的加密文件进行解密，得到原始资产。
+/// 5. **保存文件**: 将解密后的数据写入本地文件。
 pub async fn stage_4_recovery(walrus: &WalrusClient, ctx: &BuyerContext, blob_id: String, secret_sharing_key: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 4] RECOVERY...");
     let hub_inst = hub_abi::ExchangeHubContract::new(HUB_ADDRESS.parse::<Address>()?, ctx.signer.clone());
@@ -238,10 +383,18 @@ pub async fn stage_4_recovery(walrus: &WalrusClient, ctx: &BuyerContext, blob_id
     let nonce = derive_rslh_nonce(&asset_key, b"maenad_v1");
     let recovered_data = chacha8_decrypt(&ciphertext, &asset_key, &nonce, 0)?;
     fs::write(RECOVERED_ASSET_NAME, recovered_data)?;
+    println!(">>> Asset recovered and saved to {}", RECOVERED_ASSET_NAME);
     Ok(())
 }
 
-/// 核心修正：监听 Oracle 成功信号 (物理探测从 0 变为非 0)
+/// # [MONITOR] 等待 Oracle 信号
+///
+/// ## 角色
+/// 任何人 (通常是卖家，为了进入 Settle 阶段)
+///
+/// ## 作用
+/// 轮询通道合约的 `oracleSuccessUntil` 映射，等待外部的 Oracle 服务对 Walrus 上的数据可用性进行验证。
+/// 当 Oracle 确认数据可访问后，会更新这个映射中的时间戳。这是进入最终结算 (`settle`) 阶段的前提条件。
 pub async fn wait_for_oracle_signal(channel_address: Address, encrypted_blob_id: [u8; 32], signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>) -> Result<()> {
     println!(">>> [MONITOR] WAITING FOR ORACLE PULSE...");
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, signer.clone());
@@ -259,7 +412,14 @@ pub async fn wait_for_oracle_signal(channel_address: Address, encrypted_blob_id:
     Ok(())
 }
 
-/// STAGE 5: Settle
+/// # [STAGE 5] 卖家结算 (Settle)
+///
+/// ## 角色
+/// 卖家
+///
+/// ## 作用
+/// 在 Oracle 确认数据可用性后，调用 `settle` 方法，完成交易的最后一步。
+/// 合约会验证 Oracle 信号，并将买家支付的款项转给卖家。
 pub async fn stage_5_settle(ctx: &SellerContext, channel_address: Address, buyer: Address, info: channel_abi::ExchangeInfo, data_ver: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 5] SETTLEMENT...");
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
@@ -278,11 +438,11 @@ pub async fn stage_5_settle(ctx: &SellerContext, channel_address: Address, buyer
 pub struct SellerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>, pub owner_sk_bytes: [u8; 32], pub asset_encryption_key: [u8; 32] }
 pub struct BuyerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>> }
 
-mod config_check;
-
 #[tokio::main]
 async fn main() -> Result<()> {
+    // 在执行主流程前，先进行全面的配置和环境检查
     config_check::run_config_checks().await?;
+
     let provider = Provider::<Http>::try_from(ARBITRUM_SEPOLIA_RPC)?;
     let walrus_config = WalrusConfig {
         aggregator_url: WALRUS_LOCAL_ENDPOINT.to_string(),
@@ -291,6 +451,7 @@ async fn main() -> Result<()> {
     };
     let walrus_client = WalrusClient::new(walrus_config);
 
+    // 初始化买家和卖家的上下文，包含钱包签名器和密钥
     let seller_ctx = SellerContext {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), env::var("SELLER_KEY")?.parse()?)),
         owner_sk_bytes: [0x11; 32], asset_encryption_key: [0x22; 32]
@@ -299,24 +460,27 @@ async fn main() -> Result<()> {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), env::var("BUYER_KEY")?.parse()?))
     };
 
-    // 1. 挂牌
+    // --- 执行端到端完整流程 ---
+    
+    // 1. 卖家挂牌
     let (unique_sale_id, onchain_data_version, walrus_blob_id, channel_address, original_asset_id, encrypted_blob_id) = stage_1_listing(&walrus_client, &seller_ctx).await?;
     
-    // 2. 支付
+    // 2. 买家购买
     let (secret_sharing_key, purchase_transaction_hash) = stage_2_purchase(&buyer_ctx, unique_sale_id, onchain_data_version, channel_address, original_asset_id, &[0x02; 33]).await?;
     
-    // 3. 履行
+    // 3. 卖家履行
     stage_3_fulfill(&walrus_client, &walrus_blob_id, &seller_ctx, channel_address, purchase_transaction_hash, original_asset_id, encrypted_blob_id).await?;
     
-    // 4. 等待 Oracle 确认 (物理心跳)
+    // 4. 等待 Oracle 确认数据可用性
     wait_for_oracle_signal(channel_address, encrypted_blob_id, seller_ctx.signer.clone()).await?;
 
-    // 5. 结算
+    // 5. 卖家结算，收取款项
     let (buyer_address, exchange_info) = get_purchase_info_from_event(provider.provider(), purchase_transaction_hash, channel_address).await?;
     stage_5_settle(&seller_ctx, channel_address, buyer_address, exchange_info, onchain_data_version, encrypted_blob_id).await?;
 
-    // 6. 买家数据恢复
+    // 6. 买家恢复数据
     stage_4_recovery(&walrus_client, &buyer_ctx, walrus_blob_id, secret_sharing_key).await?;
 
+    println!("\n>>> End-to-end process completed successfully!");
     Ok(())
 }
