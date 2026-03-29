@@ -8,6 +8,7 @@ use storage::{WalrusClient, BlobId, StorageNetwork, WalrusConfig};
 
 use maenad_lib::kdf::key_derive;
 use maenad_lib::ecies;
+use dotenv::dotenv;
 
 mod config_check;
 
@@ -58,7 +59,12 @@ pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600;
 pub fn compute_sale_id(channel_address: Address, chain_id: u64, nonce: U256) -> [u8; 32] {
     let mut packed_bytes = Vec::new();
     packed_bytes.extend_from_slice(channel_address.as_bytes());
-    packed_bytes.extend_from_slice(&(chain_id as u32).to_be_bytes()); 
+    
+    // Correctly encode chain_id as uint256 (32 bytes)
+    let mut chain_id_bytes = [0u8; 32];
+    U256::from(chain_id).to_big_endian(&mut chain_id_bytes);
+    packed_bytes.extend_from_slice(&chain_id_bytes);
+
     let mut nonce_bytes = [0u8; 32]; 
     nonce.to_big_endian(&mut nonce_bytes);
     packed_bytes.extend_from_slice(&nonce_bytes);
@@ -105,11 +111,14 @@ pub async fn get_or_create_channel(signer: Arc<SignerMiddleware<Provider<Http>, 
 ///
 /// ## 输出
 /// - `(Address, channel_abi::ExchangeInfo)`: 买家地址和该次购买的详细信息
-pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_hash: H256, channel_address: Address) -> Result<(Address, channel_abi::ExchangeInfo)> {
+pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_hash: H256, _channel_address: Address) -> Result<(Address, channel_abi::ExchangeInfo)> {
+    let hub_addr = HUB_ADDRESS.parse::<Address>()?;
     let receipt = client.get_transaction_receipt(transaction_hash).await?.ok_or(anyhow!("TX missing"))?;
-    let log = receipt.logs.iter().find(|l| l.address == channel_address).ok_or(anyhow!("No Log"))?;
-    let channel_inst = channel_abi::ExchangeChannelContract::new(channel_address, Arc::new(client.clone()));
-    let purchase_ev = channel_inst.decode_event::<PurchaseEventFilter>("PurchaseEvent", log.topics.clone(), log.data.clone())?;
+    
+    let log = receipt.logs.iter().find(|l| l.address == hub_addr).ok_or(anyhow!("No PurchaseEvent Log Found from Hub"))?;
+
+    let hub_inst = hub_abi::ExchangeHubContract::new(hub_addr, Arc::new(client.clone()));
+    let purchase_ev = hub_inst.decode_event::<hub_abi::PurchaseEventFilter>("PurchaseEvent", log.topics.clone(), log.data.clone())?;
     
     let h = purchase_ev.exchange_info;
     let channel_info = channel_abi::ExchangeInfo {
@@ -120,6 +129,7 @@ pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_h
         data_commitment: h.data_commitment,
         vss_key_commitment: h.vss_key_commitment,
     };
+
     Ok((purchase_ev.buyer, channel_info))
 }
 
@@ -164,7 +174,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     let sale_nonce = channel_contract.nonce().call().await?;
     let unique_sale_id = compute_sale_id(channel_addr, ARBITRUM_SEPOLIA_CHAIN_ID, sale_nonce);
     let onchain_data_version = ethers::utils::keccak256(original_asset_id);
-    
+
     let arg_commit = channel_abi::DataCommitment { data: original_asset_id.to_vec().into() };
     let arg_price = 10u128.pow(16).into(); // 0.01 ETH
     let arg_meta = "Maenad Asset v1".to_string();
@@ -309,7 +319,7 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
     let client = ProverClient::from_env();
     let (pk, _) = client.setup(VDD_ELF);
     println!(">>> Generating VDD proof...");
-    let proof = client.prove(&pk, &stdin).plonk().run().expect("proving failed");
+    let proof = client.prove(&pk, &stdin).groth16().run().expect("proving failed");
     println!(">>> VDD proof generated.");
 
     let public_values = proof.public_values.to_vec().into();
@@ -345,7 +355,7 @@ pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, 
     let client = ProverClient::from_env();
     let (pk, _) = client.setup(VSS_ELF);
     println!(">>> Generating VSS proof...");
-    let proof = client.prove(&pk, &stdin).plonk().run().expect("proving failed");
+    let proof = client.prove(&pk, &stdin).groth16().run().expect("proving failed");
     println!(">>> VSS proof generated.");
 
 
@@ -441,6 +451,7 @@ pub struct BuyerContext { pub signer: Arc<SignerMiddleware<Provider<Http>, Local
 #[tokio::main]
 async fn main() -> Result<()> {
     // 在执行主流程前，先进行全面的配置和环境检查
+    dotenv().ok();
     config_check::run_config_checks().await?;
 
     let provider = Provider::<Http>::try_from(ARBITRUM_SEPOLIA_RPC)?;
@@ -452,12 +463,19 @@ async fn main() -> Result<()> {
     let walrus_client = WalrusClient::new(walrus_config);
 
     // 初始化买家和卖家的上下文，包含钱包签名器和密钥
+    let seller_wallet = env::var("SELLER_KEY")?
+        .parse::<LocalWallet>()?
+        .with_chain_id(ARBITRUM_SEPOLIA_CHAIN_ID);
+    let buyer_wallet = env::var("BUYER_KEY")?
+        .parse::<LocalWallet>()?
+        .with_chain_id(ARBITRUM_SEPOLIA_CHAIN_ID);
+
     let seller_ctx = SellerContext {
-        signer: Arc::new(SignerMiddleware::new(provider.clone(), env::var("SELLER_KEY")?.parse()?)),
+        signer: Arc::new(SignerMiddleware::new(provider.clone(), seller_wallet)),
         owner_sk_bytes: [0x11; 32], asset_encryption_key: [0x22; 32]
     };
     let buyer_ctx = BuyerContext {
-        signer: Arc::new(SignerMiddleware::new(provider.clone(), env::var("BUYER_KEY")?.parse()?))
+        signer: Arc::new(SignerMiddleware::new(provider.clone(), buyer_wallet))
     };
 
     // --- 执行端到端完整流程 ---

@@ -27,12 +27,20 @@ pub async fn run_config_checks() -> Result<()> {
     // Walrus 节点是本系统中的去中心化存储层，负责托管加密后的数据。
     println!("Checking Walrus node status...");
     match reqwest::get("http://localhost:31415").await {
-        Ok(res) if res.status().is_success() => {
+        Ok(res) if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND => {
+            // We accept 2xx or 404 (since the root path might not be defined)
             println!("  - Walrus node is running.");
         }
-        _ => {
-            // 如果节点未运行，提供清晰的启动指令。
-            return Err(anyhow!("Walrus node is not running. Please start it with: walrus daemon --max-body-size 1048576000 --sub-wallets-dir ~/.sui/sui_config"));
+        Ok(res) => {
+            // Got a response, but it's not a success status code we expect.
+            return Err(anyhow!(
+                "Walrus node returned an unexpected status: {}. Please check the node's logs.",
+                res.status()
+            ));
+        }
+        Err(e) => {
+            // reqwest::get failed.
+            return Err(anyhow!("Failed to connect to Walrus node at http://localhost:31415: {}. Is it running? Please start it with: walrus daemon --max-body-size 1048576000 --sub-wallets-dir ~/.sui/sui_config", e));
         }
     }
 
@@ -55,25 +63,8 @@ pub async fn run_config_checks() -> Result<()> {
     println!("  - Buyer balance: {} ETH", ethers::utils::format_ether(buyer_balance));
     println!("  - SP1 Prover balance: {} ETH", ethers::utils::format_ether(sp1_balance));
 
-    // 查询 SP1 `PROVE` 代币余额
-    // PROVE 代币是支付 SP1 证明网络费用的凭证。余额不足会导致证明提交失败。
-    // 用户需要通过 Etherscan 上的 `permitAndDeposit` 交易进行充值。
-    let prove_token_address = "0x6bef15d938d4e72056ac92ea4bdd0d76b1c4ad29".parse::<Address>()?;
-    let prove_token_contract = Ierc20::new(prove_token_address, std::sync::Arc::new(provider));
-    let sp1_prove_balance = prove_token_contract.balance_of(sp1_wallet.address()).call().await?;
-    println!("  - SP1 Prover PROVE token balance: {}", ethers::utils::format_units(sp1_prove_balance, 18)?);
-    if sp1_prove_balance < U256::from(10u128.pow(18)) { // 假设至少需要 10 PROVE
-        println!("  - WARNING: SP1 PROVE token balance is low. Please top up at https://etherscan.io/tx/0x506d744f771e5253556ae9154ecaa26d081a7e66da380933541a88d90c0202a1");
-    }
+    // SP1 `PROVE` token balance check disabled as per user request.
 
     println!(">>> Configuration checks passed.");
     Ok(())
 }
-
-// 定义 ERC20 `balanceOf` 函数的最小 ABI 接口，以便进行链上查询。
-abigen!(
-    Ierc20,
-    r#"[
-        function balanceOf(address account) external view returns (uint256)
-    ]"#,
-);
