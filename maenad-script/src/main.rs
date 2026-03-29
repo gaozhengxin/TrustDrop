@@ -18,7 +18,7 @@ use maenad_sdk::chacha8::{chacha8_encrypt, chacha8_decrypt};
 use maenad_sdk::walrus::{compute_rs_id, upload_data_idempotent};
 use sp1_sdk::{network::{FulfillmentStrategy, NetworkMode}, Prover, ProverClient, SP1Stdin};
 use sha2::{Sha256, Digest};
-use maenad_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT};
+use maenad_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT, SYMBOL_SIZE};
 
 // ABI 引用
 use maenad_sdk::abi::exchange_hub_contract as hub_abi;
@@ -160,7 +160,11 @@ pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_h
 /// - `encrypted_blob_id`: 加密数据的哈希 ID。
 pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Result<([u8; 32], [u8; 32], String, Address, [u8; 32], [u8; 32])> {
     println!(">>> [STAGE 1] LISTING...");
-    let file_payload = fs::read(INPUT_ASSET_NAME)?;
+    let mut file_payload = fs::read(INPUT_ASSET_NAME)?;
+    let original_len = file_payload.len();
+    let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
+    file_payload.resize(padded_len, 0);
+
     let original_asset_id = compute_rs_id(&file_payload)?;
     
     let asset_nonce = derive_rslh_nonce(&ctx.asset_encryption_key, b"maenad_v1");
@@ -278,7 +282,10 @@ pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str,
 /// - `(Bytes, Bytes)`: Plonk 证明和公开值。
 pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<(Bytes, Bytes)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
-    let origin_data = fs::read(INPUT_ASSET_NAME)?;
+    let mut origin_data = fs::read(INPUT_ASSET_NAME)?;
+    let original_len = origin_data.len();
+    let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
+    origin_data.resize(padded_len, 0);
     
     let mut reader = walrus_client.download_blob(&BlobId(walrus_blob_id.to_string())).await?;
     let mut cipher_data = Vec::new();
