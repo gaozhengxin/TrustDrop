@@ -203,7 +203,7 @@ async fn stage_1_5_submit_key_commitment(ctx: &SellerContext, channel_address: A
     println!(">>> [STAGE 1.5] SUBMITTING DATA KEY COMMITMENT...");
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
     
-    let data_key_commitment = ethers::utils::keccak256(ctx.asset_encryption_key);
+    let data_key_commitment: [u8; 32] = Sha256::digest(&ctx.asset_encryption_key).into();
     
     channel_contract
         .submit_data_key_commitment(data_key_commitment.into())
