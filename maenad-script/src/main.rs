@@ -187,6 +187,34 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     Ok((unique_sale_id, onchain_data_version.into(), walrus_blob_id, channel_addr, original_asset_id, encrypted_blob_id))
 }
 
+/// # [STAGE 1.5] 卖家提交数据密钥承诺
+///
+/// ## 角色
+/// 卖家
+///
+/// ## 作用
+/// 在 `fulfill` 之前，卖家必须调用 `submitDataKeyCommitment` 方法，将用于加密资产的 `asset_encryption_key` 的哈希承诺提交上链。
+/// 这个承诺 (`dataKeyCommitment`) 后续会被 VSS 和 VDD 证明用来生成绑定哈希，确保证明与特定的数据密钥相关联。
+///
+/// ## 输入
+/// - `ctx`: 卖家的上下文，包含钱包签名器和密钥
+/// - `channel_address`: 交易通道地址
+async fn stage_1_5_submit_key_commitment(ctx: &SellerContext, channel_address: Address) -> Result<()> {
+    println!(">>> [STAGE 1.5] SUBMITTING DATA KEY COMMITMENT...");
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
+    
+    let data_key_commitment = ethers::utils::keccak256(ctx.asset_encryption_key);
+    
+    channel_contract
+        .submit_data_key_commitment(data_key_commitment.into())
+        .send()
+        .await?
+        .await?;
+        
+    println!(">>> Data key commitment submitted.");
+    Ok(())
+}
+
 /// # [STAGE 2] 买家购买 (Purchase)
 ///
 /// ## 角色
@@ -505,6 +533,9 @@ async fn main() -> Result<()> {
     
     // 1. 卖家挂牌
     let (unique_sale_id, onchain_data_version, walrus_blob_id, channel_address, original_asset_id, encrypted_blob_id) = stage_1_listing(&walrus_client, &seller_ctx).await?;
+
+    // 1.5. 卖家提交数据密钥承诺
+    stage_1_5_submit_key_commitment(&seller_ctx, channel_address).await?;
     
     // 2. 买家购买
     let (secret_sharing_key, purchase_transaction_hash) = stage_2_purchase(&buyer_ctx, unique_sale_id, onchain_data_version, channel_address, original_asset_id, &[0x02; 33]).await?;
