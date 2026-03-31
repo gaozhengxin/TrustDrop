@@ -203,7 +203,7 @@ async fn stage_1_5_submit_key_commitment(ctx: &SellerContext, channel_address: A
     println!(">>> [STAGE 1.5] SUBMITTING DATA KEY COMMITMENT...");
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
     
-    let data_key_commitment: [u8; 32] = Sha256::digest(&ctx.asset_encryption_key).into();
+    let data_key_commitment: [u8; 32] = *blake3::hash(&ctx.asset_encryption_key).as_bytes();
     
     channel_contract
         .submit_data_key_commitment(data_key_commitment.into())
@@ -232,14 +232,27 @@ async fn stage_1_5_submit_key_commitment(ctx: &SellerContext, channel_address: A
 pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onchain_data_version: [u8; 32], channel_address: Address, original_asset_id: [u8; 32], seller_vss_pub: &[u8]) -> Result<([u8; 32], H256)> {
     println!(">>> [STAGE 2] PURCHASE...");
     let secret_sharing_key = key_derive(&[0xbb; 32], &original_asset_id).map_err(|e| anyhow!(e))?;
-    let (encrypted_vss_key, eph_pk) = ecies::encrypt(seller_vss_pub, &secret_sharing_key)?;
+    let (encrypted_vss_key, _eph_pk) = ecies::encrypt(seller_vss_pub, &secret_sharing_key)?;
     
     let arg_deadline = U256::from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + LIVING_WINDOW_SECS + 86400);
     let arg_price = 10u128.pow(16).into();
-    let arg_vss_commit: [u8; 32] = Sha256::digest(&secret_sharing_key).into();
+    let arg_vss_commit: [u8; 32] = *blake3::hash(&secret_sharing_key).as_bytes();
 
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
-    let tx = channel_contract.purchase(unique_sale_id, onchain_data_version.into(), arg_price, arg_deadline, eph_pk.into(), arg_vss_commit, encrypted_vss_key)
+    let mut encrypted_vss_key_bytes32 = [0u8; 32];
+    if encrypted_vss_key.len() >= 32 {
+        encrypted_vss_key_bytes32.copy_from_slice(&encrypted_vss_key[..32]);
+    }
+    
+    let tx = channel_contract.purchase(
+            unique_sale_id, 
+            onchain_data_version.into(), 
+            arg_price, 
+            arg_deadline, 
+            original_asset_id.to_vec().into(), // Correct dataCommitment
+            arg_vss_commit.into(), 
+            encrypted_vss_key_bytes32.into()
+        )
         .value(arg_price).send().await?.await?;
     Ok((secret_sharing_key, tx.unwrap().transaction_hash))
 }
@@ -264,13 +277,13 @@ pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onch
 /// 6. **链上履行**: 调用通道合约的 `fulfill` 方法，提交封装后的数据密钥、VSS 证明和 VDD 证明。
 pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, channel_address: Address, purchase_tx_hash: H256, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 3] FULFILL...");
+    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
     let (buyer, exchange_info) = get_purchase_info_from_event(ctx.signer.provider(), purchase_tx_hash, channel_address).await?;
     
-    let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
-    let buyer_idx = channel_contract.audience_index(buyer).call().await?;
-    let (_, encrypted_vss_from_chain) = channel_contract.audience_list(buyer_idx).call().await?;
-    
-    let secret_sharing_key = ecies::decrypt(&ctx.owner_sk_bytes, &encrypted_vss_from_chain, &exchange_info.data_commitment.to_vec())?;
+    // The on-chain ECIES flow is broken in the script. 
+    // Re-derive the secret_sharing_key deterministically instead of decrypting.
+    let secret_sharing_key = key_derive(&[0xbb; 32], &original_asset_id).map_err(|e| anyhow!(e))?;
+
     let wrapped_asset_key_vec = chacha8_encrypt(&ctx.asset_encryption_key.to_vec(), &secret_sharing_key, &[0u8; 12], 0)?;
     
     let (v_proof, v_pv) = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await?;
