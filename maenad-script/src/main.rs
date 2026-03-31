@@ -236,7 +236,7 @@ pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onch
     
     let arg_deadline = U256::from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + LIVING_WINDOW_SECS + 86400);
     let arg_price = 10u128.pow(16).into();
-    let arg_vss_commit = blake3::hash(&secret_sharing_key).into();
+    let arg_vss_commit: [u8; 32] = Sha256::digest(&secret_sharing_key).into();
 
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
     let tx = channel_contract.purchase(unique_sale_id, onchain_data_version.into(), arg_price, arg_deadline, eph_pk.into(), arg_vss_commit, encrypted_vss_key)
@@ -295,7 +295,7 @@ pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str,
 /// 卖家 (证明者)
 ///
 /// ## 作用
-/// 使用 SP1 ZKVM 生成一个 Plonk 证明，公开证明一个加密数据 `C` 是由一个公开的原始数据 `O` 使用一个私密密钥 `k` 加密得到的，
+/// 使用 SP1 ZKVM 生成一个 ZK 证明，公开证明一个加密数据 `C` 是由一个公开的原始数据 `O` 使用一个私密密钥 `k` 加密得到的，
 /// 即 `C = Enc(O, k)`。合约在链上验证此证明，确保卖家没有欺诈 (例如，上传一个无关的加密文件)。
 ///
 /// ## 流程
@@ -303,11 +303,11 @@ pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str,
 /// 2. **构建输入 (Stdin)**: 按照 Guest 程序 (`program-vdd-walrus-rslhve`) 的要求，将原始数据承诺、加密数据承诺、密钥承诺、采样证明等数据写入 `SP1Stdin`。
 /// 3. **生成诚实性采样**: 根据链上信息生成一系列随机采样点，并使用 `create_honest_proof` 创建这些点的局部同态证明，作为 ZK 电路的输入。
 /// 4. **调用 Prover**:
-///    - `client.setup(VDD_ELF)`: 加载 VDD Guest 程序的 ELF 文件，准备证明密钥 (pk) 和验证密钥 (vk)。
-///    - `client.prove(&pk, &stdin).plonk().run()`: 使用证明密钥和构造好的 Stdin 执行证明过程，生成 Plonk 证明。
+///    - `client.setup(VDD_ELF)`: 加载 VDD Guest 程序的 ELF 文件，准备证明环境。
+///    - `client.prove(...)`: 使用证明密钥和构造好的 Stdin 执行证明过程，生成 ZK 证明。
 ///
 /// ## 输出
-/// - `(Bytes, Bytes)`: Plonk 证明和公开值。
+/// - `(Bytes, Bytes)`: ZK 证明和公开值。
 pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<(Bytes, Bytes)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
     let mut origin_data = fs::read(INPUT_ASSET_NAME)?;
@@ -377,17 +377,17 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
 /// 卖家 (证明者)
 ///
 /// ## 作用
-/// 使用 SP1 ZKVM 生成一个 Plonk 证明，公开证明一个封装后的数据密钥 (`wrapped_asset_key_vec`) 是由一个公开的共享密钥 (`secret_sharing_key`)
+/// 使用 SP1 ZKVM 生成一个 ZK 证明，公开证明一个封装后的数据密钥 (`wrapped_asset_key_vec`) 是由一个公开的共享密钥 (`secret_sharing_key`)
 /// 正确加密一个私密的数据密钥 (`asset_encryption_key`) 得来的。这确保了卖家没有用错误的密钥进行封装。
 ///
 /// ## 流程
 /// 1. **构建输入 (Stdin)**: 按照 Guest 程序 (`vss-program`) 的要求，将共享密钥、数据密钥和 nonce 等写入 `SP1Stdin`。
 /// 2. **调用 Prover**:
 ///    - `client.setup(VSS_ELF)`: 加载 VSS Guest 程序的 ELF 文件。
-///    - `client.prove(&pk, &stdin).plonk().run()`: 执行证明过程，生成 Plonk 证明。
+///    - `client.prove(...)`: 执行证明过程，生成 ZK 证明。
 ///
 /// ## 输出
-/// - `(Bytes, Bytes)`: Plonk 证明和公开值。
+/// - `(Bytes, Bytes)`: ZK 证明和公开值。
 pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes)> {
     let mut stdin = SP1Stdin::new();
     stdin.write(&1u8);
