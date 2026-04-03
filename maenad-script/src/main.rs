@@ -16,13 +16,22 @@ mod config_check;
 use maenad_sdk::chacha8::{chacha8_encrypt, chacha8_decrypt};
 // use maenad_sdk::proof::{run_vdd_proof};
 use maenad_sdk::walrus::{compute_rs_id, upload_data_idempotent};
-use sp1_sdk::{network::{FulfillmentStrategy, NetworkMode}, Prover, ProverClient, SP1Stdin};
+use sp1_sdk::{network::{FulfillmentStrategy, NetworkMode}, Prover, ProverClient, SP1Stdin, HashableKey};
 use sha2::{Sha256, Digest};
 use maenad_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT, SYMBOL_SIZE};
 
 // ABI 引用
 use maenad_sdk::abi::exchange_hub_contract as hub_abi;
 use maenad_sdk::abi::exchange_channel_contract as channel_abi;
+
+abigen!(VSSVerifierContract, r#"[
+    function verifyVSSProof(bytes calldata _publicValues, bytes calldata _proofBytes) external view
+]"#);
+
+abigen!(VDDVerifierContract, r#"[
+    function verifyVDDProof(bytes calldata _publicValues, bytes calldata _proofBytes) external view
+]"#);
+
 use maenad_sdk::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter};
 
 const VSS_ELF: &[u8] = include_bytes!("../../guest/vss/target/elf-compilation/riscv32im-succinct-zkvm-elf/release/vss-program");
@@ -35,9 +44,12 @@ pub const RECOVERED_ASSET_NAME: &str = "Mo_recovered.mp4";
 pub const ARBITRUM_SEPOLIA_RPC: &str = "https://sepolia-rollup.arbitrum.io/rpc";
 pub const WALRUS_LOCAL_ENDPOINT: &str = "http://localhost:31415"; 
 
-pub const HUB_ADDRESS: &str = "0x2F0E2DeA5385e8Ea5234ea5c1f46A255fC330b5F";
+pub const HUB_ADDRESS: &str = "0x2e506eF3F3cE222F276ddA64Df239CEF92683a78";
 pub const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
 pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600; 
+
+pub const VSS_VERIFIER_ADDRESS: &str = "0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2";
+pub const VDD_VERIFIER_ADDRESS: &str = "0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071";
 
 // ==========================================================
 // --- [第一部分：原子工具函数] ---
@@ -131,6 +143,102 @@ pub async fn get_purchase_info_from_event(client: &Provider<Http>, transaction_h
     };
 
     Ok((purchase_ev.buyer, channel_info))
+}
+
+/// # [TOOL] 模拟 VSS 验证
+pub async fn simulate_vss_verify(
+    provider: &Provider<Http>,
+    verifier_address: Address,
+    vk_string: String,
+    public_values: Bytes,
+    proof_bytes: Bytes,
+) -> Result<()> {
+    println!(">>> [SIMULATION] Testing VSS verification on Verifier: {}", verifier_address);
+    println!("  - Input VK: {}", vk_string);
+    println!("  - Input Public Values: 0x{}", hex::encode(public_values.to_vec()));
+    println!("  - Input Proof (len): {} bytes", proof_bytes.len());
+
+    let contract = VSSVerifierContract::new(verifier_address, Arc::new(provider.clone()));
+    let call_builder = contract.verify_vss_proof(public_values.clone(), proof_bytes.clone());
+    
+    if let Some(calldata) = call_builder.calldata() {
+        println!(">>> [DEBUG] VSS Transaction Calldata: 0x{}", hex::encode(&calldata));
+    }
+
+    match call_builder.call().await {
+        Ok(_) => {
+            println!(">>> [SIMULATION] VSS Proof verified successfully!");
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(revert_data) = e.as_revert() {
+                let hex_revert = hex::encode(revert_data);
+                println!(">>> [DEBUG] Raw Revert Data: 0x{}", hex_revert);
+                let selector = if hex_revert.len() >= 8 { &hex_revert[0..8] } else { &hex_revert };
+                let meaning = match selector {
+                    "7fcdd1f4" => "InvalidPublicValues() - SP1 Verifier rejected the public values. This almost always means the VK hardcoded in your deployed verifier contract is stale and doesn't match the newly compiled guest program!",
+                    "09bde339" => "InvalidProof() - The ZK proof itself failed mathematical verification.",
+                    "1b50428d" => "WrongVerificationKey() - The VK does not match the one expected by the Verifier.",
+                    _ => "Unknown Custom Error",
+                };
+                let err_msg = format!("VSS Proof FAILED. Details: Revert(0x{}) -> {}", selector, meaning);
+                println!(">>> [SIMULATION] {}", err_msg);
+                Err(anyhow!(err_msg))
+            } else {
+                let err_msg = format!("VSS Proof FAILED. Details: {:?}", e);
+                println!(">>> [SIMULATION] {}", err_msg);
+                Err(anyhow!(err_msg))
+            }
+        }
+    }
+}
+
+/// # [TOOL] 模拟 VDD 验证
+pub async fn simulate_vdd_verify(
+    provider: &Provider<Http>,
+    verifier_address: Address,
+    vk_string: String,
+    public_values: Bytes,
+    proof_bytes: Bytes,
+) -> Result<()> {
+    println!(">>> [SIMULATION] Testing VDD verification on Verifier: {}", verifier_address);
+    println!("  - Input VK: {}", vk_string);
+    println!("  - Input Public Values: 0x{}", hex::encode(public_values.to_vec()));
+    println!("  - Input Proof (len): {} bytes", proof_bytes.len());
+
+    let contract = VDDVerifierContract::new(verifier_address, Arc::new(provider.clone()));
+    let call_builder = contract.verify_vdd_proof(public_values.clone(), proof_bytes.clone());
+    
+    if let Some(calldata) = call_builder.calldata() {
+        println!(">>> [DEBUG] VDD Transaction Calldata: 0x{}", hex::encode(&calldata));
+    }
+
+    match call_builder.call().await {
+        Ok(_) => {
+            println!(">>> [SIMULATION] VDD Proof verified successfully!");
+            Ok(())
+        }
+        Err(e) => {
+            if let Some(revert_data) = e.as_revert() {
+                let hex_revert = hex::encode(revert_data);
+                println!(">>> [DEBUG] Raw Revert Data: 0x{}", hex_revert);
+                let selector = if hex_revert.len() >= 8 { &hex_revert[0..8] } else { &hex_revert };
+                let meaning = match selector {
+                    "7fcdd1f4" => "InvalidPublicValues() - SP1 Verifier rejected the public values. Check if your deployed verifier VK is out of date!",
+                    "09bde339" => "InvalidProof() - The ZK proof itself failed mathematical verification.",
+                    "1b50428d" => "WrongVerificationKey() - The VK does not match the one expected by the Verifier.",
+                    _ => "Unknown Custom Error",
+                };
+                let err_msg = format!("VDD Proof FAILED. Details: Revert(0x{}) -> {}", selector, meaning);
+                println!(">>> [SIMULATION] {}", err_msg);
+                Err(anyhow!(err_msg))
+            } else {
+                let err_msg = format!("VDD Proof FAILED. Details: {:?}", e);
+                println!(">>> [SIMULATION] {}", err_msg);
+                Err(anyhow!(err_msg))
+            }
+        }
+    }
 }
 
 // ==========================================================
@@ -277,26 +385,68 @@ pub async fn stage_2_purchase(ctx: &BuyerContext, unique_sale_id: [u8; 32], onch
 /// 6. **链上履行**: 调用通道合约的 `fulfill` 方法，提交封装后的数据密钥、VSS 证明和 VDD 证明。
 pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, channel_address: Address, purchase_tx_hash: H256, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<()> {
     println!(">>> [STAGE 3] FULFILL...");
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+
     let channel_contract = channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
     let (buyer, exchange_info) = get_purchase_info_from_event(ctx.signer.provider(), purchase_tx_hash, channel_address).await?;
     
-    // The on-chain ECIES flow is broken in the script. 
-    // Re-derive the secret_sharing_key deterministically instead of decrypting.
     let secret_sharing_key = key_derive(&[0xbb; 32], &original_asset_id).map_err(|e| anyhow!(e))?;
-
     let wrapped_asset_key_vec = chacha8_encrypt(&ctx.asset_encryption_key.to_vec(), &secret_sharing_key, &[0u8; 12], 0)?;
-    
-    let (v_proof, v_pv) = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await?;
-    let (d_proof, d_pv) = generate_vdd_proof(walrus_client, walrus_blob_id, ctx, original_asset_id, encrypted_blob_id).await?;
 
-    let arg_vss = channel_abi::Vssargs { 
-        encrypted_data_key: wrapped_asset_key_vec.try_into().unwrap(), 
-        proof: v_proof, public_values: v_pv 
-    };
-    let arg_vdd = channel_abi::Vddargs { 
-        proof: d_proof, public_values: d_pv, c_cipher: encrypted_blob_id.to_vec().into() 
-    };
+    // --- 使用硬编码的 Verifier 地址 ---
+    let vss_verifier_addr = Some(VSS_VERIFIER_ADDRESS.parse::<Address>().unwrap());
+    let vdd_verifier_addr = Some(VDD_VERIFIER_ADDRESS.parse::<Address>().unwrap());
+    println!("  - Using VSS Verifier at: {}", VSS_VERIFIER_ADDRESS);
+    println!("  - Using VDD Verifier at: {}", VDD_VERIFIER_ADDRESS);
+
+    // --- 生成并独立模拟 VSS 证明 ---
+    let vss_result = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await;
+    let (v_proof, v_pv) = if let Ok((proof, pv, vk)) = vss_result {
+        if let Some(addr) = vss_verifier_addr {
+            if let Err(e) = simulate_vss_verify(ctx.signer.provider(), addr, vk, pv.clone(), proof.clone()).await {
+                errors.push(e);
+            }
+        }
+        (proof, pv)
+    } else if let Err(e) = vss_result {
+        errors.push(anyhow!("VSS proof generation failed: {:?}", e));
+        (Bytes::new(), Bytes::new())
+    } else { (Bytes::new(), Bytes::new()) };
+
+    // --- 生成并独立模拟 VDD 证明 (无论 VSS 是否成功) ---
+    let vdd_result = generate_vdd_proof(walrus_client, walrus_blob_id, ctx, original_asset_id, encrypted_blob_id).await;
+    let (d_proof, d_pv) = if let Ok((proof, pv, vk)) = vdd_result {
+        if let Some(addr) = vdd_verifier_addr {
+            if let Err(e) = simulate_vdd_verify(ctx.signer.provider(), addr, vk, pv.clone(), proof.clone()).await {
+                errors.push(e);
+            }
+        }
+        (proof, pv)
+    } else if let Err(e) = vdd_result {
+        errors.push(anyhow!("VDD proof generation failed: {:?}", e));
+        (Bytes::new(), Bytes::new())
+    } else { (Bytes::new(), Bytes::new()) };
+
+    // --- 统一检查所有错误 ---
+    if !errors.is_empty() {
+        let combined_error = errors.into_iter().map(|e| e.to_string()).collect::<Vec<String>>().join("\n- ");
+        return Err(anyhow!("One or more verification steps failed:\n- {}", combined_error));
+    }
+
+    // --- 构造参数并发送最终交易 ---
+    println!(">>> All simulations passed. Submitting fulfill transaction...");
+    let arg_vss = channel_abi::Vssargs { encrypted_data_key: wrapped_asset_key_vec.try_into().unwrap(), proof: v_proof, public_values: v_pv };
+    let arg_vdd = channel_abi::Vddargs { proof: d_proof, public_values: d_pv, c_cipher: encrypted_blob_id.to_vec().into() };
     let arg_ver = ethers::utils::keccak256(original_asset_id).into();
+
+    println!(">>> [STAGE 3] FULFILL CONTRACT CALL ARGS:");
+    println!("  - buyer: {:?}", buyer);
+    println!("  - exchange_info.sale_digest: 0x{}", hex::encode(exchange_info.sale_digest));
+    println!("  - arg_ver: 0x{}", hex::encode(arg_ver));
+    println!("  - arg_vss.encrypted_data_key: 0x{}", hex::encode(&arg_vss.encrypted_data_key));
+    println!("  - arg_vss.public_values: 0x{}", hex::encode(arg_vss.public_values.to_vec()));
+    println!("  - arg_vdd.c_cipher: 0x{}", hex::encode(arg_vdd.c_cipher.to_vec()));
+    println!("  - arg_vdd.public_values: 0x{}", hex::encode(arg_vdd.public_values.to_vec()));
 
     channel_contract.fulfill(buyer, exchange_info, arg_ver, arg_vss, arg_vdd).send().await?.await?;
     Ok(())
@@ -321,7 +471,7 @@ pub async fn stage_3_fulfill(walrus_client: &WalrusClient, walrus_blob_id: &str,
 ///
 /// ## 输出
 /// - `(Bytes, Bytes)`: ZK 证明和公开值。
-pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<(Bytes, Bytes)> {
+pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &str, ctx: &SellerContext, original_asset_id: [u8; 32], encrypted_blob_id: [u8; 32]) -> Result<(Bytes, Bytes, String)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
     let mut origin_data = fs::read(INPUT_ASSET_NAME)?;
     let original_len = origin_data.len();
@@ -332,9 +482,17 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
     let mut cipher_data = Vec::new();
     reader.read_to_end(&mut cipher_data).await?;
 
-    let c_key_bytes: [u8; 32] = Sha256::digest(&ctx.asset_encryption_key).into();
+    // 【重大修复】：必须使用和 stage_1_5_submit_key_commitment 相同的哈希算法
+    let c_key_bytes: [u8; 32] = *blake3::hash(&ctx.asset_encryption_key).as_bytes();
     let aux_data = b"maenad_v1";
     let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
+
+    println!(">>> [VDD PROOF] zkVM Inputs:");
+    println!("  - original_asset_id: 0x{}", hex::encode(original_asset_id));
+    println!("  - encrypted_blob_id: 0x{}", hex::encode(encrypted_blob_id));
+    println!("  - c_key_bytes: 0x{}", hex::encode(c_key_bytes));
+    println!("  - aux_data: 0x{}", hex::encode(aux_data));
+    println!("  - asset_encryption_key: 0x{}", hex::encode(ctx.asset_encryption_key));
 
     // 2. === 构建 SP1 Stdin ===
     let mut stdin = SP1Stdin::new();
@@ -366,7 +524,8 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
     // 3. === 设置并运行 Prover ===
     env::set_var("NETWORK_PRIVATE_KEY", env::var("SP1_PRIVATE_KEY").unwrap());
     let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
-    let (pk, _) = client.setup(VDD_ELF);
+    let (pk, vk) = client.setup(VDD_ELF);
+    let vk_string = vk.bytes32().to_string();
     println!(">>> Submitting VDD proof generation request to network...");
     let proof = tokio::task::spawn_blocking(move || {
         client.prove(&pk, &stdin)
@@ -374,14 +533,18 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
             .strategy(FulfillmentStrategy::Auction)
             .groth16()
             .run()
-            .expect("proving failed")
-    }).await?;
+    }).await??;
     println!(">>> VDD proof generated by network.");
 
     let public_values = proof.public_values.to_vec().into();
     let proof_bytes = proof.bytes();
 
-    Ok((proof_bytes.into(), public_values))
+    println!(">>> [VSS PROOF] zkVM Outputs:");
+    println!("  - VK: {}", vk_string);
+    println!("  - Public Values: 0x{}", hex::encode(&proof.public_values.to_vec()));
+    println!("  - Proof Length: {} bytes", proof_bytes.len());
+
+    Ok((proof_bytes.into(), public_values, vk_string))
 }
 
 /// # [PROOF] 生成 VSS (Verifiable Secret Sharing) 证明
@@ -401,16 +564,23 @@ pub async fn generate_vdd_proof(walrus_client: &WalrusClient, walrus_blob_id: &s
 ///
 /// ## 输出
 /// - `(Bytes, Bytes)`: ZK 证明和公开值。
-pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes)> {
+pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes, String)> {
+    println!(">>> [VSS PROOF] zkVM Inputs:");
+    println!("  - d_k (asset_encryption_key): 0x{}", hex::encode(d_k));
+    println!("  - v_k (secret_sharing_key): 0x{}", hex::encode(v_k));
+    println!("  - nonce: 0x{}", hex::encode(vec![0u8; 12]));
+
     let mut stdin = SP1Stdin::new();
     stdin.write(&1u8);
+    // 【修正】：由于 VSS guest 代码中显式调用了 io::read_vec()，这里必须使用 write_vec 提供长度前缀
     stdin.write_vec(d_k.to_vec());
     stdin.write_vec(v_k.to_vec());
     stdin.write_vec(vec![0u8; 12]);
 
     env::set_var("NETWORK_PRIVATE_KEY", env::var("SP1_PRIVATE_KEY").unwrap());
     let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
-    let (pk, _) = client.setup(VSS_ELF);
+    let (pk, vk) = client.setup(VSS_ELF);
+    let vk_string = vk.bytes32().to_string();
     println!(">>> Submitting VSS proof generation request to network...");
     let proof = tokio::task::spawn_blocking(move || {
         client.prove(&pk, &stdin)
@@ -418,15 +588,19 @@ pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, 
             .strategy(FulfillmentStrategy::Auction)
             .groth16()
             .run()
-            .expect("proving failed")
-    }).await?;
+    }).await??;
     println!(">>> VSS proof generated by network.");
 
 
     let public_values = proof.public_values.to_vec().into();
     let proof_bytes = proof.bytes();
 
-    Ok((proof_bytes.into(), public_values))
+    println!(">>> [VSS PROOF] zkVM Outputs:");
+    println!("  - VK: {}", vk_string);
+    println!("  - Public Values: 0x{}", hex::encode(&proof.public_values.to_vec()));
+    println!("  - Proof Length: {} bytes", proof_bytes.len());
+
+    Ok((proof_bytes.into(), public_values, vk_string))
 }
 
 

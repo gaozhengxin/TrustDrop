@@ -65,6 +65,16 @@ pub async fn run_config_checks() -> Result<()> {
 
     // SP1 `PROVE` token balance check disabled as per user request.
 
+    // --- [4. 验证器合约状态检查] ---
+    println!("Checking Verifier contracts...");
+    let vss_verifier = "0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2".parse::<Address>()?;
+    let vdd_verifier = "0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071".parse::<Address>()?;
+    let vss_code = provider.get_code(vss_verifier, None).await?;
+    let vdd_code = provider.get_code(vdd_verifier, None).await?;
+    if vss_code.is_empty() { return Err(anyhow!("VSS Verifier contract has no code at 0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2")); }
+    if vdd_code.is_empty() { return Err(anyhow!("VDD Verifier contract has no code at 0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071")); }
+    println!("  - VSS and VDD Verifier contracts are deployed and valid.");
+
     println!(">>> Configuration checks passed.");
     Ok(())
 }
