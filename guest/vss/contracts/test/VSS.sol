@@ -61,7 +61,8 @@ contract VSSGroth16Test is Test {
     function setUp() public {
         SP1ProofFixtureJson memory fixture = loadFixture();
 
-        verifier = address(new SP1VerifierGateway(address(1)));
+        verifier = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
+        
         vss = new VSS(verifier, fixture.vkey);
     }
 
@@ -79,14 +80,18 @@ contract VSSGroth16Test is Test {
         assertTrue(fixture.hOrigBlock != bytes32(0), "hOrigBlock is zero");
         assertTrue(fixture.vkey != bytes32(0), "vkey is zero");
 
-        vm.mockCall(
-            verifier,
-            abi.encodeWithSelector(SP1VerifierGateway.verifyProof.selector),
-            abi.encode(true)
-        );
+        console.log("PublicValues from JSON:");
+        console.logBytes(fixture.publicValues);
+        console.log("Proof from JSON:");
+        console.logBytes(fixture.proof);
+
+        console.log("=== [REAL FORK EXECUTION] ===");
+        console.log("Sending real Groth16 proof to Arbitrum Sepolia Gateway...");
 
         VSSPublicValues.VSSPublicValuesStruct memory publicValues = vss
             .verifyVSSProof(fixture.publicValues, fixture.proof);
+
+        console.log("=== [SUCCESS] Real on-chain verification PASSED! ===");
 
         // Fixture vs PublicValues
         assertEq(publicValues.length, fixture.length, "PV: length mismatch");

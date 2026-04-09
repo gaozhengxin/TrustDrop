@@ -15,6 +15,10 @@ use clap::Parser;
 use vss_lib::PublicValuesStruct;
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use sp1_sdk::env::EnvProver;
+use sp1_sdk::Prover;
+use sp1_sdk::Elf;
+use sp1_sdk::ProveRequest;
+use sp1_sdk::ProvingKey;
 use rand::{rngs::StdRng, SeedableRng};
 use k256::ecdsa::SigningKey;
 use maenad_lib::data::{MESSAGE_32};
@@ -26,7 +30,7 @@ use blake3;
 use std::time::Instant;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const VSS_ELF: &[u8] = include_elf!("vss-program");
+pub const VSS_ELF: Elf = include_elf!("vss-program");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -38,7 +42,8 @@ struct Args {
     prove: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Logger & env
     sp1_sdk::utils::setup_logger();
     dotenv::dotenv().ok();
@@ -51,7 +56,7 @@ fn main() {
     }
 
     // Setup client
-    let client = ProverClient::from_env();
+    let client = ProverClient::from_env().await;
 
     // 准备数据
     //let msg: &[u8] = PLAINTEXT_DATA_1.as_bytes();
@@ -170,9 +175,9 @@ fn main() {
     stdin.write_slice(nonce_4_ref);
 
     if args.execute {
-        run_execute(&client, &stdin, Vec::from([key_1, key_2, key_3, key_4]));
+        run_execute(&client, stdin, Vec::from([key_1, key_2, key_3, key_4])).await;
     } else {
-        run_prove(&client, &stdin, Vec::from([key_1, key_2, key_3, key_4]));
+        run_prove(&client, stdin, Vec::from([key_1, key_2, key_3, key_4])).await;
     }
 }
 
@@ -200,8 +205,8 @@ fn handle_output_data(output_bytes: Vec<u8>, keys: Vec<[u8; 32]>) {
     }
 }
 
-fn run_execute(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
-    let (output, report) = client.execute(VSS_ELF, stdin).run().unwrap();
+async fn run_execute(client: &EnvProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
+    let (output, report) = client.execute(VSS_ELF, stdin).await.unwrap();
     println!("Program executed successfully.");
 
     handle_output_data(output.as_slice().to_vec(), keys);
@@ -212,7 +217,7 @@ fn run_execute(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
     println!("Unique Memory Touched:    {} addresses", report.touched_memory_addresses);
 
     // 打印 Gas 消耗（如果可用）
-    if let Some(gas) = report.gas {
+    if let Some(gas) = report.gas() {
         println!("Gas Used (Estimated):     {}", gas);
     } else {
         println!("Gas Used:                 (Not Calculated)");
@@ -221,12 +226,12 @@ fn run_execute(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
     println!("---------------------------------");
 }
 
-fn run_prove(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
-    let (pk, vk) = client.setup(VSS_ELF);
+async fn run_prove(client: &EnvProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
+    let pk = client.setup(VSS_ELF).await.unwrap();
     
     // --- 1. 证明生成计时 ---
     let start_prove = Instant::now();
-    let proof: sp1_sdk::SP1ProofWithPublicValues = client.prove(&pk, stdin).run().expect("Failed to generate proof");
+    let proof: sp1_sdk::SP1ProofWithPublicValues = client.prove(&pk, stdin).await.unwrap();
     let duration_prove = start_prove.elapsed();
     
     println!("\n=========================================");
@@ -236,7 +241,7 @@ fn run_prove(client: &EnvProver, stdin: &SP1Stdin, keys: Vec<[u8; 32]>) {
 
     // --- 2. 证明验证计时 ---
     let start_verify = Instant::now();
-    client.verify(&proof, &vk).expect("Failed to verify proof");
+    client.verify(&proof, &pk.verifying_key(), None).expect("Failed to verify proof");
     let duration_verify = start_verify.elapsed();
     
     println!("\n✅ Successfully verified proof!");

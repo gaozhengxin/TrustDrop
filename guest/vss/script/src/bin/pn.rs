@@ -24,6 +24,9 @@ use sp1_sdk::{
 };
 use sp1_sdk::network::NetworkMode;
 use sp1_sdk::network::FulfillmentStrategy;
+use sp1_sdk::Elf;
+use sp1_sdk::ProveRequest;
+use sp1_sdk::ProvingKey;
 use std::path::PathBuf;
 
 use dotenv::dotenv;
@@ -40,7 +43,7 @@ use maenad_lib::chacha8::derive_nonce;
 use blake3;
 
 /// ELF of your guest program
-pub const VSS_ELF: &[u8] = include_elf!("vss-program");
+pub const VSS_ELF: Elf = include_elf!("vss-program");
 
 /// CLI args
 #[derive(Parser, Debug)]
@@ -72,14 +75,19 @@ struct SP1VSSProofFixture {
     proof: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
+    std::env::set_var("SP1_PROVER", "network");
+    let client = ProverClient::builder()
+    .network_for(NetworkMode::Mainnet)
+    //.private()
+    .build().await;
     //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
     // -----------------------------------------
@@ -202,7 +210,7 @@ fn main() {
     // -----------------------------------------
     // 3. Setup & Prove
     // -----------------------------------------
-    let (pk, vk) = client.setup(VSS_ELF);
+    let pk = client.setup(VSS_ELF).await.unwrap();
 
     // idle
     if args.idle {
@@ -221,32 +229,37 @@ fn main() {
                 format!("0x{}", hex::encode(nonce_3_ref)),
                 format!("0x{}", hex::encode(nonce_4_ref))
             ],
-            &vk,
+            &pk.verifying_key(),
             args.system
         );
         return;
     }
 
+    println!("🏃 正在本地执行 Guest 程序，捕捉虚拟机报错...");
+    let (mut public_values, execution_report) = client
+        .execute(VSS_ELF, stdin.clone()).await.unwrap();
+    println!("✔ Guest 程序模拟成功！消耗周期数: {}", execution_report.total_instruction_count());
+
     let proof: SP1ProofWithPublicValues = (
         match args.system {
             ProofSystem::Plonk =>
                 client
-                    .prove(&pk, &stdin)
+                    .prove(&pk, stdin)
                     .compressed()
-                    .strategy(FulfillmentStrategy::Auction)
-                    .max_price_per_pgu(1_000_000u64)
+                    //.strategy(FulfillmentStrategy::Auction)
+                    //.max_price_per_pgu(1_000_000u64)
                     .plonk()
-                    .run(),
+                    .await.unwrap(),
             ProofSystem::Groth16 =>
                 client
-                    .prove(&pk, &stdin)
+                    .prove(&pk, stdin)
                     .compressed()
-                    .strategy(FulfillmentStrategy::Auction)
-                    .max_price_per_pgu(1_000_000u64)
+                    //.strategy(FulfillmentStrategy::Auction)
+                    //.max_price_per_pgu(1_000_000u64)
                     .groth16()
-                    .run(),
+                    .await.unwrap(),
         }
-    ).expect("failed to generate proof");
+    );
 
     println!("✔ Proof generated successfully!");
 
@@ -285,7 +298,7 @@ fn main() {
             format!("0x{}", hex::encode(nonce_4_ref))
         ],
         &proof,
-        &vk,
+        &pk.verifying_key(),
         args.system
     );
 }

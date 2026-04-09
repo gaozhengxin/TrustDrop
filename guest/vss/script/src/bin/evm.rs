@@ -22,6 +22,9 @@ use sp1_sdk::{
     SP1Stdin,
     SP1VerifyingKey,
 };
+use sp1_sdk::Elf;
+use sp1_sdk::ProveRequest;
+use sp1_sdk::ProvingKey;
 use sp1_sdk::network::NetworkMode;
 use std::path::PathBuf;
 
@@ -39,7 +42,7 @@ use maenad_lib::chacha8::derive_nonce;
 use blake3;
 
 /// ELF of your guest program
-pub const VSS_ELF: &[u8] = include_elf!("vss-program");
+pub const VSS_ELF: Elf = include_elf!("vss-program");
 
 /// CLI args
 #[derive(Parser, Debug)]
@@ -71,14 +74,15 @@ struct SP1VSSProofFixture {
     proof: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    let client = ProverClient::from_env();
+    let client = ProverClient::from_env().await;
 
     // -----------------------------------------
     // 1. Prepare Message & Derive Key
@@ -200,7 +204,7 @@ fn main() {
     // -----------------------------------------
     // 3. Setup & Prove
     // -----------------------------------------
-    let (pk, vk) = client.setup(VSS_ELF);
+    let pk = client.setup(VSS_ELF).await.unwrap();
 
     // idle
     if args.idle {
@@ -219,7 +223,7 @@ fn main() {
                 format!("0x{}", hex::encode(nonce_3_ref)),
                 format!("0x{}", hex::encode(nonce_4_ref))
             ],
-            &vk,
+            &pk.verifying_key(),
             args.system
         );
         return;
@@ -227,10 +231,10 @@ fn main() {
 
     let proof: SP1ProofWithPublicValues = (
         match args.system {
-            ProofSystem::Plonk => client.prove(&pk, &stdin).compressed().plonk().run(),
-            ProofSystem::Groth16 => client.prove(&pk, &stdin).compressed().groth16().run(),
+            ProofSystem::Plonk => client.prove(&pk, stdin).compressed().plonk().await.unwrap(),
+            ProofSystem::Groth16 => client.prove(&pk, stdin).compressed().groth16().await.unwrap(),
         }
-    ).expect("failed to generate proof");
+    );
 
     println!("✔ Proof generated successfully!");
 
@@ -269,7 +273,7 @@ fn main() {
             format!("0x{}", hex::encode(nonce_4_ref))
         ],
         &proof,
-        &vk,
+        &pk.verifying_key(),
         args.system
     );
 }
