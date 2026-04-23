@@ -4,27 +4,27 @@ sp1_zkvm::entrypoint!(main);
 use maenad_lib::chacha8;
 
 pub fn main() {
-    use sp1_zkvm::io::{read, read_vec, commit_slice};
+    use sp1_zkvm::io::{read, commit_slice};
     use blake3;
 
     // 1. 输入
     let length = read::<u8>();
     let length_usize = length as usize;
 
-    let msg: Vec<u8> = read_vec();
+    let msg = read::<Vec<u8>>();
 
     // 读取 keys
     let mut keys = Vec::with_capacity(length_usize);
     for _ in 0..length_usize {
-        let k = read_vec();
-        keys.push(<[u8; 32]>::try_from(&k[..]).expect("key must be 32 bytes"));
+        let k = read::<[u8; 32]>();
+        keys.push(k);
     }
 
     // 读取 nonces
     let mut nonces = Vec::with_capacity(length_usize);
     for _ in 0..length_usize {
-        let n = read_vec();
-        nonces.push(<[u8; 12]>::try_from(&n[..]).expect("nonce must be 12 bytes"));
+        let n = read::<[u8; 12]>();
+        nonces.push(n);
     }
 
     const INITIAL_COUNTER: u32 = 0;

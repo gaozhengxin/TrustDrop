@@ -6,6 +6,8 @@ Cargo.lock
 **/target/
 **/*.rs.bk
 
+sp1/
+
 # SP1 guest build outputs
 **/guest/**/sp1-build/
 **/guest/**/program/elf/

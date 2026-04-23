@@ -162,17 +162,17 @@ async fn main() {
     // 密钥长度输入
     stdin.write(&key_length);
     // 消息输入
-    stdin.write_slice(&msg);
+    stdin.write(&msg);
     // 密钥输入
-    stdin.write_slice(&key_1);
-    stdin.write_slice(&key_2);
-    stdin.write_slice(&key_3);
-    stdin.write_slice(&key_4);
+    stdin.write(&key_1);
+    stdin.write(&key_2);
+    stdin.write(&key_3);
+    stdin.write(&key_4);
     // nonce 输入
-    stdin.write_slice(nonce_1_ref);
-    stdin.write_slice(nonce_2_ref);
-    stdin.write_slice(nonce_3_ref);
-    stdin.write_slice(nonce_4_ref);
+    stdin.write(nonce_1_ref);
+    stdin.write(nonce_2_ref);
+    stdin.write(nonce_3_ref);
+    stdin.write(nonce_4_ref);
 
     if args.execute {
         run_execute(&client, stdin, Vec::from([key_1, key_2, key_3, key_4])).await;
