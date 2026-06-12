@@ -1,8 +1,8 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use maenad_lib::chacha8::chacha8_seal_in_place;
-use maenad_lib::cid::compute_ipfs_cid_zk_optimized;
+use drop_lib::chacha8::chacha8_seal_in_place;
+use drop_lib::cid::compute_ipfs_cid_zk_optimized;
 
 pub fn main() {
     use blake3;

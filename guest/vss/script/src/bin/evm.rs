@@ -34,10 +34,10 @@ use rand::{ rngs::StdRng, SeedableRng };
 use k256::ecdsa::SigningKey;
 use k256::sha2::{ Digest, Sha256 };
 
-use maenad_lib::data::MESSAGE_32;
-use maenad_lib::kdf::key_derive;
-use maenad_lib::common::{ decode_public_outputs_with_cipher, print_public_outputs_with_cipher };
-use maenad_lib::chacha8::derive_nonce;
+use drop_lib::data::MESSAGE_32;
+use drop_lib::kdf::key_derive;
+use drop_lib::common::{ decode_public_outputs_with_cipher, print_public_outputs_with_cipher };
+use drop_lib::chacha8::derive_nonce;
 
 use blake3;
 

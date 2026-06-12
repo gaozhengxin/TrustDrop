@@ -5,14 +5,14 @@ edition = "2024"
 
 [workspace]
 members = [
-    "maenad-lib",
+    "drop-lib",
     "guest/*/script",
     "guest/*/program",
     "sdk",
     "app/gui/src-tauri",
     "storage",
     "walrus-core",
-    "maenad-script",
+    "drop-script",
 ]
 
 [workspace.dependencies]

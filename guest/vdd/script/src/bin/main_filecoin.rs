@@ -1,13 +1,13 @@
 use alloy_sol_types::SolType;
 use clap::Parser;
-use sp1_sdk::{ include_elf, ProverClient, SP1Stdin };
 use rand::RngCore;
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 
-use maenad_lib::chacha8::chacha8_seal;
-use maenad_lib::cid::compute_ipfs_cid_zk_optimized;
-use rand::rng;
 use blake3;
 use cid;
+use drop_lib::chacha8::chacha8_seal;
+use drop_lib::cid::compute_ipfs_cid_zk_optimized;
+use rand::rng;
 
 pub const VDD_FILECOIN_ELF: &[u8] = include_elf!("program-vdd-filecoin");
 
@@ -112,7 +112,11 @@ fn main() {
     eprintln!("  key: 32 bytes");
     eprintln!("  c_origin (blake3): {}", bytes_to_hex_prefix(c_origin, 32));
     eprintln!("  c_key    (blake3): {}", bytes_to_hex_prefix(&c_key, 32));
-    eprintln!("  c_cipher (cid): {}, {}", c_cipher_str, hex::encode(&c_cipher));
+    eprintln!(
+        "  c_cipher (cid): {}, {}",
+        c_cipher_str,
+        hex::encode(&c_cipher)
+    );
 
     // === Build SP1 stdin ===
     let mut stdin = SP1Stdin::new();
@@ -153,10 +157,16 @@ fn main() {
 
         println!("Output: {}", bytes_to_hex_prefix(&output.as_slice(), 104));
 
-        println!("Number of cycles executed: {}", report.total_instruction_count());
+        println!(
+            "Number of cycles executed: {}",
+            report.total_instruction_count()
+        );
 
         // 打印内存使用情况
-        println!("Unique Memory Touched:    {} addresses", report.touched_memory_addresses);
+        println!(
+            "Unique Memory Touched:    {} addresses",
+            report.touched_memory_addresses
+        );
 
         // 打印 Gas 消耗（如果可用）
         if let Some(gas) = report.gas {
@@ -169,7 +179,10 @@ fn main() {
         // prove path: setup, prove, verify
         let (pk, vk) = client.setup(VDD_FILECOIN_ELF);
 
-        let proof = client.prove(&pk, &stdin).run().expect("failed to generate proof");
+        let proof = client
+            .prove(&pk, &stdin)
+            .run()
+            .expect("failed to generate proof");
 
         println!("Successfully generated proof!");
 

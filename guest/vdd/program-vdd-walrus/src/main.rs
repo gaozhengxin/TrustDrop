@@ -1,9 +1,9 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use maenad_lib::chacha8::chacha8_seal;
-use maenad_lib::walrus_address::compute_blob_id_default;
-use maenad_lib::{ chacha8 };
+use drop_lib::chacha8::chacha8_seal;
+use drop_lib::walrus_address::compute_blob_id_default;
+use drop_lib::{ chacha8 };
 
 pub fn main() {
     use blake3;

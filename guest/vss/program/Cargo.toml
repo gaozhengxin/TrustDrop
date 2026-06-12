@@ -9,4 +9,4 @@ sp1-zkvm = { version = "6.0.2", features = ["blake3"] }
 blake3 = "1.8.2"
 sha2 = "0.10.9"
 vss-lib = { path = "../lib" }
-maenad-lib = { path = "../../../maenad-lib", default-features = false, features = ["guest"] }
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }

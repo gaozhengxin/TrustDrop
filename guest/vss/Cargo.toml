@@ -1,13 +1,6 @@
 [workspace]
 members = ["lib", "program", "script"]
+resolver = "2"
 
 [workspace.dependencies]
 alloy-sol-types = "1.0"
-sp1 = "=6.0.2"
-sp1-sdk = "=6.0.2"
-sp1-zkvm = "=6.0.2"
-
-[patch.crates-io]
-sp1 = { path = "../../sp1/crates/sp1" }
-sp1-sdk = { path = "../../sp1/crates/sdk" }
-sp1-zkvm = { path = "../../sp1/crates/zkvm" }

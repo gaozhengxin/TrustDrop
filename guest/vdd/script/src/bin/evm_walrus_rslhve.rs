@@ -1,29 +1,22 @@
+use chacha20::cipher::{KeyIvInit, StreamCipher};
+use chacha20::{ChaCha8, Key, Nonce};
 use clap::{Parser, ValueEnum};
+use rand::{rng, RngCore};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use sp1_sdk::network::NetworkMode;
 use sp1_sdk::{
-    include_elf,
-    HashableKey,
-    ProverClient,
-    SP1ProofWithPublicValues,
-    SP1Stdin,
+    include_elf, Elf, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
     SP1VerifyingKey,
 };
 use std::path::PathBuf;
-use sha2::{Sha256, Digest};
-use rand::{rng, RngCore};
-use chacha20::cipher::{KeyIvInit, StreamCipher};
-use chacha20::{ChaCha8, Key, Nonce};
 
 // 引入你的 lib 逻辑
-use maenad_lib::rslh_ve::{
-    create_honest_proof, 
-    derive_rslh_nonce,
-    DEFAULT_SAMPLE_COUNT,
-};
-use maenad_lib::walrus_address::compute_blob_id_default;
+use drop_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT};
+use drop_lib::walrus_address::compute_blob_id_default;
 
 /// ELF of the Walrus VDD program
-pub const VDD_WALRUS_RSLHVE_ELF: &[u8] = include_elf!("program-vdd-walrus-rslhve");
+pub const VDD_WALRUS_RSLHVE_ELF: Elf = include_elf!("program-vdd-walrus-rslhve");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -51,16 +44,25 @@ struct SP1VDDProofFixture {
     proof: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     dotenv::dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
-    let client = ProverClient::from_env();
+    std::env::set_var("SP1_PROVER", "network");
+    let client = ProverClient::builder()
+        .network_for(NetworkMode::Mainnet)
+        .build()
+        .await;
 
     // 1. === Prepare inputs on host ===
-    const DATA_SIZE: usize = 1 * 1024 * 1024; // 1MB
-    let mut origin_data = vec![0u8; DATA_SIZE];
+    const DEFAULT_DATA_SIZE: usize = 64 * 1024;
+    let data_size = std::env::var("VDD_RSLHVE_DATA_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_DATA_SIZE);
+    let mut origin_data = vec![0u8; data_size];
     rand::thread_rng().fill_bytes(&mut origin_data);
 
     let mut key = [0u8; 32];
@@ -69,9 +71,8 @@ fn main() {
     // 计算三方绑定承诺
     let c_origin = compute_blob_id_default(&origin_data).unwrap();
     let c_origin_bytes: [u8; 32] = (*c_origin.as_ref()).try_into().unwrap();
-    
-    let c_key_hash = Sha256::digest(&key);
-    let c_key_bytes: [u8; 32] = c_key_hash.into();
+
+    let c_key_bytes: [u8; 32] = *blake3::hash(&key).as_bytes();
 
     let aux_data = b"maenad_v1";
     let nonce = derive_rslh_nonce(&key, aux_data);
@@ -80,7 +81,7 @@ fn main() {
     let mut cipher_data = origin_data.clone();
     let mut cipher_stream = ChaCha8::new(Key::from_slice(&key), Nonce::from_slice(&nonce));
     cipher_stream.apply_keystream(&mut cipher_data);
-    
+
     let c_cipher = compute_blob_id_default(&cipher_data).unwrap();
     let c_cipher_bytes: [u8; 32] = (*c_cipher.as_ref()).try_into().unwrap();
 
@@ -112,8 +113,8 @@ fn main() {
     }
 
     // 3. === Setup & Prove ===
-    let (pk, vk) = client.setup(VDD_WALRUS_RSLHVE_ELF);
-    println!("SP1 Setup finished. Vkey: {}", vk.bytes32());
+    let pk = client.setup(VDD_WALRUS_RSLHVE_ELF).await.unwrap();
+    println!("SP1 Setup finished. Vkey: {}", pk.verifying_key().bytes32());
 
     if args.idle {
         println!("Idle mode: Skipping heavy proof generation...");
@@ -122,17 +123,32 @@ fn main() {
             &c_key_bytes,
             &c_cipher_bytes,
             None,
-            &vk,
-            args.system
+            &pk.verifying_key(),
+            args.system,
         );
         return;
     }
 
+    println!("Executing guest before network proof...");
+    let (public_values, report) = client
+        .execute(VDD_WALRUS_RSLHVE_ELF, stdin.clone())
+        .await
+        .unwrap();
+    println!("Execute cycles: {}", report.total_instruction_count());
+    if public_values.as_slice()
+        != [&c_origin_bytes[..], &c_key_bytes[..], &c_cipher_bytes[..]]
+            .concat()
+            .as_slice()
+    {
+        panic!("execute public values do not match host commitments");
+    }
+
     println!("Starting proof generation with {:?}...", args.system);
     let proof = match args.system {
-        ProofSystem::Plonk => client.prove(&pk, &stdin).compressed().plonk().run(),
-        ProofSystem::Groth16 => client.prove(&pk, &stdin).compressed().groth16().run(),
-    }.expect("failed to generate proof");
+        ProofSystem::Plonk => client.prove(&pk, stdin).compressed().plonk().await,
+        ProofSystem::Groth16 => client.prove(&pk, stdin).compressed().groth16().await,
+    }
+    .expect("failed to generate proof");
 
     println!("✔ Proof generated successfully!");
 
@@ -142,8 +158,8 @@ fn main() {
         &c_key_bytes,
         &c_cipher_bytes,
         Some(&proof),
-        &vk,
-        args.system
+        &pk.verifying_key(),
+        args.system,
     );
 }
 
@@ -153,12 +169,12 @@ fn write_fixture_data(
     c_cipher: &[u8; 32],
     proof_data: Option<&SP1ProofWithPublicValues>,
     vk: &SP1VerifyingKey,
-    system: ProofSystem
+    system: ProofSystem,
 ) {
     let (public_values_hex, proof_hex) = if let Some(p) = proof_data {
         (
             format!("0x{}", hex::encode(p.public_values.as_slice())),
-            format!("0x{}", hex::encode(p.bytes()))
+            format!("0x{}", hex::encode(p.bytes())),
         )
     } else {
         ("0x".to_string(), "0x".to_string())
@@ -175,12 +191,13 @@ fn write_fixture_data(
 
     let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
-    
+
     let filename = format!("vdd-walrus-rslh-{:?}-fixture.json", system).to_lowercase();
     std::fs::write(
         fixture_path.join(filename),
-        serde_json::to_string_pretty(&fixture).unwrap()
-    ).expect("failed to write fixture");
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .expect("failed to write fixture");
 
     println!("✔ Fixture saved to contracts/src/fixtures");
 }

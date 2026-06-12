@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-sp1-zkvm = "5.0.8"
+sp1-zkvm = "6.0.2"
 vdd-lib = { path = "../lib" }
 blake3 = "1.8.2"
-maenad-lib = { path = "../../../maenad-lib", default-features = false, features = ["guest"] }
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }
 hex = "0.4.3"
 cid = "0.11"

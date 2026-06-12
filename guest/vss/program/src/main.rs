@@ -1,7 +1,7 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use maenad_lib::chacha8;
+use drop_lib::chacha8;
 
 pub fn main() {
     use sp1_zkvm::io::{read, commit_slice};

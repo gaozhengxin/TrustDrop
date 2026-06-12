@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use maenad_lib::walrus_address::compute_blob_id_default;
+use drop_lib::walrus_address::compute_blob_id_default;
 use storage::{WalrusClient, BlobId, BlobStatus, StorageNetwork};
 
 pub fn compute_rs_id(data: &[u8]) -> Result<[u8; 32]> {

@@ -1,12 +1,12 @@
 use alloy_sol_types::SolType;
 use clap::Parser;
-use sp1_sdk::{ include_elf, ProverClient, SP1Stdin };
 use rand::RngCore;
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 
-use maenad_lib::chacha8::chacha8_seal;
-use maenad_lib::walrus_address::compute_blob_id_default;
-use rand::rng;
 use blake3;
+use drop_lib::chacha8::chacha8_seal;
+use drop_lib::walrus_address::compute_blob_id_default;
+use rand::rng;
 
 pub const VDD_WALRUS_ELF: &[u8] = include_elf!("program-vdd-walrus");
 
@@ -89,9 +89,8 @@ fn main() {
     }
 
     // compute cipher commitment
-    let cipher_blob_id = compute_blob_id_default(&cipher).expect(
-        "Should compute blob ID for cipher data"
-    );
+    let cipher_blob_id =
+        compute_blob_id_default(&cipher).expect("Should compute blob ID for cipher data");
     let c_cipher = cipher_blob_id.as_ref();
 
     // combined expected public output (what guest commit_slice will commit)
@@ -107,7 +106,10 @@ fn main() {
     eprintln!("  key: 32 bytes");
     eprintln!("  c_origin (blake3): {}", bytes_to_hex_prefix(c_origin, 32));
     eprintln!("  c_key    (blake3): {}", bytes_to_hex_prefix(&c_key, 32));
-    eprintln!("  c_cipher (blob id): {}", bytes_to_hex_prefix(&c_cipher, 32));
+    eprintln!(
+        "  c_cipher (blob id): {}",
+        bytes_to_hex_prefix(&c_cipher, 32)
+    );
 
     // === Build SP1 stdin ===
     let mut stdin = SP1Stdin::new();
@@ -145,13 +147,22 @@ fn main() {
         }
 
         // print a short readable summary
-        println!("Cipher commitment (host calc): {}", bytes_to_hex_prefix(&c_cipher, 32));
+        println!(
+            "Cipher commitment (host calc): {}",
+            bytes_to_hex_prefix(&c_cipher, 32)
+        );
         println!("Output: {}", bytes_to_hex_prefix(&output.as_slice(), 128));
 
-        println!("Number of cycles executed: {}", report.total_instruction_count());
+        println!(
+            "Number of cycles executed: {}",
+            report.total_instruction_count()
+        );
 
         // 打印内存使用情况
-        println!("Unique Memory Touched:    {} addresses", report.touched_memory_addresses);
+        println!(
+            "Unique Memory Touched:    {} addresses",
+            report.touched_memory_addresses
+        );
 
         // 打印 Gas 消耗（如果可用）
         if let Some(gas) = report.gas {
@@ -164,7 +175,10 @@ fn main() {
         // prove path: setup, prove, verify
         let (pk, vk) = client.setup(VDD_WALRUS_ELF);
 
-        let proof = client.prove(&pk, &stdin).run().expect("failed to generate proof");
+        let proof = client
+            .prove(&pk, &stdin)
+            .run()
+            .expect("failed to generate proof");
 
         println!("Successfully generated proof!");
 

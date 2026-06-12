@@ -99,7 +99,7 @@ async fn main() {
         }
 
         "cid" => {
-            use maenad_lib::cid;
+            use drop_lib::cid;
             let mut input = None;
             while let Some(a) = args.next() {
                 if a == "--input" {

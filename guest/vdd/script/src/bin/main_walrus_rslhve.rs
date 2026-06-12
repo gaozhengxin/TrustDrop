@@ -1,18 +1,14 @@
-use clap::Parser;
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
-use rand::{rng, RngCore};
-use sha2::{Sha256, Digest};
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use chacha20::{ChaCha8, Key, Nonce};
+use clap::Parser;
+use rand::{rng, RngCore};
+use sha2::{Digest, Sha256};
+use sp1_sdk::{include_elf, Elf, Prover, ProverClient, ProvingKey, SP1Stdin};
 
-use maenad_lib::rslh_ve::{
-    create_honest_proof, 
-    derive_rslh_nonce,
-    DEFAULT_SAMPLE_COUNT,
-};
-use maenad_lib::walrus_address::compute_blob_id_default;
+use drop_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT};
+use drop_lib::walrus_address::compute_blob_id_default;
 
-pub const VDD_WALRUS_RSLHVE_ELF: &[u8] = include_elf!("program-vdd-walrus-rslhve");
+pub const VDD_WALRUS_RSLHVE_ELF: Elf = include_elf!("program-vdd-walrus-rslhve");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -29,7 +25,8 @@ fn bytes_to_hex(b: &[u8], len: usize) -> String {
     hex::encode(&b[..take])
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     sp1_sdk::utils::setup_logger();
     let args = Args::parse();
 
@@ -38,11 +35,15 @@ fn main() {
         std::process::exit(1);
     }
 
-    let client = ProverClient::from_env();
+    let client = ProverClient::builder().cpu().build().await;
 
     // 1. === Prepare inputs on host ===
-    const DATA_SIZE: usize = 1024 * 1024 * 1024; // 1GB
-    let mut origin_data = vec![0u8; DATA_SIZE];
+    const DEFAULT_DATA_SIZE: usize = 64 * 1024;
+    let data_size = std::env::var("VDD_RSLHVE_DATA_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_DATA_SIZE);
+    let mut origin_data = vec![0u8; data_size];
     rng().fill_bytes(&mut origin_data);
 
     let mut key = [0u8; 32];
@@ -51,9 +52,8 @@ fn main() {
     // 计算核心承诺
     let c_origin = compute_blob_id_default(&origin_data).unwrap();
     let c_origin_bytes: [u8; 32] = (*c_origin.as_ref()).try_into().unwrap();
-    
-    let c_key_hash = Sha256::digest(&key);
-    let c_key_bytes: [u8; 32] = c_key_hash.into();
+
+    let c_key_bytes: [u8; 32] = *blake3::hash(&key).as_bytes();
 
     let aux_data = b"maenad_v1";
     let nonce = derive_rslh_nonce(&key, aux_data);
@@ -106,7 +106,7 @@ fn main() {
     if args.execute {
         // --- 模式 A: Execute (模拟) ---
         println!("\nStarting SP1 execution (execute mode)...");
-        let (output, report) = client.execute(VDD_WALRUS_RSLHVE_ELF, &stdin).run().unwrap();
+        let (output, report) = client.execute(VDD_WALRUS_RSLHVE_ELF, stdin).await.unwrap();
 
         // 验证输出
         if output.as_slice() == combined_expected.as_slice() {
@@ -119,25 +119,32 @@ fn main() {
 
         println!("\n--- Performance Report ---");
         println!("  Cycles:             {}", report.total_instruction_count());
-        println!("  Unique Memory:      {} addresses", report.touched_memory_addresses);
-        if let Some(gas) = report.gas {
+        println!(
+            "  Unique Memory:      {} addresses",
+            report.touched_memory_addresses
+        );
+        if let Some(gas) = report.gas() {
             println!("  Estimated Gas:      {}", gas);
         }
         println!("--------------------------");
-
     } else {
         // --- 模式 B: Prove (证明生成) ---
         println!("\nStarting SP1 setup and proving...");
-        let (pk, vk) = client.setup(VDD_WALRUS_RSLHVE_ELF);
+        let pk = client.setup(VDD_WALRUS_RSLHVE_ELF).await.unwrap();
 
-        let proof = client.prove(&pk, &stdin).run().expect("failed to generate proof");
+        let proof = client
+            .prove(&pk, stdin.clone())
+            .await
+            .expect("failed to generate proof");
         println!("✅ Successfully generated ZK proof!");
 
-        client.verify(&proof, &vk).expect("failed to verify proof");
+        client
+            .verify(&proof, &pk.verifying_key(), None)
+            .expect("failed to verify proof");
         println!("✅ Successfully verified ZK proof!");
 
         // 获取公共输出
-        let (output, _) = client.execute(VDD_WALRUS_RSLHVE_ELF, &stdin).run().unwrap();
+        let (output, _) = client.execute(VDD_WALRUS_RSLHVE_ELF, stdin).await.unwrap();
         println!("\nPublic Output Summary:");
         println!("  Hex: {}", bytes_to_hex(output.as_slice(), 96));
     }

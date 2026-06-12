@@ -11,29 +11,24 @@
 //! ```
 //! Generate an EVM-compatible proof for the ChaCha8 ZK program.
 
-use clap::{ Parser, ValueEnum };
-use serde::{ Deserialize, Serialize };
+use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
+use sp1_sdk::network::FulfillmentStrategy;
+use sp1_sdk::network::NetworkMode;
 use sp1_sdk::{
-    include_elf,
-    HashableKey,
-    ProverClient,
-    Prover,
-    SP1ProofWithPublicValues,
-    SP1Stdin,
+    include_elf, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
     SP1VerifyingKey,
 };
-use sp1_sdk::network::NetworkMode;
-use sp1_sdk::network::FulfillmentStrategy;
 use std::path::PathBuf;
 
 use dotenv::dotenv;
 
-use rand::RngCore;
-use maenad_lib::chacha8::chacha8_seal;
-use maenad_lib::walrus_address::compute_blob_id_default;
-use rand::rng;
 use blake3;
-use maenad_lib::cid::compute_ipfs_cid_zk_optimized;
+use drop_lib::chacha8::chacha8_seal;
+use drop_lib::cid::compute_ipfs_cid_zk_optimized;
+use drop_lib::walrus_address::compute_blob_id_default;
+use rand::rng;
+use rand::RngCore;
 
 /// ELF of your guest program
 pub const VDD_FILECOIN_ELF: &[u8] = include_elf!("program-vdd-filecoin");
@@ -76,7 +71,9 @@ fn main() {
     println!("Selected Proof System: {:?}", args.system);
 
     //std::env::set_var("NETWORK_PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000000000");
-    let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
+    let client = ProverClient::builder()
+        .network_for(NetworkMode::Mainnet)
+        .build();
     //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
     // === Prepare inputs on host ===
@@ -136,7 +133,11 @@ fn main() {
     eprintln!("  key: 32 bytes");
     eprintln!("  c_origin (blake3): {}", bytes_to_hex_prefix(c_origin, 32));
     eprintln!("  c_key    (blake3): {}", bytes_to_hex_prefix(&c_key, 32));
-    eprintln!("  c_cipher (cid): {}, {}", c_cipher_str, hex::encode(&c_cipher));
+    eprintln!(
+        "  c_cipher (cid): {}, {}",
+        c_cipher_str,
+        hex::encode(&c_cipher)
+    );
 
     // === Build SP1 stdin ===
     let mut stdin = SP1Stdin::new();
@@ -162,31 +163,28 @@ fn main() {
             format!("0x{}", hex::encode(c_cipher)),
             cipher.len().try_into().unwrap(),
             &vk,
-            args.system
+            args.system,
         );
         return;
     }
 
-    let proof: SP1ProofWithPublicValues = (
-        match args.system {
-            ProofSystem::Plonk =>
-                client
-                    .prove(&pk, &stdin)
-                    .compressed()
-                    .strategy(FulfillmentStrategy::Auction)
-                    .max_price_per_pgu(100_000_000u64)
-                    .plonk()
-                    .run(),
-            ProofSystem::Groth16 =>
-                client
-                    .prove(&pk, &stdin)
-                    .compressed()
-                    .strategy(FulfillmentStrategy::Auction)
-                    .max_price_per_pgu(100_000_000u64)
-                    .groth16()
-                    .run(),
-        }
-    ).expect("failed to generate proof");
+    let proof: SP1ProofWithPublicValues = (match args.system {
+        ProofSystem::Plonk => client
+            .prove(&pk, &stdin)
+            .compressed()
+            .strategy(FulfillmentStrategy::Auction)
+            .max_price_per_pgu(100_000_000u64)
+            .plonk()
+            .run(),
+        ProofSystem::Groth16 => client
+            .prove(&pk, &stdin)
+            .compressed()
+            .strategy(FulfillmentStrategy::Auction)
+            .max_price_per_pgu(100_000_000u64)
+            .groth16()
+            .run(),
+    })
+    .expect("failed to generate proof");
 
     println!("✔ Proof generated successfully!");
 
@@ -200,7 +198,7 @@ fn main() {
         cipher.len().try_into().unwrap(),
         &proof,
         &vk,
-        args.system
+        args.system,
     );
 }
 
@@ -212,7 +210,7 @@ fn write_fixture(
     data_length: u32,
     proof: &SP1ProofWithPublicValues,
     vk: &SP1VerifyingKey,
-    system: ProofSystem
+    system: ProofSystem,
 ) {
     let public_values_hex = format!("0x{}", hex::encode(proof.public_values.as_slice()));
     let proof_hex = format!("0x{}", hex::encode(proof.bytes()));
@@ -233,9 +231,11 @@ fn write_fixture(
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
     let filename = format!("vdd-filecoin-{:?}-fixture.json", system).to_lowercase();
 
-    std::fs
-        ::write(fixture_path.join(filename), serde_json::to_string_pretty(&fixture).unwrap())
-        .expect("failed to write fixture");
+    std::fs::write(
+        fixture_path.join(filename),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .expect("failed to write fixture");
 
     println!("✔ Fixture saved for Solidity");
 }
@@ -246,7 +246,7 @@ fn write_fixture_args(
     c_cipher: String,
     data_length: u32,
     vk: &SP1VerifyingKey,
-    system: ProofSystem
+    system: ProofSystem,
 ) {
     let vkey_hex = vk.bytes32().to_string();
 
@@ -265,9 +265,11 @@ fn write_fixture_args(
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
     let filename = format!("vdd-filecoin-{:?}-fixture.json", system).to_lowercase();
 
-    std::fs
-        ::write(fixture_path.join(filename), serde_json::to_string_pretty(&fixture).unwrap())
-        .expect("failed to write fixture");
+    std::fs::write(
+        fixture_path.join(filename),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .expect("failed to write fixture");
 
     println!("✔ Fixture saved for Solidity");
 }

@@ -1,4 +1,4 @@
-use sp1_sdk::{ include_elf, HashableKey, Prover, ProverClient };
+use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const VDD_FILECOIN_ELF: &[u8] = include_elf!("program-vdd-filecoin");

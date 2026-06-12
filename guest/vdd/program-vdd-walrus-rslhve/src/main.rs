@@ -1,12 +1,8 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-use maenad_lib::rslh_ve::{
-    verify_rslh_ve_combat_raw, 
-    VeShardProof, 
-    ParityType, 
-    DEFAULT_SAMPLE_COUNT,
-    ROW_WIDTH_PRIMARY
+use drop_lib::rslh_ve::{
+    verify_rslh_ve_combat_raw, ParityType, VeShardProof, DEFAULT_SAMPLE_COUNT, ROW_WIDTH_PRIMARY,
 };
 
 pub fn main() {
@@ -16,6 +12,11 @@ pub fn main() {
     let c_key = sp1_zkvm::io::read::<[u8; 32]>();
     let aux_data = sp1_zkvm::io::read::<Vec<u8>>();
     let key = sp1_zkvm::io::read::<[u8; 32]>();
+
+    let expected_c_key: [u8; 32] = *blake3::hash(&key).as_bytes();
+    if c_key != expected_c_key {
+        panic!("RSLH-VE Failure: c_key does not match blake3(key)");
+    }
 
     // 2. 读取证据
     let mut proofs = Vec::with_capacity(DEFAULT_SAMPLE_COUNT);
@@ -41,7 +42,7 @@ pub fn main() {
         &c_origin_bytes,
         &c_cipher_bytes,
         &aux_data,
-        1000, 
+        1000,
         &proofs,
     ) {
         panic!("RSLH-VE Failure: {}", e);

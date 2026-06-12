@@ -1,28 +1,19 @@
-use clap::{Parser, ValueEnum};
-use serde::{Deserialize, Serialize};
-use sp1_sdk::{
-    include_elf,
-    HashableKey,
-    Prover, 
-    ProverClient,
-    SP1ProofWithPublicValues,
-    SP1Stdin,
-    SP1VerifyingKey,
-};
-use sp1_sdk::network::{NetworkMode, FulfillmentStrategy};
-use std::path::PathBuf;
-use sha2::{Sha256, Digest};
-use rand::{rng, RngCore};
 use chacha20::cipher::{KeyIvInit, StreamCipher};
 use chacha20::{ChaCha8, Key, Nonce};
+use clap::{Parser, ValueEnum};
+use rand::{rng, RngCore};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use sp1_sdk::network::{FulfillmentStrategy, NetworkMode};
+use sp1_sdk::{
+    include_elf, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
+    SP1VerifyingKey,
+};
+use std::path::PathBuf;
 
 // 引用你的 lib 逻辑
-use maenad_lib::rslh_ve::{
-    create_honest_proof, 
-    derive_rslh_nonce,
-    DEFAULT_SAMPLE_COUNT,
-};
-use maenad_lib::walrus_address::compute_blob_id_default;
+use drop_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT};
+use drop_lib::walrus_address::compute_blob_id_default;
 
 /// ELF of the Walrus VDD program
 pub const VDD_WALRUS_RSLHVE_ELF: &[u8] = include_elf!("program-vdd-walrus-rslhve");
@@ -58,12 +49,14 @@ fn main() {
     sp1_sdk::utils::setup_logger();
 
     let args = EVMArgs::parse();
-    
+
     // 初始化 Network Prover 客户端
-    let client = ProverClient::builder().network_for(NetworkMode::Mainnet).build();
+    let client = ProverClient::builder()
+        .network_for(NetworkMode::Mainnet)
+        .build();
 
     // --- 1. 准备输入数据 ---
-    const DATA_SIZE: usize = 1 * 1024 * 1024; 
+    const DATA_SIZE: usize = 1 * 1024 * 1024;
     let mut origin_data = vec![0u8; DATA_SIZE];
     rand::thread_rng().fill_bytes(&mut origin_data);
 
@@ -72,9 +65,8 @@ fn main() {
 
     let c_origin = compute_blob_id_default(&origin_data).unwrap();
     let c_origin_bytes: [u8; 32] = (*c_origin.as_ref()).try_into().unwrap();
-    
-    let c_key_hash = Sha256::digest(&key);
-    let c_key_bytes: [u8; 32] = c_key_hash.into();
+
+    let c_key_bytes: [u8; 32] = *blake3::hash(&key).as_bytes();
 
     let aux_data = b"maenad_v1";
     let nonce = derive_rslh_nonce(&key, aux_data);
@@ -82,7 +74,7 @@ fn main() {
     let mut cipher_data = origin_data.clone();
     let mut cipher_stream = ChaCha8::new(Key::from_slice(&key), Nonce::from_slice(&nonce));
     cipher_stream.apply_keystream(&mut cipher_data);
-    
+
     let c_cipher = compute_blob_id_default(&cipher_data).unwrap();
     let c_cipher_bytes: [u8; 32] = (*c_cipher.as_ref()).try_into().unwrap();
 
@@ -117,12 +109,22 @@ fn main() {
     println!("SP1 Setup finished. Program VKey: {}", vk.bytes32());
 
     if args.idle {
-        write_fixture_data(&c_origin_bytes, &c_key_bytes, &c_cipher_bytes, None, &vk, args.system);
+        write_fixture_data(
+            &c_origin_bytes,
+            &c_key_bytes,
+            &c_cipher_bytes,
+            None,
+            &vk,
+            args.system,
+        );
         return;
     }
 
-    println!("Submitting proof request to SP1 Network ({:?})...", args.system);
-    
+    println!(
+        "Submitting proof request to SP1 Network ({:?})...",
+        args.system
+    );
+
     let proof = match args.system {
         ProofSystem::Plonk => client
             .prove(&pk, &stdin)
@@ -138,7 +140,8 @@ fn main() {
             .max_price_per_pgu(100_000_000u64)
             .groth16()
             .run(),
-    }.expect("failed to generate network proof");
+    }
+    .expect("failed to generate network proof");
 
     println!("✔ Network proof generated successfully!");
 
@@ -149,7 +152,7 @@ fn main() {
         &c_cipher_bytes,
         Some(&proof),
         &vk,
-        args.system
+        args.system,
     );
 }
 
@@ -159,12 +162,12 @@ fn write_fixture_data(
     c_cipher: &[u8; 32],
     proof_data: Option<&SP1ProofWithPublicValues>,
     vk: &SP1VerifyingKey,
-    system: ProofSystem
+    system: ProofSystem,
 ) {
     let (public_values_hex, proof_hex) = if let Some(p) = proof_data {
         (
             format!("0x{}", hex::encode(p.public_values.as_slice())),
-            format!("0x{}", hex::encode(p.bytes()))
+            format!("0x{}", hex::encode(p.bytes())),
         )
     } else {
         ("0x".to_string(), "0x".to_string())
@@ -181,13 +184,14 @@ fn write_fixture_data(
 
     let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/src/fixtures");
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
-    
+
     let filename = format!("vdd-walrus-rslh-{:?}-fixture.json", system).to_lowercase();
-    
+
     std::fs::write(
-        fixture_path.join(&filename), 
-        serde_json::to_string_pretty(&fixture).unwrap()
-    ).expect("failed to write fixture");
+        fixture_path.join(&filename),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .expect("failed to write fixture");
 
     println!("✔ Fixture saved to contracts/src/fixtures/{}", filename);
 }

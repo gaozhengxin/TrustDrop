@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use std::env;
 
@@ -19,7 +19,8 @@ pub async fn run_config_checks() -> Result<()> {
     println!("Checking environment variables...");
     let seller_key = env::var("SELLER_KEY").map_err(|_| anyhow!("SELLER_KEY not set"))?;
     let buyer_key = env::var("BUYER_KEY").map_err(|_| anyhow!("BUYER_KEY not set"))?;
-    let sp1_private_key = env::var("SP1_PRIVATE_KEY").map_err(|_| anyhow!("SP1_PRIVATE_KEY not set"))?;
+    let sp1_private_key =
+        env::var("SP1_PRIVATE_KEY").map_err(|_| anyhow!("SP1_PRIVATE_KEY not set"))?;
     println!("  - Environment variables (SELLER_KEY, BUYER_KEY, SP1_PRIVATE_KEY) are set.");
 
     // --- [2. 本地 Walrus 节点状态检查] ---
@@ -48,7 +49,7 @@ pub async fn run_config_checks() -> Result<()> {
     // 检查参与协议的各个地址是否拥有足够的 Gas 费 (ETH) 和 SP1 证明信用 (PROVE Token)。
     println!("Checking account balances...");
     let provider = Provider::<Http>::try_from("https://sepolia-rollup.arbitrum.io/rpc")?;
-    
+
     // 从私钥字符串解析出钱包实例
     let seller_wallet = seller_key.parse::<LocalWallet>()?;
     let buyer_wallet = buyer_key.parse::<LocalWallet>()?;
@@ -59,9 +60,18 @@ pub async fn run_config_checks() -> Result<()> {
     let buyer_balance = provider.get_balance(buyer_wallet.address(), None).await?;
     let sp1_balance = provider.get_balance(sp1_wallet.address(), None).await?;
 
-    println!("  - Seller balance: {} ETH", ethers::utils::format_ether(seller_balance));
-    println!("  - Buyer balance: {} ETH", ethers::utils::format_ether(buyer_balance));
-    println!("  - SP1 Prover balance: {} ETH", ethers::utils::format_ether(sp1_balance));
+    println!(
+        "  - Seller balance: {} ETH",
+        ethers::utils::format_ether(seller_balance)
+    );
+    println!(
+        "  - Buyer balance: {} ETH",
+        ethers::utils::format_ether(buyer_balance)
+    );
+    println!(
+        "  - SP1 Prover balance: {} ETH",
+        ethers::utils::format_ether(sp1_balance)
+    );
 
     // SP1 `PROVE` token balance check disabled as per user request.
 
@@ -71,8 +81,16 @@ pub async fn run_config_checks() -> Result<()> {
     let vdd_verifier = "0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071".parse::<Address>()?;
     let vss_code = provider.get_code(vss_verifier, None).await?;
     let vdd_code = provider.get_code(vdd_verifier, None).await?;
-    if vss_code.is_empty() { return Err(anyhow!("VSS Verifier contract has no code at 0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2")); }
-    if vdd_code.is_empty() { return Err(anyhow!("VDD Verifier contract has no code at 0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071")); }
+    if vss_code.is_empty() {
+        return Err(anyhow!(
+            "VSS Verifier contract has no code at 0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2"
+        ));
+    }
+    if vdd_code.is_empty() {
+        return Err(anyhow!(
+            "VDD Verifier contract has no code at 0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071"
+        ));
+    }
     println!("  - VSS and VDD Verifier contracts are deployed and valid.");
 
     println!(">>> Configuration checks passed.");

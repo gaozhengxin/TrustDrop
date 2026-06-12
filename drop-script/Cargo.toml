@@ -1,5 +1,5 @@
 [package]
-name = "maenad-script"
+name = "drop-script"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,12 +10,11 @@ ethers = { version = "2.0.14", features = ["rustls"] }
 tokio = { version = "1.0", features = ["full"] }
 dotenv = "0.15.0"
 storage = { path = "../storage" }
-maenad-lib = { path = "../maenad-lib"}
+drop-lib = { path = "../drop-lib" }
 blake3 = "1.8.2"
-sp1-sdk = "5.0.8"
+sp1-sdk = { version = "6.0.2", features = ["network"] }
 serde = "1.0.203"
 serde_json = "1.0.117"
 sha2 = "0.10.8"
 reqwest = "0.12.2"
 hex = "0.4"
-

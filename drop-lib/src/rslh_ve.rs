@@ -179,11 +179,13 @@ mod tests {
         use rand::{RngCore, thread_rng};
 
         // 定义测试档次
-        let tiers = vec![
+        let mut tiers = vec![
             ("100B", 100),
             ("1MB", 1024 * 1024),
-            ("1GB", 1024 * 1024 * 1024),
         ];
+        if std::env::var("DROP_LIB_LONG_TESTS").as_deref() == Ok("1") {
+            tiers.push(("1GB", 1024 * 1024 * 1024));
+        }
 
         println!("\n{:<10} | {:<15} | {:<15}", "Size", "Setup Time", "Verify Time (Avg)");
         println!("{:-<45}", "");
@@ -226,8 +228,11 @@ mod tests {
             let setup_duration = setup_start.elapsed();
 
             // --- 2. 核心验证阶段 (这是 SP1 VM 实际运行的部分) ---
-            // 执行 50 次取平均值以消除系统误差
-            let iterations = 50;
+            let iterations = if std::env::var("DROP_LIB_LONG_TESTS").as_deref() == Ok("1") {
+                50
+            } else {
+                3
+            };
             let verify_start = Instant::now();
             for _ in 0..iterations {
                 let _ = verify_rslh_ve_combat(&key, &c_key, &c_origin, &c_cipher, aux, 1000, &proofs);
