@@ -77,6 +77,55 @@ contract NegativePathTest is BaseTest {
         channel.fulfill(buyer, info, currentVersion, vss, vdd);
     }
 
+    function test_Negative_PurchaseRejectsWrongDataCommitment() public {
+        bytes32 currentVersion = channel.saleVersions(info.saleDigest);
+        bytes memory wrongCommitment = hex"999999999999999999999999999999999999";
+
+        vm.prank(buyer);
+        vm.expectRevert("Wrong data commitment");
+        channel.purchase{value: 1 ether}(
+            info.saleDigest,
+            currentVersion,
+            1 ether,
+            block.timestamp + 10 days,
+            wrongCommitment,
+            Types.Hash.wrap(bytes32(uint256(0x123))),
+            Types.Cipher32.wrap(0)
+        );
+    }
+
+    function test_Negative_PurchaseRejectsTooSoonDeadline() public {
+        bytes32 currentVersion = channel.saleVersions(info.saleDigest);
+
+        vm.prank(buyer);
+        vm.expectRevert("Deadline too soon");
+        channel.purchase{value: 1 ether}(
+            info.saleDigest,
+            currentVersion,
+            1 ether,
+            block.timestamp + 30 minutes,
+            cidData,
+            Types.Hash.wrap(bytes32(uint256(0x123))),
+            Types.Cipher32.wrap(0)
+        );
+    }
+
+    function test_Negative_PurchaseRejectsTooFarDeadline() public {
+        bytes32 currentVersion = channel.saleVersions(info.saleDigest);
+
+        vm.prank(buyer);
+        vm.expectRevert("Deadline too far");
+        channel.purchase{value: 1 ether}(
+            info.saleDigest,
+            currentVersion,
+            1 ether,
+            block.timestamp + 31 days,
+            cidData,
+            Types.Hash.wrap(bytes32(uint256(0x123))),
+            Types.Cipher32.wrap(0)
+        );
+    }
+
     function test_PostDeadline_MutualExclusion() public {
         bytes32 currentVersion = channel.saleVersions(info.saleDigest);
 

@@ -8,12 +8,12 @@ contract ExchangeTest is BaseTest {
         ExchangeChannelImplementation channel = createChannel();
 
         // --- 1. 上架 ---
+        bytes32 saleId = channel.getNextSaleId();
         vm.prank(owner);
         Types.DataCommitment memory cid = Types.DataCommitment(
             hex"123456789012345678901234567890123456"
         );
         channel.listFile(cid, 1 ether, "Test Data");
-        bytes32 saleId = channel.getNextSaleId();
         bytes32 version = channel.saleVersions(saleId);
 
         // --- 2. 购买 (记录购买时的准确数据) ---

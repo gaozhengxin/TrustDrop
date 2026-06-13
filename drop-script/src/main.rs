@@ -271,12 +271,35 @@ pub async fn get_or_create_channel(
         .await?
         .await?
         .ok_or(anyhow!("Hub fail"))?;
-    let ev = hub_contract.decode_event::<ExchangeChannelCreatedFilter>(
-        "ExchangeChannelCreated",
-        receipt.logs[0].topics.clone(),
-        receipt.logs[0].data.clone(),
-    )?;
-    Ok(ev.channel)
+
+    for log in receipt.logs.iter().filter(|log| log.address == hub_addr) {
+        let Ok(ev) = hub_contract.decode_event::<ExchangeChannelCreatedFilter>(
+            "ExchangeChannelCreated",
+            log.topics.clone(),
+            log.data.clone(),
+        ) else {
+            continue;
+        };
+
+        if ev.owner != signer.address() {
+            continue;
+        }
+
+        ensure!(
+            hub_contract
+                .is_registered_channel(ev.channel)
+                .call()
+                .await?,
+            "Created channel is not registered in hub: {:?}",
+            ev.channel
+        );
+        return Ok(ev.channel);
+    }
+
+    Err(anyhow!(
+        "No ExchangeChannelCreated event found for owner {:?}",
+        signer.address()
+    ))
 }
 
 /// # [TOOL] 从购买事件中解析信息
@@ -298,7 +321,8 @@ pub async fn get_or_create_channel(
 pub async fn get_purchase_info_from_event(
     client: &Provider<Http>,
     transaction_hash: H256,
-    _channel_address: Address,
+    channel_address: Address,
+    sale_id: [u8; 32],
 ) -> Result<(Address, channel_abi::ExchangeInfo)> {
     let hub_addr = configured_hub_address()?;
     let receipt = client
@@ -306,18 +330,42 @@ pub async fn get_purchase_info_from_event(
         .await?
         .ok_or(anyhow!("TX missing"))?;
 
-    let log = receipt
-        .logs
-        .iter()
-        .find(|l| l.address == hub_addr)
-        .ok_or(anyhow!("No PurchaseEvent Log Found from Hub"))?;
-
     let hub_inst = hub_abi::ExchangeHubContract::new(hub_addr, Arc::new(client.clone()));
-    let purchase_ev = hub_inst.decode_event::<hub_abi::PurchaseEventFilter>(
-        "PurchaseEvent",
-        log.topics.clone(),
-        log.data.clone(),
-    )?;
+
+    let mut purchase_ev = None;
+    for log in receipt.logs.iter().filter(|log| log.address == hub_addr) {
+        let Ok(ev) = hub_inst.decode_event::<hub_abi::PurchaseEventFilter>(
+            "PurchaseEvent",
+            log.topics.clone(),
+            log.data.clone(),
+        ) else {
+            continue;
+        };
+
+        if ev.channel != channel_address {
+            continue;
+        }
+        if ev.sale_id != sale_id {
+            continue;
+        }
+        if ev.exchange_info.sale_digest != sale_id {
+            return Err(anyhow!(
+                "PurchaseEvent sale id mismatch: event saleId=0x{}, exchangeInfo.saleDigest=0x{}",
+                hex::encode(ev.sale_id),
+                hex::encode(ev.exchange_info.sale_digest)
+            ));
+        }
+        purchase_ev = Some(ev);
+        break;
+    }
+
+    let purchase_ev = purchase_ev.ok_or_else(|| {
+        anyhow!(
+            "No matching PurchaseEvent found from Hub for channel {:?}, saleId 0x{}",
+            channel_address,
+            hex::encode(sale_id)
+        )
+    })?;
 
     let h = purchase_ev.exchange_info;
     let channel_info = channel_abi::ExchangeInfo {
@@ -664,6 +712,7 @@ pub async fn stage_3_fulfill(
         ctx.signer.provider(),
         purchase.transaction_hash,
         listing.channel_address,
+        listing.unique_sale_id,
     )
     .await?;
 
@@ -1230,6 +1279,7 @@ async fn main() -> Result<()> {
         provider.provider(),
         purchase.transaction_hash,
         listing.channel_address,
+        listing.unique_sale_id,
     )
     .await?;
     stage_5_settle(

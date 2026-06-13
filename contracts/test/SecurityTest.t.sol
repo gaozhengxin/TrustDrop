@@ -53,12 +53,12 @@ contract SecurityTest is BaseTest {
     function test_SettlementCondition_MustBePrivy() public {
         // 1. 准备环境：创建 Channel 并上架
         ExchangeChannelImplementation channel = createChannel();
+        bytes32 saleId = channel.getNextSaleId();
         vm.prank(owner);
         Types.DataCommitment memory cid = Types.DataCommitment(
             hex"123456789012345678901234567890123456"
         );
         channel.listFile(cid, 1 ether, "Sensitive Data");
-        bytes32 saleId = channel.getNextSaleId();
         bytes32 version = channel.saleVersions(saleId);
         uint256 balanceBefore = owner.balance;
 

@@ -32,6 +32,8 @@ contract ExchangeChannelStorage is VDD, ReentrancyGuard {
     using Types for *;
 
     uint256 public constant LIVING_WINDOW = 7 days;
+    uint256 public constant MIN_PURCHASE_DEADLINE = 1 hours;
+    uint256 public constant MAX_PURCHASE_DEADLINE = 30 days;
 
     IExchangeHub public hub;
 
@@ -186,6 +188,18 @@ contract ExchangeChannelImplementation is ExchangeChannelStorage {
         Types.Cipher32 encryptedVssKey
     ) external payable {
         require(dataVersion == saleVersions[saleId], "Wrong data version");
+        require(
+            getDataId(dataCommitment) == dataVersion,
+            "Wrong data commitment"
+        );
+        require(
+            deadline >= block.timestamp + MIN_PURCHASE_DEADLINE,
+            "Deadline too soon"
+        );
+        require(
+            deadline <= block.timestamp + MAX_PURCHASE_DEADLINE,
+            "Deadline too far"
+        );
         require(msg.value == price, "Exact price required");
 
         if (vssKeyCommitment.eq(bytes32(0).toHash())) {
