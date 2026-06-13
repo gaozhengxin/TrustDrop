@@ -310,3 +310,14 @@ curl -I http://localhost:31415
 - VDD guest 已约束 `c_key == blake3(key)`，后续如修改 key commitment 算法必须同时更新合约、host 和 guest。
 - GUI 仍未接入业务流程。
 - 全 workspace 构建可能受系统 GUI 依赖影响。
+
+## Agent context 初始化核心文档
+```
+.codex/README.md
+.codex/docs/context-supplement.md
+.codex/docs/architecture.md
+.codex/docs/drop-script.md
+.codex/docs/drop-script-debug-plan.md
+.codex/runbooks/drop-script-integration-dependency-runbook.md
+.codex/iterations/0002-drop-script-protocol-review.md
+```
