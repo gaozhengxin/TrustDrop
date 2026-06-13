@@ -471,6 +471,72 @@ PROTOC=/tmp/protoc-25.3/bin/protoc VDD_RSLHVE_DATA_SIZE=65536 cargo run -p vdd-s
 - VDD walrus_rslhve execute 成功，输出匹配 expected Triple-Binding commitments，cycles 为 `678144062`。
 - 本轮没有运行 proof。
 
+### 2026-06-13 全流程组件准备结果
+
+本轮在用户确认后继续实施，目标是把全流程代码和组件准备好、完成编译，并部署合约和 subgraph；不要求完整端到端业务脚本跑通。
+
+已提交起点：
+
+- `0db1bd7 chore: record drop integration planning state`
+
+合约部署：
+
+| 组件 | 地址 | 备注 |
+| --- | --- | --- |
+| ExchangeHub | `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b` | block `276651753` |
+| OracleProxy | `0x3919D7EBcef230a049e20C2020da4a4ff7d32754` | block `276651684` |
+| WalrusFunctionsConsumer | `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01` | block `276651794` |
+| ExchangeChannelImplementation | `0x6793Bc603a61E37BE89681041C84b68b95291449` | block `276651719` |
+| VSS verifier | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | existing SP1 verifier |
+| VDD verifier | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | existing walrus rslh SP1 verifier |
+
+链上连线检查：
+
+- `ExchangeHub.implementation()` 指向 `0x6793Bc603a61E37BE89681041C84b68b95291449`。
+- `ExchangeHub.oracleWrapper()` 指向 `0x3919D7EBcef230a049e20C2020da4a4ff7d32754`。
+- `OracleProxy.consumer()` 指向 `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01`。
+- `OracleProxy.controller()` 指向 `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`。
+- `OracleProxy.subscriptionId()` 为 `550`。
+- `WalrusFunctionsConsumer.proxy()` 指向 `0x3919D7EBcef230a049e20C2020da4a4ff7d32754`。
+
+subgraph 部署：
+
+- Studio: `https://thegraph.com/studio/subgraph/test-arbitrum-store/`
+- version: `v0.0.2`
+- query URL: `https://api.studio.thegraph.com/query/1722405/test-arbitrum-store/v0.0.2`
+- manifest Hub: `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`
+- manifest startBlock: `276651753`
+
+已同步：
+
+- `contracts/deployed.md`
+- `.codex/docs/contracts.md`
+- `.codex/docs/drop-script-debug-plan.md`
+- `subgraph/subgraph.yaml`
+- 本地 ignored `drop-script/.env`
+- 本地 ignored `subgraph/.env`
+
+部署中修正：
+
+- `subgraph/package.json` 的 `deploy:studio` 去掉当前 graph-cli 不支持的 `--studio` 参数。
+- `deploy:studio` 增加非交互 `--version-label ${SUBGRAPH_VERSION_LABEL:-v0.0.1}`。
+- 首次使用 `v0.0.1` 部署失败，因为 Studio 中该版本号已存在；最终用 `v0.0.2` 成功部署。
+
+已通过命令：
+
+```sh
+PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p drop-script
+PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p vss-script --bin vss
+PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p vdd-script --bin main_walrus_rslhve
+PROTOC=/tmp/protoc-25.3/bin/protoc cargo test -p drop-lib
+forge build
+forge test
+pnpm --dir subgraph codegen
+pnpm --dir subgraph build
+forge script script/DeployMain.s.sol:DeployMain --rpc-url https://sepolia-rollup.arbitrum.io/rpc --broadcast
+SUBGRAPH_VERSION_LABEL=v0.0.2 pnpm --dir subgraph deploy:studio
+```
+
 ## 测试验收标准
 
 本次设计迭代的验收标准：

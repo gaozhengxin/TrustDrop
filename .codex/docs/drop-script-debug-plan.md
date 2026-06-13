@@ -1,6 +1,6 @@
 # Drop Script 调试物料与推进计划
 
-日期：2026-06-12
+日期：2026-06-12，更新：2026-06-13
 
 目标：先不深入密码学细节，从结构层面确认 `drop-script` 的链路闭合，保证 Walrus、SP1 Prover Network、Arbitrum Sepolia 合约和 subgraph 可以围绕同一套部署调试。
 
@@ -65,7 +65,7 @@ BUYER_KEY=...
 SP1_PRIVATE_KEY=...
 ARBITRUM_SEPOLIA_RPC=https://sepolia-rollup.arbitrum.io/rpc
 WALRUS_LOCAL_ENDPOINT=http://localhost:31415
-HUB_ADDRESS=0x2e506eF3F3cE222F276ddA64Df239CEF92683a78
+HUB_ADDRESS=0xAd7E0A828D5588e7e75b20244194c55d58c54A0b
 VSS_VERIFIER_ADDRESS=0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2
 VDD_VERIFIER_ADDRESS=0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071
 DROP_ORACLE_TIMEOUT_SECS=1800
@@ -83,14 +83,14 @@ DROP_ORACLE_TIMEOUT_SECS=1800
 
 | 合约 | 地址 |
 | --- | --- |
-| ExchangeHub | `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78` |
-| OracleProxy | `0xdd004ceedb0b34adb4feb886e6bef96e947ed59b` |
-| WalrusFunctionsConsumer | `0x5b56a45fff2f46c997a434ef2fca973e2a1f1c6b` |
-| ExchangeChannelImplementation | `0x4e0aac9301f04aabb98770bdb043dd321f978feb` |
+| ExchangeHub | `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b` |
+| OracleProxy | `0x3919D7EBcef230a049e20C2020da4a4ff7d32754` |
+| WalrusFunctionsConsumer | `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01` |
+| ExchangeChannelImplementation | `0x6793Bc603a61E37BE89681041C84b68b95291449` |
 | VSS verifier | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` |
 | VDD verifier | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` |
 
-注意：`contracts/deployed.md` 里有旧地址记录，调试时以 `contracts/broadcast/DeployMain.s.sol/421614/run-latest.json` 和实际 `.env` 为准。
+最新部署记录已同步到 `contracts/deployed.md`，调试时以 `contracts/broadcast/DeployMain.s.sol/421614/run-latest.json`、`contracts/deployed.md` 和实际 `.env` 为准。
 
 ### subgraph 环境
 
@@ -112,8 +112,10 @@ DEPLOY_KEY=...
 当前 subgraph manifest：
 
 - network: `arbitrum-sepolia`
-- Hub: `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78`
-- startBlock: `256170177`
+- Hub: `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`
+- startBlock: `276651753`
+- Studio version: `v0.0.2`
+- query URL: `https://api.studio.thegraph.com/query/1722405/test-arbitrum-store/v0.0.2`
 
 ## 标准验证命令
 
@@ -155,11 +157,16 @@ pnpm --dir subgraph deploy:studio
 
 已通过：
 
-- `cargo check -p drop-script`
+- `PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p drop-script`
+- `PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p vss-script --bin vss`
+- `PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p vdd-script --bin main_walrus_rslhve`
+- `PROTOC=/tmp/protoc-25.3/bin/protoc cargo test -p drop-lib`
 - `pnpm --dir subgraph codegen`
 - `pnpm --dir subgraph build`
 - `forge build`
 - `forge test`，15 个测试通过
+- `forge script script/DeployMain.s.sol:DeployMain --rpc-url https://sepolia-rollup.arbitrum.io/rpc --broadcast`
+- `SUBGRAPH_VERSION_LABEL=v0.0.2 pnpm --dir subgraph deploy:studio`
 
 已修正：
 
@@ -182,8 +189,11 @@ pnpm --dir subgraph deploy:studio
    - `fulfill` 成功不代表能 `settle`。
    - 必须确认 OracleProxy 已绑定 consumer，consumer 已配置 subscription，subscription 余额充足。
 
-3. `contracts/deployed.md` 和最新 broadcast 不一致：
-   - 后续每次部署后必须同步更新部署文档、`drop-script/.env`、`subgraph/subgraph.yaml`。
+3. 每次重新部署后必须同步更新：
+   - `contracts/deployed.md`
+   - `drop-script/.env`
+   - `subgraph/subgraph.yaml`
+   - subgraph Studio version / query URL
 
 4. subgraph 目前索引核心事件，不索引链上状态读模型：
    - 已覆盖销售、购买、结算、退款、密钥分享、VDD proof、oracle skipped。
@@ -212,7 +222,8 @@ forge test
 3. 部署或确认合约：
 
 - 使用 `contracts/.env`。
-- 如果重新部署，更新：
+- 当前已部署到 Arbitrum Sepolia。
+- 如果后续重新部署，更新：
   - `contracts/deployed.md`
   - `drop-script/.env`
   - `subgraph/subgraph.yaml`
@@ -222,6 +233,8 @@ forge test
 ```sh
 pnpm --dir subgraph deploy:studio
 ```
+
+当前已部署版本为 `v0.0.2`。
 
 5. 运行 drop-script 前置检查：
 

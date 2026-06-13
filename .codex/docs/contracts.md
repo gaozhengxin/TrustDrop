@@ -57,9 +57,20 @@
 | --- | --- | --- |
 | VSS | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | SP1 verifier |
 | VDD | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | walrus rslh SP1 verifier |
-| Walrus Functions Consumer | `0x5b56a45fff2F46c997a434EF2fCa973E2A1f1c6B` | latest broadcast |
-| Oracle proxy | `0xDD004cEEdb0B34ADb4fEb886e6BeF96E947Ed59B` | latest broadcast |
-| Exchange hub | `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78` | latest broadcast |
-| Exchange logic | `0x4E0AaC9301F04aAbB98770Bdb043Dd321f978fEb` | latest broadcast |
+| Walrus Functions Consumer | `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01` | latest broadcast, block `276651794` |
+| Oracle proxy | `0x3919D7EBcef230a049e20C2020da4a4ff7d32754` | latest broadcast, block `276651684` |
+| Exchange hub | `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b` | latest broadcast, block `276651753` |
+| Exchange logic | `0x6793Bc603a61E37BE89681041C84b68b95291449` | latest broadcast, block `276651719` |
 
 注意：`drop-script` 当前从 `.env` 读取 `HUB_ADDRESS`、`VSS_VERIFIER_ADDRESS`、`VDD_VERIFIER_ADDRESS`，源码常量只作为默认回退。每次重新部署后要同步更新 `contracts/deployed.md`、`drop-script/.env` 和 `subgraph/subgraph.yaml`。
+
+## 最新部署检查
+
+2026-06-13 已完成 Arbitrum Sepolia 部署，并确认以下链上连线：
+
+- `ExchangeHub.implementation()` 指向 `0x6793Bc603a61E37BE89681041C84b68b95291449`。
+- `ExchangeHub.oracleWrapper()` 指向 `0x3919D7EBcef230a049e20C2020da4a4ff7d32754`。
+- `OracleProxy.consumer()` 指向 `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01`。
+- `OracleProxy.controller()` 指向 `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`。
+- `OracleProxy.subscriptionId()` 为 `550`。
+- `WalrusFunctionsConsumer.proxy()` 指向 `0x3919D7EBcef230a049e20C2020da4a4ff7d32754`。

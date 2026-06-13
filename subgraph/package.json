@@ -5,7 +5,7 @@
   "scripts": {
     "codegen": "graph codegen",
     "build": "graph build",
-    "deploy:studio": ". ./.env && graph deploy $SUBGRAPH_SLUG --studio --deploy-key $DEPLOY_KEY"
+    "deploy:studio": ". ./.env && graph deploy $SUBGRAPH_SLUG subgraph.yaml --deploy-key $DEPLOY_KEY --version-label ${SUBGRAPH_VERSION_LABEL:-v0.0.1}"
   },
   "devDependencies": {
     "@graphprotocol/graph-cli": "^0.97.1",
