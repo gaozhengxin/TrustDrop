@@ -537,6 +537,37 @@ forge script script/DeployMain.s.sol:DeployMain --rpc-url https://sepolia-rollup
 SUBGRAPH_VERSION_LABEL=v0.0.2 pnpm --dir subgraph deploy:studio
 ```
 
+### 收口判定
+
+本次迭代可以收口。
+
+收口理由：
+
+- 用户定义的最终范围是“把全流程代码和组件准备好，代码编译完成；不需要全部跑通；合约和 subgraph 需要部署好”。
+- 代码准备已经完成：`drop-script`、VSS script、VDD walrus_rslhve script、合约、subgraph 均已进入可编译状态。
+- 基础验证已经完成：`drop-lib` 测试通过，合约测试通过，subgraph codegen/build 通过。
+- 链上组件已经部署：ExchangeHub、OracleProxy、WalrusFunctionsConsumer、ExchangeChannelImplementation 已部署到 Arbitrum Sepolia。
+- subgraph 已部署到 The Graph Studio `v0.0.2`。
+- 地址同步已经完成：`contracts/deployed.md`、`subgraph/subgraph.yaml`、本地 `drop-script/.env`、本地 `subgraph/.env` 已对齐新部署。
+- 链上连线已经做过读检查：Hub、OracleProxy、WalrusFunctionsConsumer 三者互相指向正确。
+- 当前 git 工作树在提交 `603b8ea` 后干净。
+
+本次迭代不包含、也不应继续拖入的内容：
+
+- 不跑完整 drop-script 端到端交易流。
+- 不生成 VSS/VDD proof。
+- 不验证 Chainlink Functions 实际异步回调成功。
+- 不验证 Walrus publisher 上传和 Oracle 查询在真实业务流中的最终一致性。
+- 不升级或重部署 SP1 verifier 合约。
+
+剩余风险进入下一迭代：
+
+- Chainlink Functions subscription `550` 的余额、consumer 授权、DON 配置仍需在端到端调试时验证。
+- `/home/justin/walrus` publisher 是否持续在线，以及本地 publisher 上传的 blob 是否能被 Oracle 查询路径看到，仍需端到端验证。
+- `drop-script` 当前仍使用演示固定密钥，真实密钥管理不在本轮范围内。
+- `stage_4_recovery` 对 `DataKeyShared` 事件的定位仍偏单次调试模式，多订单并发下需要改成从本次 receipt 精确解析。
+- subgraph 目前索引事件，不索引 Oracle 成功状态；如果前端需要展示 `oracleSuccessUntil`，需要补事件或读模型。
+
 ## 测试验收标准
 
 本次设计迭代的验收标准：
@@ -571,3 +602,11 @@ SUBGRAPH_VERSION_LABEL=v0.0.2 pnpm --dir subgraph deploy:studio
 - 当前工作树里已经存在未批准 diff，后续不能继续叠加实现，应先由用户选择保留、撤回、拆分或追认。
 - SP1 版本是高变动外部依赖，Prover Network 兼容性必须显式研究和记录；本轮是在用户追加授权后升级到 `6.2.4`，不能把这种升级作为默认顺手操作。
 - 对只要求本地 execute 的验收，应优先使用 SP1 `LightProver`，避免 CPU prover 初始化和证明参数加载带来的无关等待。
+- 本项目的集成推进要按“本地编译 -> 本地测试 -> 链上部署 -> 链上读检查 -> subgraph 部署 -> 端到端业务流”的顺序推进；不要把链上部署和端到端调试混成一个不可回滚的大步骤。
+- 合约部署完成后必须立即做最小链上读检查，至少确认 Hub、OracleProxy、Consumer 的互相指向，否则后续 drop-script 问题会被错误归因到业务逻辑。
+- 每次合约重新部署后，必须同步四处地址：`contracts/deployed.md`、`drop-script/.env`、`subgraph/subgraph.yaml`、相关 `.codex` 运行文档。
+- The Graph CLI 版本变化会影响部署命令；当前 `graph deploy` 不再接受 `--studio`，且非交互部署必须显式提供 `--version-label`。
+- The Graph Studio 的 version label 不可复用；部署失败时要先判断是代码错误、IPFS 上传错误还是 label 已存在。本轮 `v0.0.1` 已存在，`v0.0.2` 部署成功。
+- `protoc` 是 SP1 v6 编译链的硬前置依赖。本机没有系统 `protoc` 时，应显式记录并使用 `/tmp/protoc-25.3/bin/protoc`，否则不同命令会出现不稳定失败。
+- `.env` 文件只用于本地调试和部署，不进入 git；提交前必须检查 `git status` 和 `git check-ignore`，确认私钥没有被 staged。
+- 本轮收口标准要严格按用户最后确认的范围执行：代码和组件准备、编译、合约部署、subgraph 部署完成即可，不把完整业务流跑通作为本轮收口条件。
