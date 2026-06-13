@@ -21,7 +21,7 @@ name = "vkey"
 path = "src/bin/vkey.rs"
 
 [dependencies]
-sp1-sdk = { version = "6.0.2", features = ["network"] }
+sp1-sdk = { version = "6.2.4", features = ["network"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -37,4 +37,4 @@ drop-lib = { path = "../../../drop-lib" }
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
-sp1-build = "6.0.2"
+sp1-build = "6.2.4"

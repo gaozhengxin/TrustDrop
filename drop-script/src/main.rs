@@ -72,6 +72,36 @@ pub const ORACLE_TIMEOUT_SECS: u64 = 30 * 60;
 pub const VSS_VERIFIER_ADDRESS: &str = "0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2";
 pub const VDD_VERIFIER_ADDRESS: &str = "0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071";
 
+fn env_or_default(key: &str, default: &str) -> String {
+    env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
+pub fn configured_rpc_url() -> String {
+    env_or_default("ARBITRUM_SEPOLIA_RPC", ARBITRUM_SEPOLIA_RPC)
+}
+
+pub fn configured_walrus_endpoint() -> String {
+    env_or_default("WALRUS_LOCAL_ENDPOINT", WALRUS_LOCAL_ENDPOINT)
+}
+
+pub fn configured_hub_address() -> Result<Address> {
+    env_or_default("HUB_ADDRESS", HUB_ADDRESS)
+        .parse::<Address>()
+        .map_err(|_| anyhow!("Invalid HUB_ADDRESS"))
+}
+
+pub fn configured_vss_verifier_address() -> Result<Address> {
+    env_or_default("VSS_VERIFIER_ADDRESS", VSS_VERIFIER_ADDRESS)
+        .parse::<Address>()
+        .map_err(|_| anyhow!("Invalid VSS_VERIFIER_ADDRESS"))
+}
+
+pub fn configured_vdd_verifier_address() -> Result<Address> {
+    env_or_default("VDD_VERIFIER_ADDRESS", VDD_VERIFIER_ADDRESS)
+        .parse::<Address>()
+        .map_err(|_| anyhow!("Invalid VDD_VERIFIER_ADDRESS"))
+}
+
 #[derive(Debug, Clone)]
 pub struct ListingState {
     pub unique_sale_id: [u8; 32],
@@ -229,9 +259,7 @@ pub async fn get_or_create_channel(
     signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>,
     seller_vss_pubkey: Vec<u8>,
 ) -> Result<Address> {
-    let hub_addr = HUB_ADDRESS
-        .parse::<Address>()
-        .map_err(|_| anyhow!("Invalid HUB_ADDRESS"))?;
+    let hub_addr = configured_hub_address()?;
     let hub_contract = hub_abi::ExchangeHubContract::new(hub_addr, signer.clone());
     let initial_vss_pubkey = hub_abi::Pubkey {
         data: seller_vss_pubkey.into(),
@@ -272,7 +300,7 @@ pub async fn get_purchase_info_from_event(
     transaction_hash: H256,
     _channel_address: Address,
 ) -> Result<(Address, channel_abi::ExchangeInfo)> {
-    let hub_addr = HUB_ADDRESS.parse::<Address>()?;
+    let hub_addr = configured_hub_address()?;
     let receipt = client
         .get_transaction_receipt(transaction_hash)
         .await?
@@ -671,11 +699,11 @@ pub async fn stage_3_fulfill(
         &listing.encrypted_blob_id,
     );
 
-    // --- 使用硬编码的 Verifier 地址 ---
-    let vss_verifier_addr = Some(VSS_VERIFIER_ADDRESS.parse::<Address>().unwrap());
-    let vdd_verifier_addr = Some(VDD_VERIFIER_ADDRESS.parse::<Address>().unwrap());
-    println!("  - Using VSS Verifier at: {}", VSS_VERIFIER_ADDRESS);
-    println!("  - Using VDD Verifier at: {}", VDD_VERIFIER_ADDRESS);
+    // --- 使用配置的 Verifier 地址 ---
+    let vss_verifier_addr = configured_vss_verifier_address()?;
+    let vdd_verifier_addr = configured_vdd_verifier_address()?;
+    println!("  - Using VSS Verifier at: {}", vss_verifier_addr);
+    println!("  - Using VDD Verifier at: {}", vdd_verifier_addr);
 
     // --- 生成并独立模拟 VSS 证明 ---
     let vss_result = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await;
@@ -685,19 +713,17 @@ pub async fn stage_3_fulfill(
         {
             errors.push(e);
         }
-        if let Some(addr) = vss_verifier_addr {
-            if let Err(e) = simulate_vss_verify(
-                ctx.signer.provider(),
-                addr,
-                vk,
-                vss_binding_hash,
-                pv.clone(),
-                proof.clone(),
-            )
-            .await
-            {
-                errors.push(e);
-            }
+        if let Err(e) = simulate_vss_verify(
+            ctx.signer.provider(),
+            vss_verifier_addr,
+            vk,
+            vss_binding_hash,
+            pv.clone(),
+            proof.clone(),
+        )
+        .await
+        {
+            errors.push(e);
         }
         (proof, pv)
     } else if let Err(e) = vss_result {
@@ -725,19 +751,17 @@ pub async fn stage_3_fulfill(
         ) {
             errors.push(e);
         }
-        if let Some(addr) = vdd_verifier_addr {
-            if let Err(e) = simulate_vdd_verify(
-                ctx.signer.provider(),
-                addr,
-                vk,
-                vdd_binding_hash,
-                pv.clone(),
-                proof.clone(),
-            )
-            .await
-            {
-                errors.push(e);
-            }
+        if let Err(e) = simulate_vdd_verify(
+            ctx.signer.provider(),
+            vdd_verifier_addr,
+            vk,
+            vdd_binding_hash,
+            pv.clone(),
+            proof.clone(),
+        )
+        .await
+        {
+            errors.push(e);
         }
         (proof, pv)
     } else if let Err(e) = vdd_result {
@@ -1142,10 +1166,11 @@ async fn main() -> Result<()> {
     dotenv().ok();
     config_check::run_config_checks().await?;
 
-    let provider = Provider::<Http>::try_from(ARBITRUM_SEPOLIA_RPC)?;
+    let provider = Provider::<Http>::try_from(configured_rpc_url())?;
+    let walrus_endpoint = configured_walrus_endpoint();
     let walrus_config = WalrusConfig {
-        aggregator_url: WALRUS_LOCAL_ENDPOINT.to_string(),
-        publisher_url: WALRUS_LOCAL_ENDPOINT.to_string(),
+        aggregator_url: walrus_endpoint.clone(),
+        publisher_url: walrus_endpoint,
         api_key: "".into(),
         blockberry_base: "".into(),
         send_object_to: None,

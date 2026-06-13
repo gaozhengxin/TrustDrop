@@ -11,34 +11,29 @@
 //! ```
 //! Generate an EVM-compatible proof for the ChaCha8 ZK program.
 
-use clap::{ Parser, ValueEnum };
-use serde::{ Deserialize, Serialize };
-use sp1_sdk::{
-    include_elf,
-    HashableKey,
-    ProverClient,
-    Prover,
-    SP1ProofWithPublicValues,
-    SP1Stdin,
-    SP1VerifyingKey,
-};
-use sp1_sdk::network::NetworkMode;
+use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
 use sp1_sdk::network::FulfillmentStrategy;
+use sp1_sdk::network::NetworkMode;
 use sp1_sdk::Elf;
 use sp1_sdk::ProveRequest;
 use sp1_sdk::ProvingKey;
+use sp1_sdk::{
+    include_elf, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
+    SP1VerifyingKey,
+};
 use std::path::PathBuf;
 
 use dotenv::dotenv;
 
-use rand::{ rngs::StdRng, SeedableRng };
 use k256::ecdsa::SigningKey;
-use k256::sha2::{ Digest, Sha256 };
+use k256::sha2::{Digest, Sha256};
+use rand::{rngs::StdRng, SeedableRng};
 
+use drop_lib::chacha8::derive_nonce;
+use drop_lib::common::{decode_public_outputs_with_cipher, print_public_outputs_with_cipher};
 use drop_lib::data::MESSAGE_32;
 use drop_lib::kdf::key_derive;
-use drop_lib::common::{ decode_public_outputs_with_cipher, print_public_outputs_with_cipher };
-use drop_lib::chacha8::derive_nonce;
 
 use blake3;
 
@@ -85,9 +80,10 @@ async fn main() {
 
     std::env::set_var("SP1_PROVER", "network");
     let client = ProverClient::builder()
-    .network_for(NetworkMode::Mainnet)
-    //.private()
-    .build().await;
+        .network_for(NetworkMode::Mainnet)
+        //.private()
+        .build()
+        .await;
     //std::env::set_var("NETWORK_PRIVATE_KEY", "");
 
     // -----------------------------------------
@@ -173,10 +169,22 @@ async fn main() {
     println!("Derived K_KEY 2: {}", hex::encode(key_2));
     println!("Derived K_KEY 3: {}", hex::encode(key_3));
     println!("Derived K_KEY 4: {}", hex::encode(key_4));
-    println!("H_K Commitment 1: {}", hex::encode(&h_k_1_calculated.as_bytes().to_vec()));
-    println!("H_K Commitment 2: {}", hex::encode(&h_k_2_calculated.as_bytes().to_vec()));
-    println!("H_K Commitment 3: {}", hex::encode(&h_k_3_calculated.as_bytes().to_vec()));
-    println!("H_K Commitment 4: {}", hex::encode(&h_k_4_calculated.as_bytes().to_vec()));
+    println!(
+        "H_K Commitment 1: {}",
+        hex::encode(&h_k_1_calculated.as_bytes().to_vec())
+    );
+    println!(
+        "H_K Commitment 2: {}",
+        hex::encode(&h_k_2_calculated.as_bytes().to_vec())
+    );
+    println!(
+        "H_K Commitment 3: {}",
+        hex::encode(&h_k_3_calculated.as_bytes().to_vec())
+    );
+    println!(
+        "H_K Commitment 4: {}",
+        hex::encode(&h_k_4_calculated.as_bytes().to_vec())
+    );
 
     // 生成 chacha8 加密 nonce
     let binding = derive_nonce(&key_1, &msg_hash);
@@ -221,45 +229,46 @@ async fn main() {
                 format!("0x{}", hex::encode(h_k_1_calculated.as_bytes())),
                 format!("0x{}", hex::encode(h_k_2_calculated.as_bytes())),
                 format!("0x{}", hex::encode(h_k_3_calculated.as_bytes())),
-                format!("0x{}", hex::encode(h_k_4_calculated.as_bytes()))
+                format!("0x{}", hex::encode(h_k_4_calculated.as_bytes())),
             ],
             vec![
                 format!("0x{}", hex::encode(nonce_1_ref)),
                 format!("0x{}", hex::encode(nonce_2_ref)),
                 format!("0x{}", hex::encode(nonce_3_ref)),
-                format!("0x{}", hex::encode(nonce_4_ref))
+                format!("0x{}", hex::encode(nonce_4_ref)),
             ],
             &pk.verifying_key(),
-            args.system
+            args.system,
         );
         return;
     }
 
     println!("🏃 正在本地执行 Guest 程序，捕捉虚拟机报错...");
-    let (mut public_values, execution_report) = client
-        .execute(VSS_ELF, stdin.clone()).await.unwrap();
-    println!("✔ Guest 程序模拟成功！消耗周期数: {}", execution_report.total_instruction_count());
-
-    let proof: SP1ProofWithPublicValues = (
-        match args.system {
-            ProofSystem::Plonk =>
-                client
-                    .prove(&pk, stdin)
-                    .compressed()
-                    //.strategy(FulfillmentStrategy::Auction)
-                    //.max_price_per_pgu(1_000_000u64)
-                    .plonk()
-                    .await.unwrap(),
-            ProofSystem::Groth16 =>
-                client
-                    .prove(&pk, stdin)
-                    .compressed()
-                    //.strategy(FulfillmentStrategy::Auction)
-                    //.max_price_per_pgu(1_000_000u64)
-                    .groth16()
-                    .await.unwrap(),
-        }
+    let (mut public_values, execution_report) =
+        client.execute(VSS_ELF, stdin.clone()).await.unwrap();
+    println!(
+        "✔ Guest 程序模拟成功！消耗周期数: {}",
+        execution_report.total_instruction_count()
     );
+
+    let proof: SP1ProofWithPublicValues = (match args.system {
+        ProofSystem::Plonk => client
+            .prove(&pk, stdin)
+            .compressed()
+            //.strategy(FulfillmentStrategy::Auction)
+            //.max_price_per_pgu(1_000_000u64)
+            .plonk()
+            .await
+            .unwrap(),
+        ProofSystem::Groth16 => client
+            .prove(&pk, stdin)
+            .compressed()
+            //.strategy(FulfillmentStrategy::Auction)
+            //.max_price_per_pgu(1_000_000u64)
+            .groth16()
+            .await
+            .unwrap(),
+    });
 
     println!("✔ Proof generated successfully!");
 
@@ -289,17 +298,17 @@ async fn main() {
             format!("0x{}", hex::encode(h_k_1_calculated.as_bytes())),
             format!("0x{}", hex::encode(h_k_2_calculated.as_bytes())),
             format!("0x{}", hex::encode(h_k_3_calculated.as_bytes())),
-            format!("0x{}", hex::encode(h_k_4_calculated.as_bytes()))
+            format!("0x{}", hex::encode(h_k_4_calculated.as_bytes())),
         ],
         vec![
             format!("0x{}", hex::encode(nonce_1_ref)),
             format!("0x{}", hex::encode(nonce_2_ref)),
             format!("0x{}", hex::encode(nonce_3_ref)),
-            format!("0x{}", hex::encode(nonce_4_ref))
+            format!("0x{}", hex::encode(nonce_4_ref)),
         ],
         &proof,
         &pk.verifying_key(),
-        args.system
+        args.system,
     );
 }
 
@@ -311,7 +320,7 @@ fn write_fixture(
     nonce: Vec<String>,
     proof: &SP1ProofWithPublicValues,
     vk: &SP1VerifyingKey,
-    system: ProofSystem
+    system: ProofSystem,
 ) {
     let public_values_hex = format!("0x{}", hex::encode(proof.public_values.as_slice()));
     let proof_hex = format!("0x{}", hex::encode(proof.bytes()));
@@ -332,9 +341,11 @@ fn write_fixture(
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
     let filename = format!("{:?}-fixture.json", system).to_lowercase();
 
-    std::fs
-        ::write(fixture_path.join(filename), serde_json::to_string_pretty(&fixture).unwrap())
-        .expect("failed to write fixture");
+    std::fs::write(
+        fixture_path.join(filename),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .expect("failed to write fixture");
 
     println!("✔ Fixture saved for Solidity");
 }
@@ -345,7 +356,7 @@ fn write_fixture_args(
     h_k_commitment: Vec<String>,
     nonce: Vec<String>,
     vk: &SP1VerifyingKey,
-    system: ProofSystem
+    system: ProofSystem,
 ) {
     let vkey_hex = vk.bytes32().to_string();
 
@@ -364,9 +375,11 @@ fn write_fixture_args(
     std::fs::create_dir_all(&fixture_path).expect("failed to create fixture directory");
     let filename = format!("{:?}-fixture.json", system).to_lowercase();
 
-    std::fs
-        ::write(fixture_path.join(filename), serde_json::to_string_pretty(&fixture).unwrap())
-        .expect("failed to write fixture");
+    std::fs::write(
+        fixture_path.join(filename),
+        serde_json::to_string_pretty(&fixture).unwrap(),
+    )
+    .expect("failed to write fixture");
 
     println!("✔ Fixture saved for Solidity");
 }

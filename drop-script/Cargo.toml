@@ -12,7 +12,7 @@ dotenv = "0.15.0"
 storage = { path = "../storage" }
 drop-lib = { path = "../drop-lib" }
 blake3 = "1.8.2"
-sp1-sdk = { version = "6.0.2", features = ["network"] }
+sp1-sdk = { version = "6.2.4", features = ["network"] }
 serde = "1.0.203"
 serde_json = "1.0.117"
 sha2 = "0.10.8"

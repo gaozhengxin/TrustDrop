@@ -3,5 +3,7 @@ src = "src"
 out = "out"
 libs = ["lib"]
 remappings = [
-    "@chainlink/contracts@1.5.0/=lib/@chainlink/contracts@1.5.0/"
+    "@chainlink/contracts@1.5.0/=lib/@chainlink/contracts@1.5.0/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/"
 ]

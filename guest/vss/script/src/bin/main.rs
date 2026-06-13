@@ -10,23 +10,19 @@
 //! RUST_LOG=info cargo run --release -- --prove
 //! ```
 
-use alloy_sol_types::SolType;
-use clap::Parser;
-use vss_lib::PublicValuesStruct;
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
-use sp1_sdk::env::EnvProver;
-use sp1_sdk::Prover;
-use sp1_sdk::Elf;
-use sp1_sdk::ProveRequest;
-use sp1_sdk::ProvingKey;
-use rand::{rngs::StdRng, SeedableRng};
-use k256::ecdsa::SigningKey;
-use drop_lib::data::{MESSAGE_32};
-use drop_lib::kdf::key_derive;
-use drop_lib::common::{decode_public_outputs_with_cipher, print_public_outputs_with_cipher};
-use drop_lib::chacha8::derive_nonce;
-use k256::sha2::{Digest, Sha256};
 use blake3;
+use clap::Parser;
+use drop_lib::chacha8::derive_nonce;
+use drop_lib::common::{decode_public_outputs_with_cipher, print_public_outputs_with_cipher};
+use drop_lib::data::MESSAGE_32;
+use drop_lib::kdf::key_derive;
+use k256::ecdsa::SigningKey;
+use k256::sha2::{Digest, Sha256};
+use rand::{rngs::StdRng, SeedableRng};
+use sp1_sdk::Elf;
+use sp1_sdk::Prover;
+use sp1_sdk::ProvingKey;
+use sp1_sdk::{include_elf, CpuProver, LightProver, ProverClient, SP1Stdin};
 use std::time::Instant;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
@@ -55,17 +51,17 @@ async fn main() {
         std::process::exit(1);
     }
 
-    // Setup client
-    let client = ProverClient::from_env().await;
-
     // 准备数据
     //let msg: &[u8] = PLAINTEXT_DATA_1.as_bytes();
     let msg: &[u8] = &MESSAGE_32;
     println!("Original Message: {}", hex::encode(msg));
 
     let h_orig_block = blake3::hash(&msg);
-    println!("Original Message Hash (blake3): {}", hex::encode(h_orig_block.as_bytes()));
-    
+    println!(
+        "Original Message Hash (blake3): {}",
+        hex::encode(h_orig_block.as_bytes())
+    );
+
     let mut hasher = Sha256::new();
     hasher.update(msg);
     let msg_hash = hasher.finalize();
@@ -175,8 +171,10 @@ async fn main() {
     stdin.write(nonce_4_ref);
 
     if args.execute {
+        let client = ProverClient::builder().light().build().await;
         run_execute(&client, stdin, Vec::from([key_1, key_2, key_3, key_4])).await;
     } else {
+        let client = ProverClient::builder().cpu().build().await;
         run_prove(&client, stdin, Vec::from([key_1, key_2, key_3, key_4])).await;
     }
 }
@@ -195,8 +193,8 @@ fn handle_output_data(output_bytes: Vec<u8>, keys: Vec<[u8; 32]>) {
                     for (i, block) in decrypted_blocks.iter().enumerate() {
                         println!("Decrypted Block[{}]: {}", i, hex::encode(block));
                     }
-                },
-                Err(e) => eprintln!("Error decrypt cipher: {}", e)
+                }
+                Err(e) => eprintln!("Error decrypt cipher: {}", e),
             }
         }
         Err(e) => {
@@ -205,16 +203,22 @@ fn handle_output_data(output_bytes: Vec<u8>, keys: Vec<[u8; 32]>) {
     }
 }
 
-async fn run_execute(client: &EnvProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
+async fn run_execute(client: &LightProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
     let (output, report) = client.execute(VSS_ELF, stdin).await.unwrap();
     println!("Program executed successfully.");
 
     handle_output_data(output.as_slice().to_vec(), keys);
 
-    println!("Number of cycles executed: {}", report.total_instruction_count());
+    println!(
+        "Number of cycles executed: {}",
+        report.total_instruction_count()
+    );
 
     // 打印内存使用情况
-    println!("Unique Memory Touched:    {} addresses", report.touched_memory_addresses);
+    println!(
+        "Unique Memory Touched:    {} addresses",
+        report.touched_memory_addresses
+    );
 
     // 打印 Gas 消耗（如果可用）
     if let Some(gas) = report.gas() {
@@ -226,14 +230,14 @@ async fn run_execute(client: &EnvProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
     println!("---------------------------------");
 }
 
-async fn run_prove(client: &EnvProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
+async fn run_prove(client: &CpuProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
     let pk = client.setup(VSS_ELF).await.unwrap();
-    
+
     // --- 1. 证明生成计时 ---
     let start_prove = Instant::now();
     let proof: sp1_sdk::SP1ProofWithPublicValues = client.prove(&pk, stdin).await.unwrap();
     let duration_prove = start_prove.elapsed();
-    
+
     println!("\n=========================================");
     println!("✅ Successfully generated proof!");
     println!("⏰ Proof Generation Time: {:.2?}", duration_prove);
@@ -241,13 +245,15 @@ async fn run_prove(client: &EnvProver, stdin: SP1Stdin, keys: Vec<[u8; 32]>) {
 
     // --- 2. 证明验证计时 ---
     let start_verify = Instant::now();
-    client.verify(&proof, &pk.verifying_key(), None).expect("Failed to verify proof");
+    client
+        .verify(&proof, &pk.verifying_key(), None)
+        .expect("Failed to verify proof");
     let duration_verify = start_verify.elapsed();
-    
+
     println!("\n✅ Successfully verified proof!");
     println!("⏰ Proof Verification Time: {:.2?}", duration_verify);
     println!("=========================================");
-    
+
     // 3. 解码 Proof 的公开输出
     let output_vec = proof.public_values.as_slice().to_vec();
     handle_output_data(output_vec, keys);

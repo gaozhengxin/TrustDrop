@@ -8,9 +8,9 @@
 
 脚本运行依赖以下外部系统：
 
-- Arbitrum Sepolia RPC: 当前硬编码为 `https://sepolia-rollup.arbitrum.io/rpc`。
+- Arbitrum Sepolia RPC: 默认 `https://sepolia-rollup.arbitrum.io/rpc`，可由 `ARBITRUM_SEPOLIA_RPC` 覆盖。
 - ExchangeHub / ExchangeChannel / VSS / VDD / verifier 合约部署。
-- 本地 Walrus daemon: 当前默认 endpoint 为 `http://localhost:31415`。
+- 本地 Walrus daemon: 默认 endpoint 为 `http://localhost:31415`，可由 `WALRUS_LOCAL_ENDPOINT` 覆盖。
 - SP1 Prover Network: 使用 `SP1_PRIVATE_KEY` 生成 Groth16 proof。
 - 本地输入资产: 默认读取 `drop-script/Mo.mp4`。
 
@@ -21,21 +21,26 @@
 | `SELLER_KEY` | 卖家链上账户私钥 |
 | `BUYER_KEY` | 买家链上账户私钥 |
 | `SP1_PRIVATE_KEY` | SP1 network 私钥；脚本会写入 `NETWORK_PRIVATE_KEY` |
+| `ARBITRUM_SEPOLIA_RPC` | Arbitrum Sepolia RPC，默认 `https://sepolia-rollup.arbitrum.io/rpc` |
+| `WALRUS_LOCAL_ENDPOINT` | Walrus publisher/aggregator endpoint，默认 `http://localhost:31415` |
+| `HUB_ADDRESS` | ExchangeHub 地址 |
+| `VSS_VERIFIER_ADDRESS` | VSS verifier 地址 |
+| `VDD_VERIFIER_ADDRESS` | VDD verifier 地址 |
 | `DROP_ORACLE_TIMEOUT_SECS` | Oracle 轮询超时，默认 1800 秒 |
 
-当前硬编码常量：
+当前默认常量：
 
 | 常量 | 当前值 | 用途 |
 | --- | --- | --- |
 | `INPUT_ASSET_NAME` | `Mo.mp4` | 原始资产文件 |
 | `RECOVERED_ASSET_NAME` | `Mo_recovered.mp4` | 买家恢复后的输出文件 |
 | `ARBITRUM_SEPOLIA_CHAIN_ID` | `421614` | 交易链 ID |
-| `WALRUS_LOCAL_ENDPOINT` | `http://localhost:31415` | Walrus publisher/aggregator |
-| `HUB_ADDRESS` | `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78` | ExchangeHub 地址 |
-| `VSS_VERIFIER_ADDRESS` | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | VSS verifier 地址 |
-| `VDD_VERIFIER_ADDRESS` | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | VDD verifier 地址 |
+| `WALRUS_LOCAL_ENDPOINT` | `http://localhost:31415` | Walrus publisher/aggregator fallback |
+| `HUB_ADDRESS` | `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78` | ExchangeHub fallback |
+| `VSS_VERIFIER_ADDRESS` | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | VSS verifier fallback |
+| `VDD_VERIFIER_ADDRESS` | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | VDD verifier fallback |
 
-注意：`contracts/deployed.md` 里记录的 Hub 地址是 `0x2F0E2DeA5385e8Ea5234ea5c1f46A255fC330b5F`，与 `drop-script` 当前硬编码不一致。运行前必须确认使用哪一组部署。
+注意：`contracts/deployed.md` 里记录过旧 Hub 地址。调试时优先使用 `contracts/broadcast/DeployMain.s.sol/421614/run-latest.json` 和 `drop-script/.env` 中的地址。
 
 ## 代码阶段
 
@@ -52,7 +57,7 @@
 
 缺口：
 
-- 没有检查 Hub 地址是否有代码。
+- 已检查 Hub 地址是否有代码。
 - 没有检查 Hub 中配置的 verifier 是否与脚本硬编码 verifier 一致。
 - 没有检查 Walrus publisher 和 aggregator 的具体 API 是否都可用。
 

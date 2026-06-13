@@ -1,0 +1,95 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "owner", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" }
+    ],
+    "name": "ExchangeChannelCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
+      { "indexed": false, "internalType": "uint256", "name": "price", "type": "uint256" },
+      { "indexed": false, "internalType": "bytes32", "name": "version", "type": "bytes32" },
+      { "indexed": false, "internalType": "string", "name": "info", "type": "string" }
+    ],
+    "name": "SaleListed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
+      { "indexed": false, "internalType": "uint256", "name": "newPrice", "type": "uint256" },
+      { "indexed": false, "internalType": "bytes32", "name": "version", "type": "bytes32" },
+      { "indexed": false, "internalType": "string", "name": "info", "type": "string" }
+    ],
+    "name": "SaleUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" }
+    ],
+    "name": "SaleDelisted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
+      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "price", "type": "uint256" },
+      {
+        "components": [
+          { "internalType": "bytes32", "name": "saleDigest", "type": "bytes32" },
+          { "internalType": "uint256", "name": "price", "type": "uint256" },
+          { "internalType": "uint256", "name": "initTime", "type": "uint256" },
+          { "internalType": "uint256", "name": "deadline", "type": "uint256" },
+          { "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
+          { "internalType": "Types.Hash", "name": "vssKeyCommitment", "type": "bytes32" }
+        ],
+        "indexed": false,
+        "internalType": "struct ExchangeInfo",
+        "name": "exchangeInfo",
+        "type": "tuple"
+      }
+    ],
+    "name": "PurchaseEvent",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" }
+    ],
+    "name": "SettleEvent",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
+      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
+      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
+      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" }
+    ],
+    "name": "RefundEvent",
+    "type": "event"
+  }
+]

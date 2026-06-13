@@ -10,6 +10,7 @@
 - [运行与环境](./operations.md): 本地开发、测试、存储服务、SP1 证明和环境变量。
 - [合约与部署](./contracts.md): 合约职责、事件、Arbitrum Sepolia 已记录地址。
 - [Drop Script 端到端流程](./drop-script.md): `drop-script` 的阶段逻辑、ZK/合约集成点和缺失项。
+- [Drop Script 调试物料与推进计划](./drop-script-debug-plan.md): 调试所需物料、当前结构闭环、验证命令和下一轮推进顺序。
 - [维护建议](./maintenance.md): 当前代码观察到的风险、文档后续维护项。
 
 ## 快速定位

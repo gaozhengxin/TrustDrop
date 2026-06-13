@@ -1,4 +1,4 @@
-use sp1_sdk::{include_elf, HashableKey, Prover, ProverClient, ProvingKey, Elf};
+use sp1_sdk::{include_elf, Elf, HashableKey, Prover, ProverClient, ProvingKey};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const VSS_ELF: Elf = include_elf!("vss-program");

@@ -1,0 +1,45 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "address", "name": "user", "type": "address" },
+      { "indexed": false, "internalType": "uint256", "name": "index", "type": "uint256" }
+    ],
+    "name": "Joined",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "internalType": "Types.Hash", "name": "newCommitment", "type": "bytes32" }
+    ],
+    "name": "DataKeyCommitmentUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "internalType": "address[]", "name": "audiences", "type": "address[]" },
+      { "indexed": false, "internalType": "Types.Cipher32[]", "name": "encryptedDataKeys", "type": "bytes32[]" }
+    ],
+    "name": "DataKeyShared",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "internalType": "bytes", "name": "cCipher", "type": "bytes" }
+    ],
+    "name": "VDDProofSubmitted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "internalType": "bytes", "name": "cCipher", "type": "bytes" },
+      { "indexed": false, "internalType": "string", "name": "msg", "type": "string" }
+    ],
+    "name": "OracleRequestSkipped",
+    "type": "event"
+  }
+]

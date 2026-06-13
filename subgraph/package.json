@@ -1,0 +1,14 @@
+{
+  "name": "trustdrop-subgraph",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "deploy:studio": ". ./.env && graph deploy $SUBGRAPH_SLUG --studio --deploy-key $DEPLOY_KEY"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.97.1",
+    "@graphprotocol/graph-ts": "^0.38.1"
+  }
+}

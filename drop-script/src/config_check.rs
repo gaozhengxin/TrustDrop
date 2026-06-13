@@ -1,3 +1,7 @@
+use crate::{
+    configured_hub_address, configured_rpc_url, configured_vdd_verifier_address,
+    configured_vss_verifier_address, configured_walrus_endpoint,
+};
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use std::env;
@@ -27,7 +31,8 @@ pub async fn run_config_checks() -> Result<()> {
     // 通过一个简单的 HTTP GET 请求来探测本地 Walrus 节点的健康状况。
     // Walrus 节点是本系统中的去中心化存储层，负责托管加密后的数据。
     println!("Checking Walrus node status...");
-    match reqwest::get("http://localhost:31415").await {
+    let walrus_endpoint = configured_walrus_endpoint();
+    match reqwest::get(&walrus_endpoint).await {
         Ok(res) if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND => {
             // We accept 2xx or 404 (since the root path might not be defined)
             println!("  - Walrus node is running.");
@@ -41,14 +46,14 @@ pub async fn run_config_checks() -> Result<()> {
         }
         Err(e) => {
             // reqwest::get failed.
-            return Err(anyhow!("Failed to connect to Walrus node at http://localhost:31415: {}. Is it running? Please start it with: walrus daemon --max-body-size 1048576000 --sub-wallets-dir ~/.sui/sui_config", e));
+            return Err(anyhow!("Failed to connect to Walrus node at {}: {}. Is it running? Please start it with /home/justin/walrus/start.sh", walrus_endpoint, e));
         }
     }
 
     // --- [3. 链上账户余额检查] ---
     // 检查参与协议的各个地址是否拥有足够的 Gas 费 (ETH) 和 SP1 证明信用 (PROVE Token)。
     println!("Checking account balances...");
-    let provider = Provider::<Http>::try_from("https://sepolia-rollup.arbitrum.io/rpc")?;
+    let provider = Provider::<Http>::try_from(configured_rpc_url())?;
 
     // 从私钥字符串解析出钱包实例
     let seller_wallet = seller_key.parse::<LocalWallet>()?;
@@ -75,23 +80,30 @@ pub async fn run_config_checks() -> Result<()> {
 
     // SP1 `PROVE` token balance check disabled as per user request.
 
-    // --- [4. 验证器合约状态检查] ---
-    println!("Checking Verifier contracts...");
-    let vss_verifier = "0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2".parse::<Address>()?;
-    let vdd_verifier = "0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071".parse::<Address>()?;
+    // --- [4. Hub 和验证器合约状态检查] ---
+    println!("Checking Hub and Verifier contracts...");
+    let hub = configured_hub_address()?;
+    let vss_verifier = configured_vss_verifier_address()?;
+    let vdd_verifier = configured_vdd_verifier_address()?;
+    let hub_code = provider.get_code(hub, None).await?;
     let vss_code = provider.get_code(vss_verifier, None).await?;
     let vdd_code = provider.get_code(vdd_verifier, None).await?;
+    if hub_code.is_empty() {
+        return Err(anyhow!("ExchangeHub contract has no code at {}", hub));
+    }
     if vss_code.is_empty() {
         return Err(anyhow!(
-            "VSS Verifier contract has no code at 0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2"
+            "VSS Verifier contract has no code at {}",
+            vss_verifier
         ));
     }
     if vdd_code.is_empty() {
         return Err(anyhow!(
-            "VDD Verifier contract has no code at 0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071"
+            "VDD Verifier contract has no code at {}",
+            vdd_verifier
         ));
     }
-    println!("  - VSS and VDD Verifier contracts are deployed and valid.");
+    println!("  - Hub, VSS, and VDD Verifier contracts are deployed and valid.");
 
     println!(">>> Configuration checks passed.");
     Ok(())

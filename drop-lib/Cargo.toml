@@ -16,8 +16,8 @@ guest = ["k256/arithmetic"]
 [dependencies]
 alloy-sol-types = { workspace = true }
 blake3 = { version = "1.8.2", default-features = false }
-sp1-lib = { version = "6.0.2", default-features = false }
-sp1-zkvm = { version = "6.0.2" }
+sp1-lib = { version = "6.2.4", default-features = false }
+sp1-zkvm = { version = "6.2.4" }
 k256 = { version = "0.13.4", default-features = false, features = ["arithmetic", "ecdh", "ecdsa", "serde"] }
 chacha20 = { version = "0.9.1", default-features = false }
 sha256 = "1.6.0"

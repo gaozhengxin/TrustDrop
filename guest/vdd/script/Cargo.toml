@@ -13,12 +13,24 @@ name = "vdd_walrus"
 path = "src/bin/main_walrus.rs"
 
 [[bin]]
+name = "main_walrus_rslhve"
+path = "src/bin/main_walrus_rslhve.rs"
+
+[[bin]]
 name = "evm_filecoin"
 path = "src/bin/evm_filecoin.rs"
 
 [[bin]]
 name = "evm_walrus"
 path = "src/bin/evm_walrus.rs"
+
+[[bin]]
+name = "evm_walrus_rslhve"
+path = "src/bin/evm_walrus_rslhve.rs"
+
+[[bin]]
+name = "pn_walrus_rslhve"
+path = "src/bin/pn_walrus_rslhve.rs"
 
 [[bin]]
 name = "vkey_filecoin"
@@ -28,8 +40,12 @@ path = "src/bin/vkey_filecoin.rs"
 name = "vkey_walrus"
 path = "src/bin/vkey_walrus.rs"
 
+[[bin]]
+name = "vkey_walrus_rslhve"
+path = "src/bin/vkey_walrus_rslhve.rs"
+
 [dependencies]
-sp1-sdk = { version = "6.0.2", features = ["network"] }
+sp1-sdk = { version = "6.2.4", features = ["network"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -47,4 +63,4 @@ chacha20 = "0.9.1"
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
-sp1-build = "6.0.2"
+sp1-build = "6.2.4"

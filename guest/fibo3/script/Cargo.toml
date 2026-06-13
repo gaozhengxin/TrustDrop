@@ -13,7 +13,7 @@ name = "vkey"
 path = "src/bin/vkey.rs"
 
 [dependencies]
-sp1-sdk = { version = "6.0.2", features = ["network", "native-gnark"] }
+sp1-sdk = { version = "6.2.4", features = ["network", "native-gnark"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -25,4 +25,4 @@ dotenv = "0.15.0"
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
-sp1-build = { version = "6.0.2" }
+sp1-build = { version = "6.2.4" }

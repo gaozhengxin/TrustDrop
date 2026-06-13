@@ -35,8 +35,6 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let client = ProverClient::builder().cpu().build().await;
-
     // 1. === Prepare inputs on host ===
     const DEFAULT_DATA_SIZE: usize = 64 * 1024;
     let data_size = std::env::var("VDD_RSLHVE_DATA_SIZE")
@@ -106,6 +104,7 @@ async fn main() {
     if args.execute {
         // --- 模式 A: Execute (模拟) ---
         println!("\nStarting SP1 execution (execute mode)...");
+        let client = ProverClient::builder().light().build().await;
         let (output, report) = client.execute(VDD_WALRUS_RSLHVE_ELF, stdin).await.unwrap();
 
         // 验证输出
@@ -130,6 +129,7 @@ async fn main() {
     } else {
         // --- 模式 B: Prove (证明生成) ---
         println!("\nStarting SP1 setup and proving...");
+        let client = ProverClient::builder().cpu().build().await;
         let pk = client.setup(VDD_WALRUS_RSLHVE_ELF).await.unwrap();
 
         let proof = client
