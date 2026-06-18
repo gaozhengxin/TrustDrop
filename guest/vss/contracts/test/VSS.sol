@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 import {VSS, VSSPublicValues} from "../src/VSS.sol";
 import {SP1VerifierGateway} from "@sp1-contracts/SP1VerifierGateway.sol";
@@ -61,15 +61,14 @@ contract VSSGroth16Test is Test {
     function setUp() public {
         SP1ProofFixtureJson memory fixture = loadFixture();
 
-        verifier = 0x397A5f7f3dBd538f23DE225B51f532c34448dA9B;
-        
+        verifier = address(new SP1VerifierGateway(address(1)));
         vss = new VSS(verifier, fixture.vkey);
     }
 
     function test_ValidVSSProof() public {
         SP1ProofFixtureJson memory fixture = loadFixture();
+        mockValidProof(fixture);
 
-        // check fixture basic
         assertEq(
             fixture.hKCommitment.length,
             fixture.length,
@@ -80,20 +79,9 @@ contract VSSGroth16Test is Test {
         assertTrue(fixture.hOrigBlock != bytes32(0), "hOrigBlock is zero");
         assertTrue(fixture.vkey != bytes32(0), "vkey is zero");
 
-        console.log("PublicValues from JSON:");
-        console.logBytes(fixture.publicValues);
-        console.log("Proof from JSON:");
-        console.logBytes(fixture.proof);
-
-        console.log("=== [REAL FORK EXECUTION] ===");
-        console.log("Sending real Groth16 proof to Arbitrum Sepolia Gateway...");
-
         VSSPublicValues.VSSPublicValuesStruct memory publicValues = vss
             .verifyVSSProof(fixture.publicValues, fixture.proof);
 
-        console.log("=== [SUCCESS] Real on-chain verification PASSED! ===");
-
-        // Fixture vs PublicValues
         assertEq(publicValues.length, fixture.length, "PV: length mismatch");
         assertEq(
             publicValues.hOrigBlock,
@@ -119,14 +107,55 @@ contract VSSGroth16Test is Test {
         }
     }
 
+    function test_ValidVSSBindingHash() public {
+        SP1ProofFixtureJson memory fixture = loadFixture();
+        mockValidProof(fixture);
+
+        VSSPublicValues.VSSPublicValuesStruct memory publicValues = vss
+            .verifyVSSProof(fixture.publicValues, fixture.proof);
+        bytes32 bindingHash = vss.computeBindingHash(
+            publicValues.hOrigBlock,
+            publicValues.hKCommitment,
+            publicValues.cipherBlock
+        );
+
+        assertTrue(
+            vss.verifyVSS(fixture.proof, fixture.publicValues, bindingHash)
+        );
+    }
+
+    function testRevert_InvalidVSSBindingHash() public {
+        SP1ProofFixtureJson memory fixture = loadFixture();
+        mockValidProof(fixture);
+
+        vm.expectRevert("VSS: Binding hash mismatch");
+        vss.verifyVSS(
+            fixture.proof,
+            fixture.publicValues,
+            bytes32(uint256(1))
+        );
+    }
+
     function testRevert_InvalidVSSProof() public {
         vm.expectRevert();
 
         SP1ProofFixtureJson memory fixture = loadFixture();
 
-        // Create a fake proof.
         bytes memory fakeProof = new bytes(fixture.proof.length);
 
         vss.verifyVSSProof(fixture.publicValues, fakeProof);
+    }
+
+    function mockValidProof(SP1ProofFixtureJson memory fixture) internal {
+        vm.mockCall(
+            verifier,
+            abi.encodeWithSelector(
+                SP1VerifierGateway.verifyProof.selector,
+                fixture.vkey,
+                fixture.publicValues,
+                fixture.proof
+            ),
+            bytes("")
+        );
     }
 }

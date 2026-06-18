@@ -48,12 +48,7 @@ contract VDD_RSLHTest is Test {
 
     function test_ValidRSLHVEProof() public {
         RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
-
-        vm.mockCall(
-            verifier,
-            abi.encodeWithSelector(SP1VerifierGateway.verifyProof.selector),
-            abi.encode(true)
-        );
+        mockValidProof(fixture);
 
         VDD_RSLH_PublicValues.VDD_RSLH_PublicValuesStruct memory pv = vddRslhve.verifyVDDProof(
             fixture.publicValues,
@@ -65,11 +60,55 @@ contract VDD_RSLHTest is Test {
         assertEq(keccak256(pv.cCipher), keccak256(fixture.cCipher), "cCipher mismatch");
     }
 
+    function test_ValidRSLHVEBindingHash() public {
+        RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
+        mockValidProof(fixture);
+
+        bytes32 bindingHash = vddRslhve.computeBindingHash(
+            abi.encodePacked(fixture.cOrigin),
+            fixture.cKey,
+            fixture.cCipher
+        );
+
+        assertTrue(
+            vddRslhve.verifyVDD(
+                fixture.proof,
+                fixture.publicValues,
+                bindingHash
+            )
+        );
+    }
+
+    function testRevert_InvalidRSLHVEBindingHash() public {
+        RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
+        mockValidProof(fixture);
+
+        vm.expectRevert("VDD_RSLH: Binding hash mismatch");
+        vddRslhve.verifyVDD(
+            fixture.proof,
+            fixture.publicValues,
+            bytes32(uint256(1))
+        );
+    }
+
     function testRevert_InvalidRSLHVEProof() public {
         RSLHVEFixtureJson memory fixture = loadFixture("vdd-walrus-rslh-groth16-fixture.json");
 
         vm.expectRevert();
         bytes memory fakeProof = new bytes(fixture.proof.length);
         vddRslhve.verifyVDDProof(fixture.publicValues, fakeProof);
+    }
+
+    function mockValidProof(RSLHVEFixtureJson memory fixture) internal {
+        vm.mockCall(
+            verifier,
+            abi.encodeWithSelector(
+                SP1VerifierGateway.verifyProof.selector,
+                fixture.vkey,
+                fixture.publicValues,
+                fixture.proof
+            ),
+            bytes("")
+        );
     }
 }

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-sp1-zkvm = { version = "6.2.4", features = ["blake3"] }
+sp1-zkvm = "6.2.4"
 blake3 = "1.8.2"
 sha2 = "0.10.9"
 vss-lib = { path = "../lib" }

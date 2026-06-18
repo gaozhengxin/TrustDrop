@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sp1_sdk::network::NetworkMode;
 use sp1_sdk::{
-    include_elf, Elf, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
-    SP1VerifyingKey,
+    include_elf, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
 };
 use std::path::PathBuf;
 
@@ -129,26 +129,20 @@ async fn main() {
         return;
     }
 
-    println!("Executing guest before network proof...");
-    let (public_values, report) = client
-        .execute(VDD_WALRUS_RSLHVE_ELF, stdin.clone())
-        .await
-        .unwrap();
-    println!("Execute cycles: {}", report.total_instruction_count());
-    if public_values.as_slice()
-        != [&c_origin_bytes[..], &c_key_bytes[..], &c_cipher_bytes[..]]
-            .concat()
-            .as_slice()
-    {
-        panic!("execute public values do not match host commitments");
-    }
-
     println!("Starting proof generation with {:?}...", args.system);
     let proof = match args.system {
         ProofSystem::Plonk => client.prove(&pk, stdin).compressed().plonk().await,
         ProofSystem::Groth16 => client.prove(&pk, stdin).compressed().groth16().await,
     }
     .expect("failed to generate proof");
+
+    if proof.public_values.as_slice()
+        != [&c_origin_bytes[..], &c_key_bytes[..], &c_cipher_bytes[..]]
+            .concat()
+            .as_slice()
+    {
+        panic!("proof public values do not match host commitments");
+    }
 
     println!("✔ Proof generated successfully!");
 

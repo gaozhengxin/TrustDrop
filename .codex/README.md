@@ -38,6 +38,10 @@
 5. 用户批准实施后，代码 diff 必须和迭代文档逐项对照；不匹配时停止实施，更新文档并等待再次决策。
 6. 未经批准已经产生的 diff 只能作为复盘材料记录，不得默认视为已接受实现。
 7. `.env`、私钥、API key、deploy key、证明账户凭证不得写入 git 或项目知识库。
+8. 开发阶段 zk 程序编译通过后，默认不运行 `execute`；只有用户明确要求时才执行 guest/script 的 execute 路径。
+9. 开发调试阶段生成 zk 证明时，默认使用 SP1 Prove Network 和项目配置文件中的证明账户凭证；不得默认尝试本地 proving。
+10. 涉及多个 zk 程序或多个外部服务的调试任务必须串行推进；除非用户明确要求并行，否则一个目标闭合前不得启动下一个目标。
+11. Prove Network 证明会消耗已 approve 的 PROVE token；证明环节一旦报错，必须先诊断原因并停止，等待用户批准后才能再次提交证明任务。
 
 ### 1. 明确目标
 
@@ -120,7 +124,7 @@ cargo check -p drop-lib
 cargo test -p drop-lib
 ```
 
-SP1 guest 和 script 验证：
+SP1 guest 和 script 编译验证：
 
 ```sh
 PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p vss-program
@@ -144,7 +148,10 @@ PROTOC=/tmp/protoc-25.3/bin/protoc VDD_RSLHVE_DATA_SIZE=65536 cargo run -p vdd-s
 
 说明：
 
-- VSS/VDD 完整 proving 可能很慢，本地验证优先 `cargo check` 和小数据 `execute`。
+- VSS/VDD 编译完成后默认到此为止，不自动运行 execute；execute 只在用户明确要求时执行。
+- 需要生成真实证明时，开发调试阶段默认使用 SP1 Prove Network，不使用本地 proving。
+- Prove Network 所需私钥和凭证读取项目配置文件；执行过程中不得打印、复制或写入文档。
+- Prove Network 证明任务不得盲目重试；首次失败后先记录错误、判断是否可能扣费或重复提交，再等待用户批准。
 - `drop-script` 依赖 SP1 v6 runner，部分环境下需要在沙箱外运行 `cargo check`。
 - 若 `/tmp/protoc-25.3/bin/protoc` 不存在，需要重新安装或改用系统 `protoc`。
 

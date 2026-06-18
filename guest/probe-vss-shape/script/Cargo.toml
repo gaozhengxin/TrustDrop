@@ -1,0 +1,21 @@
+[package]
+version = "0.1.0"
+name = "probe-vss-shape-script"
+edition = "2021"
+default-run = "probe_vss_shape"
+
+[[bin]]
+name = "probe_vss_shape"
+path = "src/bin/probe_vss_shape.rs"
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+dotenv = "0.15.0"
+hex = "0.4.3"
+serde = { version = "1.0.200", features = ["derive"] }
+serde_json = "1.0"
+sp1-sdk = { version = "6.2.4", features = ["network"] }
+tokio = { version = "1", features = ["full"] }
+
+[build-dependencies]
+sp1-build = "6.2.4"

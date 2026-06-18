@@ -77,7 +77,11 @@ async fn main() {
     let args = EVMArgs::parse();
     println!("Selected Proof System: {:?}", args.system);
 
-    let client = ProverClient::from_env().await;
+    std::env::set_var("SP1_PROVER", "network");
+    let client = ProverClient::builder()
+        .network_for(NetworkMode::Mainnet)
+        .build()
+        .await;
 
     // -----------------------------------------
     // 1. Prepare Message & Derive Key
