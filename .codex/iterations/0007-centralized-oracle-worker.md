@@ -4,6 +4,25 @@
 
 2026-06-23
 
+## 收口状态
+
+本迭代按“中心化 Oracle Worker 结构闭合”收口。
+
+已完成：
+
+- 合约已改造为 centralized / CRE-compatible 双路径。
+- `ExchangeHub` 管理员可更新 Oracle adapter、VSS verifier、VDD verifier。
+- Cloudflare Oracle Worker 已实现、配置并部署。
+- Arbitrum Sepolia 最小链上集成测试已通过：真实 `OracleRequested` -> Worker 解析 receipt/log -> Walrus Blockberry 查询 -> `OracleProxy.submitCentralizedReport` -> callback 落链。
+- 本地合约测试已覆盖：Channel `fulfill` -> `OracleProxy.request` -> centralized report -> Channel `oracleSuccessUntil` 更新 -> `settle`。
+- `drop-script` 已加入 centralized Worker 触发逻辑并通过编译。
+
+留到 0008：
+
+- 完整 `drop-script` live full-flow 尚未跑通；该流程会触发 SP1 Prove Network、Walrus 主网读写和链上交易。
+- Subgraph 本轮仅完成 manifest/codegen/build 对齐，尚未完成当前部署的 Studio deploy / publish。
+- Walrus 节点、subgraph、Oracle Worker 与拆分后的 `drop-sdk` 需要做完整集成测试。
+
 ## 背景
 
 0006 研究得出：Chainlink Functions 迁移到 CRE 不是简单换配置，当前 TrustDrop Oracle 层需要改造。用户进一步决定：
