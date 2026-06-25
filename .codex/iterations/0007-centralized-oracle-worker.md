@@ -842,8 +842,9 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - [x] `drop-script/.env` 已启用 `ORACLE_MODE=centralized`。
 - [x] `drop-script/.env` 已配置 `ORACLE_WORKER_URL`、`ORACLE_WORKER_TOKEN`、`ORACLE_WORKER_STATUS_URL`。
 - [x] 在 Arbitrum Sepolia 上最小 request 后 Worker 能回写。
-- [ ] 完整 `drop-script` fulfill 后 `oracleSuccessUntil` 更新。
-- [ ] settle 能继续执行。
+- [x] 本地合约测试已验证 `OracleProxy.submitCentralizedReport` 能回调真实 Channel 并更新 `oracleSuccessUntil`。
+- [x] 本地合约测试已验证 `oracleSuccessUntil` 满足窗口后 `settle` 能继续执行。
+- [ ] 完整 `drop-script` live flow 尚未跑完；该流程会触发 SP1 Prove Network 证明和 Walrus 读写，不能作为普通编译/轻量检查默认执行。
 
 ### 阶段 5: 文档和 checklist
 
@@ -893,15 +894,25 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - [x] Worker 在 relayer 有 pending tx 时返回 `RELAYER_PENDING_TX`，不发新交易。
 - [x] `drop-script` 已加入 Worker 触发逻辑并通过编译。
 - [x] Worker 已部署，`drop-script` 已配置 centralized mode。
-- [ ] `drop-script` 能触发已部署 Worker 并完成 `oracleSuccessUntil` 更新。
-- [ ] 全流程 settle 通过。
+- [x] 本地合约层已覆盖：Channel fulfill -> OracleProxy request -> centralized report -> Channel `oracleSuccessUntil` 更新 -> settle。
+- [ ] 完整 `drop-script` live flow 通过。
 
 当前剩余工作：
 
-1. 用完整 `drop-script` 跑到 fulfill 阶段，确认真实 channel 的 `OracleRequested` log 能被 Worker 解析。
-2. 确认完整 channel 的 `oracleSuccessUntil(cCipher)` 更新。
-3. 再继续完整 `settle`。
-4. 如完整流程失败，优先区分是 drop-script 参数/通道状态问题，还是 Worker/OracleProxy 问题；最小集成测试已经证明 Worker/OracleProxy/callback 基础链路可用。
+1. 如需继续 live full-flow，必须显式批准后再跑完整 `drop-script`，因为它会触发 SP1 Prove Network 证明和 Walrus 网络读写。
+2. live full-flow 的首要观察点是：完整 Channel fulfill tx 是否 emit `OracleRequested`，Worker 是否返回 `reportTxHash`，对应 Channel 的 `oracleSuccessUntil(cCipher)` 是否更新。
+3. 如完整流程失败，优先区分是 drop-script 参数/证明/通道状态问题，还是 Worker/OracleProxy 问题；当前最小链上集成测试与本地合约测试已经证明 Worker/OracleProxy/Channel callback 基础链路可用。
+
+最新本地验收：
+
+- `forge test --root contracts --match-contract ExchangeTest`：2 passed。
+- `forge test --root contracts`：27 passed。
+- 新增 `test_OracleProxyReportUpdatesChannelAndAllowsSettle`：
+  - 不使用直接 `vm.prank(address(oracleProxy))` 伪造回调。
+  - 通过 `channel.fulfill` 触发真实 `OracleProxy.request`。
+  - 通过 `OracleProxy.submitCentralizedReport` 进入真实 callback。
+  - 断言 `oracleSuccessUntil(cCipher)` 更新。
+  - 断言 `settle` 成功。
 
 ## 经验总结
 
@@ -910,3 +921,4 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - 用户主动触发 Worker 是可行的，但 Worker 必须只相信链上 receipt/logs/state。
 - 未来 CRE 兼容性应体现在 `onReport` 和统一 `_handleOracleReport`，避免后续二次大改 VDD/ExchangeChannel。
 - 手写带 token 的 curl 容易出现 JSON 引号错误；以后通过 `drop-script/scripts/fulfill-oracle-worker-from-tx.sh` 触发 Worker。
+- 完整 `cargo run -p drop-script` 不是轻量检查；它会进入 SP1 Prove Network/Walrus 业务链路。开发阶段应优先用合约测试、Worker 最小集成脚本和环境 checklist 分段验证。
