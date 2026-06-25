@@ -793,7 +793,8 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - [ ] Worker 单元测试尚未补。
 - [x] Worker 已部署到 Cloudflare。
   - URL: `https://trustdrop-oracle-worker.zhengxingao.workers.dev`
-  - Version ID: `41b834a0-d687-4041-b1d4-e37ee0dbd997`
+  - Initial Version ID: `41b834a0-d687-4041-b1d4-e37ee0dbd997`
+  - Current Version ID: `397d1292-c515-4edb-8bdb-edb688715830`
 - [x] Worker `/health` 返回 `ok=true`。
 - [x] Worker `/status` 返回 `ok=true`，并确认：
   - chain id 是 `421614`。
@@ -802,7 +803,14 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
   - relayer balance sufficient。
   - relayer 无 pending tx。
   - Walrus API key 已配置。
-- [ ] 尚未用真实 fulfill tx 验证 Worker report。
+- [x] 已用真实 `OracleRequested` tx 验证 Worker report。
+  - IntegrationClient: `0x4A0818E005a7f0D6F3B9182142cA654749F41d19`
+  - request tx: `0x4050d607ba421c7062f236c8413becc9286825203ffe28d88ea307f5805878ef`
+  - requestId: `0x53e640a7f038d15a1d3eb9a0c9c4a8e8fc6a5e89bffe1458e85971fafc74462a`
+  - cCipher: `0x4c605762bd249b798bbf2347b7a6d05db2c7b25051e4703057c98043e1c5248a`
+  - report tx: `0x7671732c6932848c760166827ae6616fdb512b09a81f96965ab848b140fd1bb9`
+  - callback result: `lastStatus=1`, `lastEndTime=1770681600`
+  - 结论：Worker 能解析真实 receipt/log，能查 Walrus mainnet Blockberry API，能调用 `OracleProxy.submitCentralizedReport(bytes)`，并能触发 client callback。
 
 部署记录：
 
@@ -814,6 +822,9 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
   - `WORKER_API_TOKEN`
 - `pnpm --dir oracle-worker run deploy` 已成功部署 Worker。
 - Worker status 脚本已固化为 `drop-script/scripts/check-oracle-worker-status.sh`。
+- Worker fulfill 脚本已固化为 `drop-script/scripts/fulfill-oracle-worker-from-tx.sh <tx-hash> [request-log-index]`。
+  - 脚本从 `drop-script/.env` 读取 `ORACLE_WORKER_TOKEN`，不打印 token。
+  - 用已 fulfilled 的 request 复测返回 `alreadyFulfilled=true`，未重复发 report 交易。
 - Blockberry/Walrus API key 已用已知 Walrus mainnet blob 测试，返回 HTTP 200，响应包含 `blobIdBase64`、`startEpoch`、`endEpoch`、`size`。
 
 ### 阶段 4: drop-script 集成
@@ -830,8 +841,8 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - [x] `PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p drop-script` 通过。
 - [x] `drop-script/.env` 已启用 `ORACLE_MODE=centralized`。
 - [x] `drop-script/.env` 已配置 `ORACLE_WORKER_URL`、`ORACLE_WORKER_TOKEN`、`ORACLE_WORKER_STATUS_URL`。
-- [ ] 在 Arbitrum Sepolia 上 fulfill 后 Worker 能回写。
-- [ ] `oracleSuccessUntil` 更新。
+- [x] 在 Arbitrum Sepolia 上最小 request 后 Worker 能回写。
+- [ ] 完整 `drop-script` fulfill 后 `oracleSuccessUntil` 更新。
 - [ ] settle 能继续执行。
 
 ### 阶段 5: 文档和 checklist
@@ -876,8 +887,8 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - [x] 合约 build/test 通过。
 - [x] Worker TypeScript build 通过。
 - [ ] Worker 单元测试通过。
-- [ ] Worker 能解析真实 fulfill tx receipt。
-- [ ] Worker 能写回 OracleProxy。
+- [x] Worker 能解析真实 fulfill/request tx receipt。
+- [x] Worker 能写回 OracleProxy。
 - [x] Worker `/status` 能返回 relayer 余额是否充足，但不显示具体余额。
 - [x] Worker 在 relayer 有 pending tx 时返回 `RELAYER_PENDING_TX`，不发新交易。
 - [x] `drop-script` 已加入 Worker 触发逻辑并通过编译。
@@ -887,11 +898,10 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 
 当前剩余工作：
 
-1. 跑最小 fulfill 集成测试，确认真实 `OracleRequested` log 能被 Worker 解析。
-2. 确认 Worker 用本轮真实上传 blob 查询 Blockberry/Walrus 成功。
-3. 确认 Worker report tx 成功写回 `OracleProxy.submitCentralizedReport`。
-4. 确认 channel `oracleSuccessUntil(cCipher)` 更新。
-5. 再继续完整 `settle`。
+1. 用完整 `drop-script` 跑到 fulfill 阶段，确认真实 channel 的 `OracleRequested` log 能被 Worker 解析。
+2. 确认完整 channel 的 `oracleSuccessUntil(cCipher)` 更新。
+3. 再继续完整 `settle`。
+4. 如完整流程失败，优先区分是 drop-script 参数/通道状态问题，还是 Worker/OracleProxy 问题；最小集成测试已经证明 Worker/OracleProxy/callback 基础链路可用。
 
 ## 经验总结
 
@@ -899,3 +909,4 @@ forge script script/SetCentralizedOracleSigner.s.sol:SetCentralizedOracleSigner 
 - 合约应抽象成“请求 + 报告”模型，而不是绑定某个 oracle vendor。
 - 用户主动触发 Worker 是可行的，但 Worker 必须只相信链上 receipt/logs/state。
 - 未来 CRE 兼容性应体现在 `onReport` 和统一 `_handleOracleReport`，避免后续二次大改 VDD/ExchangeChannel。
+- 手写带 token 的 curl 容易出现 JSON 引号错误；以后通过 `drop-script/scripts/fulfill-oracle-worker-from-tx.sh` 触发 Worker。

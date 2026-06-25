@@ -60,6 +60,7 @@ export default {
       }
       return json({ ok: false, error: "NOT_FOUND" }, 404);
     } catch (error) {
+      console.error("request failed", error);
       return json(errorBody(error), errorStatus(error));
     }
   },
