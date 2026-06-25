@@ -3,112 +3,127 @@ pragma solidity ^0.8.20;
 
 import {Ownable} from "../lib/Ownable.sol";
 
-interface IFunctionsConsumer {
-    function executeRequest(
-        string[] memory args,
-        uint64 subscriptionId
-    ) external returns (bytes32);
-}
-
 contract OracleProxy is Ownable {
-    address public consumer;
-    uint64 public subscriptionId;
-    address public controller;
+    enum OracleMode {
+        Centralized,
+        ChainlinkCRE
+    }
 
     struct RequestContext {
         bytes cid;
         address client;
+        OracleMode mode;
+        bool fulfilled;
     }
+
+    address public controller;
+    address public centralizedOracleSigner;
+    address public creForwarder;
+    OracleMode public defaultMode;
+    uint256 public nonce;
 
     mapping(bytes32 => RequestContext) public requests;
     mapping(address => bool) public whiteList;
 
-    event RequestSent(
+    event OracleRequested(
         bytes32 indexed requestId,
         address indexed client,
-        bytes cid
+        bytes cid,
+        uint256 nonce,
+        OracleMode mode
     );
     event CallbackResult(bytes32 indexed requestId, bool success);
+    event ControllerUpdated(address indexed controller);
+    event CentralizedOracleSignerUpdated(address indexed signer);
+    event CREForwarderUpdated(address indexed forwarder);
+    event DefaultModeUpdated(OracleMode mode);
+    event WhitelistUpdated(address indexed caller, bool allowed);
 
     modifier onlyController() {
         require(msg.sender == controller, "Not controller");
         _;
     }
 
-    modifier onlyWhitelisted(address caller) {
+    modifier onlyWhitelisted() {
         require(whiteList[msg.sender], "Not whitelisted");
         _;
     }
 
-    constructor(address _consumer, uint64 _subId) Ownable(msg.sender) {
-        consumer = _consumer;
-        subscriptionId = _subId;
+    constructor(
+        address _centralizedOracleSigner,
+        address _creForwarder
+    ) Ownable(msg.sender) {
+        centralizedOracleSigner = _centralizedOracleSigner;
+        creForwarder = _creForwarder;
+        defaultMode = OracleMode.Centralized;
     }
 
     function setController(address newController) public onlyOwner {
         controller = newController;
+        emit ControllerUpdated(newController);
+    }
+
+    function setCentralizedOracleSigner(address signer) external onlyOwner {
+        centralizedOracleSigner = signer;
+        emit CentralizedOracleSignerUpdated(signer);
+    }
+
+    function setCREForwarder(address forwarder) external onlyOwner {
+        creForwarder = forwarder;
+        emit CREForwarderUpdated(forwarder);
+    }
+
+    function setDefaultMode(OracleMode mode) external onlyOwner {
+        defaultMode = mode;
+        emit DefaultModeUpdated(mode);
     }
 
     function request(
-        bytes memory c_cipher,
+        bytes memory cCipher,
         address callback
-    ) external onlyWhitelisted(msg.sender) {
-        string[] memory args = new string[](1);
-        args[0] = string(c_cipher);
+    ) external onlyWhitelisted {
+        require(callback != address(0), "Invalid callback");
 
-        bytes32 requestId = IFunctionsConsumer(consumer).executeRequest(
-            args,
-            subscriptionId
-        );
-
-        requests[requestId] = RequestContext({cid: c_cipher, client: callback});
-
-        emit RequestSent(requestId, callback, c_cipher);
-    }
-
-    /**
-     * @notice 由 Consumer 合约回调
-     */
-    function handleResponse(
-        bytes32 requestId,
-        bytes memory response,
-        bytes memory err
-    ) external {
-        require(msg.sender == consumer, "Unauthorized: Only Consumer");
-
-        RequestContext memory ctx = requests[requestId];
-        if (ctx.client == address(0)) return;
-
-        // 如果 err 不为空，说明 DON 执行 JS 失败（API 报错、超时等）
-        if (err.length > 0) {
-            (bool success_err, ) = ctx.client.call(
-                abi.encodeWithSignature(
-                    "onOracleError(bytes,bytes)",
-                    ctx.cid,
-                    err
-                )
-            );
-            delete requests[requestId];
-            emit CallbackResult(requestId, success_err);
-            return;
-        }
-
-        delete requests[requestId];
-
-        (bool success, ) = ctx.client.call(
-            abi.encodeWithSignature(
-                "onResponse(bytes,bytes)",
-                ctx.cid,
-                response
+        uint256 requestNonce = nonce++;
+        bytes32 requestId = keccak256(
+            abi.encode(
+                block.chainid,
+                address(this),
+                callback,
+                cCipher,
+                requestNonce
             )
         );
 
-        emit CallbackResult(requestId, success);
+        requests[requestId] = RequestContext({
+            cid: cCipher,
+            client: callback,
+            mode: defaultMode,
+            fulfilled: false
+        });
+
+        emit OracleRequested(
+            requestId,
+            callback,
+            cCipher,
+            requestNonce,
+            defaultMode
+        );
     }
 
-    function setConfig(address _consumer, uint64 _subId) external onlyOwner {
-        consumer = _consumer;
-        subscriptionId = _subId;
+    function submitCentralizedReport(bytes calldata report) external {
+        require(centralizedOracleSigner != address(0), "Signer not set");
+        require(msg.sender == centralizedOracleSigner, "Unauthorized signer");
+        _handleOracleReport(report, OracleMode.Centralized);
+    }
+
+    function onReport(
+        bytes calldata,
+        bytes calldata report
+    ) external {
+        require(creForwarder != address(0), "CRE forwarder not set");
+        require(msg.sender == creForwarder, "Unauthorized forwarder");
+        _handleOracleReport(report, OracleMode.ChainlinkCRE);
     }
 
     function setWhitelist(
@@ -116,5 +131,51 @@ contract OracleProxy is Ownable {
         bool allowed
     ) external onlyController {
         whiteList[caller] = allowed;
+        emit WhitelistUpdated(caller, allowed);
+    }
+
+    function _handleOracleReport(
+        bytes calldata report,
+        OracleMode expectedMode
+    ) internal {
+        (
+            bytes32 requestId,
+            bytes memory cCipher,
+            uint256 status,
+            uint256 endTime,
+            bytes memory err
+        ) = abi.decode(report, (bytes32, bytes, uint256, uint256, bytes));
+
+        RequestContext storage ctx = requests[requestId];
+        require(ctx.client != address(0), "Unknown request");
+        require(!ctx.fulfilled, "Request fulfilled");
+        require(ctx.mode == expectedMode, "Wrong oracle mode");
+        require(keccak256(ctx.cid) == keccak256(cCipher), "CID mismatch");
+        require(status <= 2, "Invalid status");
+
+        bool success;
+        if (err.length > 0) {
+            (success, ) = ctx.client.call(
+                abi.encodeWithSignature(
+                    "onOracleError(bytes,bytes)",
+                    ctx.cid,
+                    err
+                )
+            );
+        } else {
+            bytes memory response = abi.encode(status, endTime);
+            (success, ) = ctx.client.call(
+                abi.encodeWithSignature(
+                    "onResponse(bytes,bytes)",
+                    ctx.cid,
+                    response
+                )
+            );
+        }
+
+        require(success, "Callback failed");
+        ctx.fulfilled = true;
+
+        emit CallbackResult(requestId, success);
     }
 }

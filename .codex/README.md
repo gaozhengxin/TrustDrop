@@ -22,6 +22,9 @@
 - [合约与部署](./docs/contracts.md)
 - [Drop Script 端到端流程](./docs/drop-script.md)
 - [维护建议](./docs/maintenance.md)
+- [0005 Drop Script 全流程环境检查设计](./iterations/0005-drop-script-full-flow-environment-checklist.md)
+- [0006 Chainlink Functions 到 CRE 迁移计划](./iterations/0006-chainlink-functions-to-cre-migration.md)
+- [0007 中心化 Oracle Worker 与 CRE 兼容合约](./iterations/0007-centralized-oracle-worker.md)
 
 ## 项目推进标准流程
 
@@ -274,7 +277,7 @@ curl -I http://localhost:31415
 - `.codex/docs/drop-script.md` 中记录的限制已理解。
 - 合约地址与 `contracts/deployed.md` 对齐。
 - 链上 verifier 的 VK 与当前 guest ELF 对应。
-- `Mo.mp4` 存在。
+- `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4` 存在。
 - Walrus 可上传下载。
 - Oracle proxy 可正常回调。
 - SP1 network 账户可提交 Groth16 proof。

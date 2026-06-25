@@ -58,8 +58,10 @@ const VSS_ELF: Elf = Elf::Static(include_bytes!(
 const VDD_ELF: Elf = Elf::Static(include_bytes!("../../guest/vdd/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/program-vdd-walrus-rslhve"));
 
 // --- [物理常量定义] ---
-pub const INPUT_ASSET_NAME: &str = "Mo.mp4";
-pub const RECOVERED_ASSET_NAME: &str = "Mo_recovered.mp4";
+pub const INPUT_ASSET_NAME: &str =
+    "KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4";
+pub const RECOVERED_ASSET_NAME: &str =
+    "KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4";
 
 pub const ARBITRUM_SEPOLIA_RPC: &str = "https://sepolia-rollup.arbitrum.io/rpc";
 pub const WALRUS_LOCAL_ENDPOINT: &str = "http://localhost:31415";
@@ -100,6 +102,27 @@ pub fn configured_vdd_verifier_address() -> Result<Address> {
     env_or_default("VDD_VERIFIER_ADDRESS", VDD_VERIFIER_ADDRESS)
         .parse::<Address>()
         .map_err(|_| anyhow!("Invalid VDD_VERIFIER_ADDRESS"))
+}
+
+fn configured_oracle_mode() -> String {
+    env::var("ORACLE_MODE").unwrap_or_else(|_| "external".to_string())
+}
+
+fn configured_oracle_worker_url() -> Result<String> {
+    env::var("ORACLE_WORKER_URL").map_err(|_| {
+        anyhow!("ORACLE_WORKER_URL is required when ORACLE_MODE=centralized")
+    })
+}
+
+fn configured_oracle_worker_token() -> Result<String> {
+    env::var("ORACLE_WORKER_TOKEN").map_err(|_| {
+        anyhow!("ORACLE_WORKER_TOKEN is required when ORACLE_MODE=centralized")
+    })
+}
+
+fn configured_oracle_worker_status_url(worker_url: &str) -> String {
+    env::var("ORACLE_WORKER_STATUS_URL")
+        .unwrap_or_else(|_| format!("{}/status", worker_url.trim_end_matches('/')))
 }
 
 #[derive(Debug, Clone)]
@@ -880,6 +903,81 @@ pub async fn stage_3_fulfill(
     Ok(receipt.transaction_hash)
 }
 
+/// Trigger the centralized oracle Worker after fulfill emits OracleRequested.
+///
+/// This is intentionally opt-in. If ORACLE_MODE is unset, the script keeps the
+/// old behavior and only waits for oracleSuccessUntil.
+pub async fn trigger_centralized_oracle_worker_if_enabled(fulfill_tx_hash: H256) -> Result<()> {
+    let mode = configured_oracle_mode();
+    if mode != "centralized" {
+        println!(
+            ">>> [ORACLE] ORACLE_MODE={} ; centralized Worker trigger skipped.",
+            mode
+        );
+        return Ok(());
+    }
+
+    let worker_url = configured_oracle_worker_url()?;
+    let worker_token = configured_oracle_worker_token()?;
+    let status_url = configured_oracle_worker_status_url(&worker_url);
+    let client = reqwest::Client::new();
+
+    println!(">>> [ORACLE] Checking centralized Worker status...");
+    let status_response = client
+        .get(&status_url)
+        .bearer_auth(&worker_token)
+        .send()
+        .await?;
+    let status_code = status_response.status();
+    let status_body: serde_json::Value = status_response.json().await?;
+    if !status_code.is_success() || status_body.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        return Err(anyhow!(
+            "centralized oracle Worker status not ready: HTTP {}, body={}",
+            status_code,
+            status_body
+        ));
+    }
+
+    println!(">>> [ORACLE] Triggering centralized Worker report...");
+    let fulfill_tx_hash_hex = format!("{:#x}", fulfill_tx_hash);
+    let response = client
+        .post(format!("{}/oracle/fulfill", worker_url.trim_end_matches('/')))
+        .bearer_auth(&worker_token)
+        .json(&serde_json::json!({
+            "chainId": ARBITRUM_SEPOLIA_CHAIN_ID,
+            "txHash": fulfill_tx_hash_hex,
+        }))
+        .send()
+        .await?;
+    let response_status = response.status();
+    let response_body: serde_json::Value = response.json().await?;
+    if !response_status.is_success()
+        || response_body.get("ok").and_then(|v| v.as_bool()) != Some(true)
+    {
+        return Err(anyhow!(
+            "centralized oracle Worker fulfill failed: HTTP {}, body={}",
+            response_status,
+            response_body
+        ));
+    }
+
+    if response_body
+        .get("alreadyFulfilled")
+        .and_then(|v| v.as_bool())
+        == Some(true)
+    {
+        println!(">>> [ORACLE] Request already fulfilled.");
+        return Ok(());
+    }
+
+    let report_tx_hash = response_body
+        .get("reportTxHash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<missing>");
+    println!(">>> [ORACLE] Worker report tx: {}", report_tx_hash);
+    Ok(())
+}
+
 /// # [PROOF] 生成 VDD (Verifiable Data Decryption) 证明
 ///
 /// ## 角色
@@ -1264,7 +1362,8 @@ async fn main() -> Result<()> {
     .await?;
 
     // 3. 卖家履行
-    stage_3_fulfill(&walrus_client, &listing, &purchase, &seller_ctx).await?;
+    let fulfill_tx_hash = stage_3_fulfill(&walrus_client, &listing, &purchase, &seller_ctx).await?;
+    trigger_centralized_oracle_worker_if_enabled(fulfill_tx_hash).await?;
 
     // 4. 等待 Oracle 确认数据可用性
     wait_for_oracle_signal(

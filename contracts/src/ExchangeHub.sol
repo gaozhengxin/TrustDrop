@@ -13,9 +13,9 @@ import "@openzeppelin/contracts/proxy/Clones.sol";
 contract ExchangeHub is IExchangeHub, Ownable {
     address public immutable implementation;
 
-    IOracleProxy public immutable oracleWrapper;
-    IVSSVerifier vssVerifier;
-    IVDDVerifier vddVerifier;
+    IOracleProxy public oracleWrapper;
+    IVSSVerifier public vssVerifier;
+    IVDDVerifier public vddVerifier;
 
     mapping(address => bool) public isRegisteredChannel;
 
@@ -61,6 +61,9 @@ contract ExchangeHub is IExchangeHub, Ownable {
         bytes dataCommitment,
         uint256 amount
     );
+    event OracleWrapperUpdated(address indexed oracleWrapper);
+    event VSSVerifierUpdated(address indexed verifier);
+    event VDDVerifierUpdated(address indexed verifier);
 
     modifier onlyRegisteredChannel() {
         require(isRegisteredChannel[msg.sender], "Unauthorized channel");
@@ -93,8 +96,27 @@ contract ExchangeHub is IExchangeHub, Ownable {
         );
 
         isRegisteredChannel[proxy] = true;
+        oracleWrapper.setWhitelist(proxy, true);
         emit ExchangeChannelCreated(msg.sender, proxy);
         return proxy;
+    }
+
+    function setOracleWrapper(address _oracleWrapper) external onlyOwner {
+        require(_oracleWrapper != address(0), "Invalid oracle");
+        oracleWrapper = IOracleProxy(_oracleWrapper);
+        emit OracleWrapperUpdated(_oracleWrapper);
+    }
+
+    function setVSSVerifier(address _vssVerifier) external onlyOwner {
+        require(_vssVerifier != address(0), "Invalid VSS verifier");
+        vssVerifier = IVSSVerifier(_vssVerifier);
+        emit VSSVerifierUpdated(_vssVerifier);
+    }
+
+    function setVDDVerifier(address _vddVerifier) external onlyOwner {
+        require(_vddVerifier != address(0), "Invalid VDD verifier");
+        vddVerifier = IVDDVerifier(_vddVerifier);
+        emit VDDVerifierUpdated(_vddVerifier);
     }
 
     function reportListEvent(

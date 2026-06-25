@@ -12,7 +12,7 @@
 - ExchangeHub / ExchangeChannel / VSS / VDD / verifier 合约部署。
 - 本地 Walrus daemon: 默认 endpoint 为 `http://localhost:31415`，可由 `WALRUS_LOCAL_ENDPOINT` 覆盖。
 - SP1 Prover Network: 使用 `SP1_PRIVATE_KEY` 生成 Groth16 proof。
-- 本地输入资产: 默认读取 `drop-script/Mo.mp4`。
+- 本地输入资产: 默认读取 `drop-script/KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`。
 
 关键环境变量：
 
@@ -32,8 +32,8 @@
 
 | 常量 | 当前值 | 用途 |
 | --- | --- | --- |
-| `INPUT_ASSET_NAME` | `Mo.mp4` | 原始资产文件 |
-| `RECOVERED_ASSET_NAME` | `Mo_recovered.mp4` | 买家恢复后的输出文件 |
+| `INPUT_ASSET_NAME` | `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4` | 原始资产文件 |
+| `RECOVERED_ASSET_NAME` | `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4` | 买家恢复后的输出文件 |
 | `ARBITRUM_SEPOLIA_CHAIN_ID` | `421614` | 交易链 ID |
 | `WALRUS_LOCAL_ENDPOINT` | `http://localhost:31415` | Walrus publisher/aggregator fallback |
 | `HUB_ADDRESS` | `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78` | ExchangeHub fallback |
@@ -67,7 +67,7 @@
 
 流程：
 
-1. 读取 `Mo.mp4`。
+1. 读取 `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`。
 2. 按 `SYMBOL_SIZE` 对原文补零。
 3. 调用 `compute_rs_id` 得到 `original_asset_id`。
 4. 使用 `asset_encryption_key` 和 `derive_rslh_nonce(key, b"maenad_v1")` 对补零后的原文做 ChaCha8 加密。
@@ -287,7 +287,7 @@ VSS 合约会把 `dataKeyCommitment`、每个 audience 的 `vssKeyCommitment` �
 3. 用 `secret_sharing_key` 解密 `encrypted_data_keys[pos]`，得到 `asset_key`。
 4. 从 Walrus 下载密文。
 5. 用 `derive_rslh_nonce(asset_key, b"maenad_v1")` 解密密文。
-6. 写入 `Mo_recovered.mp4`。
+6. 写入 `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4`。
 
 当前缺口：
 
@@ -309,9 +309,27 @@ VSS 合约会把 `dataKeyCommitment`、每个 audience 的 `vssKeyCommitment` �
 - Hub、channel implementation、VSS verifier、VDD verifier 是同一轮部署产物。
 - 链上 verifier 使用的 VK 与当前 guest ELF 对应。
 - Walrus daemon 可上传和下载。
-- Chainlink Functions / Oracle proxy 可正常回调。
+- centralized Oracle Worker / OracleProxy 可正常回调。
 - 卖家和买家地址有足够 Arbitrum Sepolia ETH。
 - SP1 prover network 账户可提交 Groth16 proof。
+
+## Centralized Oracle Worker
+
+`drop-script` 已支持在 fulfill 后主动触发 centralized Oracle Worker，但这是显式 opt-in：
+
+```sh
+ORACLE_MODE=centralized
+ORACLE_WORKER_URL=https://trustdrop-oracle-worker.zhengxingao.workers.dev
+ORACLE_WORKER_TOKEN=...
+ORACLE_WORKER_STATUS_URL=https://trustdrop-oracle-worker.zhengxingao.workers.dev/status
+```
+
+规则：
+
+- 未设置 `ORACLE_MODE` 或 `ORACLE_MODE=external` 时，`drop-script` 不触发 Worker，只按旧逻辑等待 `oracleSuccessUntil`。
+- `ORACLE_MODE=centralized` 时，fulfill 成功后会先请求 Worker `/status`；只有 `ok=true` 才请求 `/oracle/fulfill`。
+- Worker 返回 `reportTxHash` 后，脚本继续轮询 `oracleSuccessUntil`。
+- Worker 已部署到 `https://trustdrop-oracle-worker.zhengxingao.workers.dev`，当前真实 `.env` 已启用 `ORACLE_MODE=centralized`。
 
 ## 当前状态结论
 

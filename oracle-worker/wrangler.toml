@@ -1,0 +1,10 @@
+name = "trustdrop-oracle-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-24"
+
+[vars]
+ORACLE_PROXY_ADDRESS = "0x13A59912Fe91211FB7a901974997F716f11EcFe8"
+MIN_RELAYER_BALANCE_WEI = "10000000000000000"
+MIN_CONFIRMATIONS = "1"
+CHAIN_ID = "421614"
+BLOCKBERRY_WALRUS_BASE_URL = "https://api.blockberry.one/walrus-mainnet/v1"

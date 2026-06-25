@@ -22,7 +22,7 @@
 当前完整流程位于 `drop-script/src/main.rs`。更细的阶段输入输出、合约调用和缺失集成项见 [Drop Script 端到端流程](./drop-script.md)。
 
 1. 卖家挂牌 `stage_1_listing`
-   - 读取 `Mo.mp4`。
+   - 读取 `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`。
    - 按 `SYMBOL_SIZE` 填充。
    - 计算 `originalAssetId`。
    - 用 `assetEncryptionKey` 和 RSLH nonce 加密原文。
@@ -58,7 +58,7 @@
 7. 买家恢复 `stage_4_recovery`
    - 从 `DataKeyShared` 事件取加密数据密钥。
    - 用 `secretSharingKey` 解出资产密钥。
-   - 下载 Walrus 密文并解密为 `Mo_recovered.mp4`。
+   - 下载 Walrus 密文并解密为 `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4`。
 
 ## Proof 公开值
 

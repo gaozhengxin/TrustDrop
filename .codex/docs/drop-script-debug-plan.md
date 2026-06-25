@@ -8,7 +8,7 @@
 
 `drop-script` 端到端链路：
 
-1. 本地读取 `drop-script/Mo.mp4`。
+1. 本地读取 `drop-script/KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`。
 2. 用固定演示数据密钥加密资产。
 3. 上传密文到本地 Walrus publisher。
 4. 通过 ExchangeHub 创建 ExchangeChannel。
@@ -27,7 +27,7 @@
 - `ExchangeChannelImplementation`: 管理 sale、purchase、fulfill、settle、refund。
 - `VSS`: 管理 audience、data key commitment、VSS proof 验证、`DataKeyShared`。
 - `VDD`: 管理 VDD proof、Oracle 请求、`oracleSuccessUntil`。
-- `OracleProxy` + `WalrusFunctionsConsumer`: 负责 Chainlink Functions 回调。
+- `OracleProxy`: 负责记录 Oracle 请求并接收回调；当前使用 centralized Oracle Worker 调用 `submitCentralizedReport`，CRE-compatible `onReport` 分支保留但暂不使用。
 
 subgraph 链路：
 
@@ -65,7 +65,7 @@ BUYER_KEY=...
 SP1_PRIVATE_KEY=...
 ARBITRUM_SEPOLIA_RPC=https://sepolia-rollup.arbitrum.io/rpc
 WALRUS_LOCAL_ENDPOINT=http://localhost:31415
-HUB_ADDRESS=0xAd7E0A828D5588e7e75b20244194c55d58c54A0b
+HUB_ADDRESS=0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1
 VSS_VERIFIER_ADDRESS=0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2
 VDD_VERIFIER_ADDRESS=0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071
 DROP_ORACLE_TIMEOUT_SECS=1800
@@ -83,10 +83,9 @@ DROP_ORACLE_TIMEOUT_SECS=1800
 
 | 合约 | 地址 |
 | --- | --- |
-| ExchangeHub | `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b` |
-| OracleProxy | `0x3919D7EBcef230a049e20C2020da4a4ff7d32754` |
-| WalrusFunctionsConsumer | `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01` |
-| ExchangeChannelImplementation | `0x6793Bc603a61E37BE89681041C84b68b95291449` |
+| ExchangeHub | `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1` |
+| OracleProxy | `0x13A59912Fe91211FB7a901974997F716f11EcFe8` |
+| ExchangeChannelImplementation | `0xAf34AE4156d304f8C65F5Fa211A9005B0477bbd6` |
 | VSS verifier | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` |
 | VDD verifier | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` |
 
@@ -112,7 +111,7 @@ DEPLOY_KEY=...
 当前 subgraph manifest：
 
 - network: `arbitrum-sepolia`
-- Hub: `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`
+- Hub: `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1`
 - startBlock: `276651753`
 - Studio version: `v0.0.2`
 - query URL: `https://api.studio.thegraph.com/query/1722405/test-arbitrum-store/v0.0.2`
@@ -185,9 +184,9 @@ pnpm --dir subgraph deploy:studio
    - asset encryption key: `[0x22; 32]`
    后续真实流程需要改成可配置或由安全密钥管理生成。
 
-2. `fulfill` 后依赖 Chainlink Functions 异步回调：
+2. `fulfill` 后依赖 Oracle 异步回调：
    - `fulfill` 成功不代表能 `settle`。
-   - 必须确认 OracleProxy 已绑定 consumer，consumer 已配置 subscription，subscription 余额充足。
+   - 当前必须确认 centralized Oracle Worker 已部署，`centralizedOracleSigner` 已配置，Worker signer 有 gas。
 
 3. 每次重新部署后必须同步更新：
    - `contracts/deployed.md`
@@ -255,5 +254,5 @@ PROTOC=/tmp/protoc-25.3/bin/protoc cargo run -p drop-script
 - Listing 失败：查 Walrus 上传和 Hub/channel 创建。
 - Purchase 失败：查 saleId、dataVersion、price、buyer balance。
 - VSS/VDD 模拟失败：查 guest ELF、verifier VK、binding hash。
-- Fulfill 成功但 settle 卡住：查 OracleProxy、consumer、Chainlink Functions subscription 和 `oracleSuccessUntil`。
+- Fulfill 成功但 settle 卡住：查 OracleProxy、centralized Worker report、Worker signer gas 和 `oracleSuccessUntil`。
 - Recovery 失败：查 `DataKeyShared` 事件和 Walrus 下载。

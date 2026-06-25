@@ -143,7 +143,7 @@ fulfill 成功后通常表示：
 
 - `oracleSuccessUntil[cCipher] > initTime + LIVING_WINDOW`
 
-所以 `fulfill` 后必须等 Chainlink Functions 回调。
+所以 `fulfill` 后必须等 Oracle 回调。当前 0007 运行路径是 centralized Oracle Worker 主动读取链上请求并调用 `OracleProxy.submitCentralizedReport`；CRE-compatible `onReport` 分支保留但暂不使用。
 
 ### subgraph 不是安全来源
 
@@ -194,18 +194,19 @@ http://localhost:31415
 
 如果 guest 重新编译导致 VK 变化，对应 verifier 必须重新部署。
 
-### Chainlink Functions / Oracle
+### Hybrid Oracle / Worker
 
 Oracle 是当前结构闭合中最容易被低估的外部依赖。
 
 必须人工确认：
 
-- Chainlink subscription 存在且余额足够。
-- WalrusFunctionsConsumer 已加入 subscription。
-- Consumer 的 proxy 地址正确。
-- OracleProxy 的 consumer 地址正确。
+- centralized Oracle Worker 已部署并配置专用 signer。
+- `OracleProxy.centralizedOracleSigner()` 已设置为 Worker signer。
+- Worker signer 有足够 Arbitrum Sepolia ETH。
+- Worker status 页面 ready，且不暴露具体余额或 secret。
+- `OracleProxy.controller()` 指向当前 Hub。
 - OracleProxy whitelist 允许 VDD/channel 发 request。
-- API key 可用，但不写入 git。
+- Walrus / Blockberry API key 可用，但不写入 git。
 
 如果 `fulfill` 成功但一直无法 settle，优先查 Oracle 链路。
 

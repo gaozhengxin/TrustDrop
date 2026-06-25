@@ -29,13 +29,13 @@ guest/vss, guest/vdd
 
 contracts/src
   -> forge build/test
-  -> deploy ExchangeHub / OracleProxy / Consumer / Channel implementation / verifiers
+  -> deploy ExchangeHub / OracleProxy / Channel implementation / verifiers
   -> drop-script HUB_ADDRESS and verifier env
   -> subgraph ABI, manifest address, startBlock
 
-OracleProxy + WalrusFunctionsConsumer + Chainlink Functions
-  -> Chainlink subscription, router, DON id, consumer allowlist
-  -> OracleProxy consumer config
+OracleProxy + centralized Oracle Worker + CRE-compatible path
+  -> Worker signer key, signer gas, Worker status page
+  -> OracleProxy centralizedOracleSigner / controller / CRE forwarder config
   -> Hub / Channel deployment
   -> VDD oracleSuccessUntil
   -> settle
@@ -67,7 +67,7 @@ drop-script/.env
 | `contracts/src/ExchangeChannel.sol` | VSS/VDD/Oracle ABI | deployed Hub/channel implementation, subgraph ABI | 跑 `forge test`；若要链上生效，重新部署合约并更新 env/subgraph |
 | `contracts/src/VSS.sol` | VSS verifier ABI/public values | Channel fulfill, DataKeyShared | 重新部署合约；必要时更新 subgraph ABI/mapping |
 | `contracts/src/VDD.sol` | VDD verifier ABI、OracleProxy ABI | Channel fulfill/settle, Oracle callback | 重新部署合约；必要时更新 Oracle 配置和 subgraph ABI/mapping |
-| `contracts/src/oracle/*` | Chainlink Functions router/subscription/DON/API key | VDD availability, settle | 重新部署或重新配置 Oracle；用户手动确认 Chainlink 配置 |
+| `contracts/src/oracle/*` | OracleProxy report ABI、Worker signer、CRE forwarder | VDD availability, settle | 重新部署或调用 setter 更新 Oracle；用户手动确认 Worker signer 和 gas |
 | `drop-script/src/main.rs` | ABI、env、Walrus、SP1 SDK | 端到端调试 | `cargo check -p drop-script`；如 ABI 改变先更新 SDK ABI |
 | `sdk/src/abi.rs` | 合约 ABI | drop-script | 合约 ABI 变更后更新；再 `cargo check -p drop-script` |
 | `subgraph/` | deployed Hub address、ABI、events | 调试观察 | codegen/build/deploy Studio；不影响链上安全 |
@@ -129,32 +129,33 @@ drop-script/.env
 - 是否使用 `contracts/.env` 中的部署私钥。
 - 是否消耗 Arbitrum Sepolia ETH。
 - 是否要把当前源码中的未部署修复一起部署。
-- 是否需要重新配置 Chainlink Functions consumer / subscription。
+- 是否需要重新配置 centralized Oracle Worker signer 或 CRE forwarder。
 
-### 改 Oracle / Chainlink Functions
+### 改 Oracle / centralized Worker
 
 触发条件：
 
 - 修改 `OracleProxy.sol`
-- 修改 `FunctionsConsumer_Walrus.sol`
-- 修改 Walrus API key、router、DON id、subscription id
+- 修改 centralized Oracle Worker report ABI 或执行逻辑
+- 修改 Worker signer、CRE forwarder、Walrus API key、Blockberry API key
 - 修改 `cCipher` 编码规则
 
 必须做：
 
 - `forge build`
 - `forge test`
-- 重新部署 OracleProxy / WalrusFunctionsConsumer，或调用 setter 更新配置。
+- 重新部署 OracleProxy，或调用 setter 更新 `centralizedOracleSigner` / `creForwarder` / `defaultMode`。
 - 确认 OracleProxy whitelist 包含 VDD/channel。
-- 确认 consumer proxy 指向 OracleProxy。
-- 确认 Chainlink subscription 有余额，且 consumer 已加入 subscription。
-- 调一次独立 Oracle 请求或在 drop-script fulfill 后检查 `oracleSuccessUntil(cCipher)`。
+- 确认 OracleProxy controller 指向当前 Hub。
+- 确认 Worker signer 有 Arbitrum Sepolia ETH。
+- 调一次独立 Worker report 或在 drop-script fulfill 后检查 `oracleSuccessUntil(cCipher)`。
 
 需要用户手动处理：
 
-- 在 Chainlink Functions 控制台确认 subscription。
-- 给 subscription 充值测试 LINK 或确认余额。
-- 把 consumer 加入 subscription allowlist。
+- 准备 Worker 专用私钥。
+- 确认 Worker signer 有 Arbitrum Sepolia ETH。
+- 配置 Worker secrets / env。
+- 确认 Worker status 页面 ready，且不暴露具体余额或 secret。
 - 确认 Blockberry / Walrus API key 是否可用。
 - 如果 API key 要保密，由用户通过 setter 配置，不写入 git。
 
@@ -240,8 +241,8 @@ drop-script/.env
 
 - [ ] 是否使用当前已部署合约地址？
 - [ ] 如果需要重部署，是否允许使用 `contracts/.env` 私钥？
-- [ ] 是否需要重新配置 Chainlink Functions subscription / consumer？
-- [ ] Chainlink subscription 是否有余额？
+- [ ] 是否需要重新配置 centralized Oracle Worker signer？
+- [ ] Worker signer 是否有 Arbitrum Sepolia ETH？
 - [ ] Walrus publisher 是否已启动？
 - [ ] Walrus/Sui 钱包是否有足够余额或配额？
 - [ ] 是否允许使用 `drop-script/.env` 的 seller/buyer/SP1 私钥？
@@ -296,7 +297,7 @@ cast code <CONTRACT_ADDRESS> --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL"
 - 私钥
 - API key
 - deploy key
-- Chainlink subscription secret
+- Worker signer secret
 
 ## Oracle 专项调试顺序
 
@@ -304,8 +305,8 @@ cast code <CONTRACT_ADDRESS> --rpc-url "$ARBITRUM_SEPOLIA_RPC_URL"
 
 1. `vddVerified(cCipher)` 是否为 true。
 2. `lastOracleRequestAt(cCipher)` 是否更新。
-3. OracleProxy 是否发出 `RequestSent`。
-4. WalrusFunctionsConsumer 是否收到 Chainlink Functions 回调。
+3. OracleProxy 是否发出 `OracleRequested`。
+4. centralized Oracle Worker 是否解析到该请求并发送 report 交易。
 5. OracleProxy 是否发出 `CallbackResult`。
 6. VDD `oracleSuccessUntil(cCipher)` 是否大于 `initTime + LIVING_WINDOW`。
 7. Walrus API 是否能查到对应 blob。

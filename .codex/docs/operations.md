@@ -42,7 +42,7 @@ cargo run -p drop-script
 - `SELLER_KEY`: 卖家私钥。
 - `BUYER_KEY`: 买家私钥。
 - `SP1_PRIVATE_KEY`: SP1 prover network 私钥，脚本会写入 `NETWORK_PRIVATE_KEY`。
-- `Mo.mp4`: 脚本默认读取的输入资产文件。
+- `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`: 脚本默认读取的输入资产文件。
 - Walrus daemon: 默认 endpoint 是 `http://localhost:31415`。
 - Arbitrum Sepolia RPC: 当前硬编码为 `https://sepolia-rollup.arbitrum.io/rpc`。
 

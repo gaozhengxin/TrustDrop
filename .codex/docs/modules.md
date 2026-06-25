@@ -71,7 +71,7 @@ SDK 当前是薄封装：
 - `ExchangeChannel.sol`: 挂牌、购买、履约、结算、退款。
 - `VSS.sol`: audience 注册、数据密钥承诺、密钥分享 proof 验证、privy bitmap。
 - `VDD.sol`: 数据承诺登记、VDD proof 验证、Oracle 可用性状态。
-- `oracle/*`: Chainlink Functions / Oracle proxy 相关实现。
+- `oracle/*`: hybrid OracleProxy、centralized Worker report path、CRE-compatible report path，以及历史 Chainlink Functions consumer 参考实现。
 
 测试位于 `contracts/test/`，包括正向流程、安全路径、负向路径、bitmap、proxy 隔离等测试。
 
@@ -90,4 +90,3 @@ SDK 当前是薄封装：
 ## `app/gui`
 
 Tauri 2 + Vite + TypeScript。当前前端和 Rust command 仍是默认 greet 示例，还没有接入 Maenad 交易流程。
-

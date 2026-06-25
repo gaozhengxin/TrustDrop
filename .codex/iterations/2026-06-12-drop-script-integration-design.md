@@ -123,7 +123,7 @@
 - `/home/justin/walrus/start.sh` 是否可启动。
 - 本地 endpoint 是否是 `http://localhost:31415`。
 - drop-script 使用的 publisher 和 aggregator 是否指向同一套服务。
-- `Mo.mp4` 上传后返回的 Walrus blob id 是否能下载。
+- `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4` 上传后返回的 Walrus blob id 是否能下载。
 - Oracle 查询的数据来源是否能看到本地 publisher 上传后的 blob。
 
 ### 合约检查点
@@ -134,8 +134,8 @@
 - `contracts/deployed.md` 是否与 latest broadcast 一致。
 - drop-script 实际连接的 Hub / verifier 是否与部署一致。
 - Hub 内配置的 OracleProxy、VSS verifier、VDD verifier 是否与 drop-script 使用地址一致。
-- OracleProxy 是否绑定 WalrusFunctionsConsumer。
-- WalrusFunctionsConsumer 是否配置 Chainlink Functions subscription、router、权限和余额。
+- 当前部署的 OracleProxy 是否为 hybrid centralized/CRE 版本。
+- OracleProxy controller、centralizedOracleSigner、CRE forwarder、defaultMode 是否符合当前 0007 配置。
 
 ### Subgraph 检查点
 
@@ -483,29 +483,28 @@ PROTOC=/tmp/protoc-25.3/bin/protoc VDD_RSLHVE_DATA_SIZE=65536 cargo run -p vdd-s
 
 | 组件 | 地址 | 备注 |
 | --- | --- | --- |
-| ExchangeHub | `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b` | block `276651753` |
-| OracleProxy | `0x3919D7EBcef230a049e20C2020da4a4ff7d32754` | block `276651684` |
-| WalrusFunctionsConsumer | `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01` | block `276651794` |
-| ExchangeChannelImplementation | `0x6793Bc603a61E37BE89681041C84b68b95291449` | block `276651719` |
+| ExchangeHub | `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1` | block `280261185` |
+| OracleProxy | `0x13A59912Fe91211FB7a901974997F716f11EcFe8` | block `280261101` |
+| ExchangeChannelImplementation | `0xAf34AE4156d304f8C65F5Fa211A9005B0477bbd6` | block `280261144` |
 | VSS verifier | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | existing SP1 verifier |
 | VDD verifier | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | existing walrus rslh SP1 verifier |
 
 链上连线检查：
 
-- `ExchangeHub.implementation()` 指向 `0x6793Bc603a61E37BE89681041C84b68b95291449`。
-- `ExchangeHub.oracleWrapper()` 指向 `0x3919D7EBcef230a049e20C2020da4a4ff7d32754`。
-- `OracleProxy.consumer()` 指向 `0xE48eBaB46376A66d5E33B0D02F8BA5AD75580a01`。
-- `OracleProxy.controller()` 指向 `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`。
-- `OracleProxy.subscriptionId()` 为 `550`。
-- `WalrusFunctionsConsumer.proxy()` 指向 `0x3919D7EBcef230a049e20C2020da4a4ff7d32754`。
+- `ExchangeHub.implementation()` 指向 `0xAf34AE4156d304f8C65F5Fa211A9005B0477bbd6`。
+- `ExchangeHub.oracleWrapper()` 指向 `0x13A59912Fe91211FB7a901974997F716f11EcFe8`。
+- `OracleProxy.controller()` 指向 `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1`。
+- `OracleProxy.creForwarder()` 指向 `0x76c9cf548b4179F8901cda1f8623568b58215E62`。
+- `OracleProxy.centralizedOracleSigner()` 当前为 `0x0000000000000000000000000000000000000000`。
+- Chainlink Functions `WalrusFunctionsConsumer` 已不再是最新部署路径的一部分。
 
 subgraph 部署：
 
 - Studio: `https://thegraph.com/studio/subgraph/test-arbitrum-store/`
 - version: `v0.0.2`
 - query URL: `https://api.studio.thegraph.com/query/1722405/test-arbitrum-store/v0.0.2`
-- manifest Hub: `0xAd7E0A828D5588e7e75b20244194c55d58c54A0b`
-- manifest startBlock: `276651753`
+- manifest Hub: `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1`
+- manifest startBlock: `280261185`
 
 已同步：
 
@@ -546,23 +545,23 @@ SUBGRAPH_VERSION_LABEL=v0.0.2 pnpm --dir subgraph deploy:studio
 - 用户定义的最终范围是“把全流程代码和组件准备好，代码编译完成；不需要全部跑通；合约和 subgraph 需要部署好”。
 - 代码准备已经完成：`drop-script`、VSS script、VDD walrus_rslhve script、合约、subgraph 均已进入可编译状态。
 - 基础验证已经完成：`drop-lib` 测试通过，合约测试通过，subgraph codegen/build 通过。
-- 链上组件已经部署：ExchangeHub、OracleProxy、WalrusFunctionsConsumer、ExchangeChannelImplementation 已部署到 Arbitrum Sepolia。
+- 该迭代收口时的链上组件已部署；截至 0007，当前运行路径已迁移为 ExchangeHub、hybrid OracleProxy、ExchangeChannelImplementation，WalrusFunctionsConsumer 不再是最新部署路径的一部分。
 - subgraph 已部署到 The Graph Studio `v0.0.2`。
 - 地址同步已经完成：`contracts/deployed.md`、`subgraph/subgraph.yaml`、本地 `drop-script/.env`、本地 `subgraph/.env` 已对齐新部署。
-- 链上连线已经做过读检查：Hub、OracleProxy、WalrusFunctionsConsumer 三者互相指向正确。
+- 链上连线已经做过读检查；截至 0007，最新检查项为 Hub 指向 OracleProxy/logic/verifier，OracleProxy controller 指向 Hub。
 - 当前 git 工作树在提交 `603b8ea` 后干净。
 
 本次迭代不包含、也不应继续拖入的内容：
 
 - 不跑完整 drop-script 端到端交易流。
 - 不生成 VSS/VDD proof。
-- 不验证 Chainlink Functions 实际异步回调成功。
+- 不验证 Oracle 实际异步回调成功。
 - 不验证 Walrus publisher 上传和 Oracle 查询在真实业务流中的最终一致性。
 - 不升级或重部署 SP1 verifier 合约。
 
 剩余风险进入下一迭代：
 
-- Chainlink Functions subscription `550` 的余额、consumer 授权、DON 配置仍需在端到端调试时验证。
+- 截至 0007，中心化 Oracle Worker 尚未部署，`centralizedOracleSigner` 尚未配置；这部分进入后续端到端调试。
 - `/home/justin/walrus` publisher 是否持续在线，以及本地 publisher 上传的 blob 是否能被 Oracle 查询路径看到，仍需端到端验证。
 - `drop-script` 当前仍使用演示固定密钥，真实密钥管理不在本轮范围内。
 - `stage_4_recovery` 对 `DataKeyShared` 事件的定位仍偏单次调试模式，多订单并发下需要改成从本次 receipt 精确解析。

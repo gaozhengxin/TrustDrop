@@ -24,7 +24,7 @@ contract BaseTest is Test {
 
         // 1. 部署辅助合约
         verifier = new MockVerifier();
-        oracleProxy = new OracleProxy(owner, 1);
+        oracleProxy = new OracleProxy(owner, address(0xbeef));
 
         // 2. 部署逻辑母机 (根据你的实现类构造函数)
         // 注意：母机部署时的参数在代理模式下不重要，但需要符合构造函数定义
@@ -44,6 +44,7 @@ contract BaseTest is Test {
             address(verifier), // vddVerifier
             address(implementation)
         );
+        oracleProxy.setController(address(hub));
 
         vm.stopPrank();
     }
