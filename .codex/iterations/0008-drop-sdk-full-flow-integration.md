@@ -18,6 +18,7 @@
 
 ## 目标
 
+- 将已有 `maenad-sdk` 包改名为 `drop-sdk`。
 - 设计并实施 `drop-script` 到 `drop-sdk` 的能力拆分。
 - 保留 `drop-script` 作为端到端 CLI / demo 编排层，减少业务细节堆积。
 - 完成 Walrus 节点、subgraph、Oracle Worker、合约与 SDK/script 的全流程集成测试。
@@ -44,6 +45,33 @@
 - 不默认修改密码学协议细节。
 
 任何会触发证明请求、链上交易、Walrus 上传、subgraph deploy/publish 或 Worker 重新部署的操作，都需要先在设计文档中列明，再等待用户确认。
+
+## 当前实施记录
+
+用户调整本轮优先级：仓库中已有 `sdk/` crate，原包名为 `maenad-sdk`。本轮先不新增大规模 SDK 模块，而是先完成命名统一、轻量结构整理和用户文档。
+
+已实施：
+
+- `sdk/Cargo.toml` package name 从 `maenad-sdk` 改为 `drop-sdk`。
+- `drop-script/Cargo.toml` 依赖从 `maenad-sdk` 改为 `drop-sdk`。
+- 根 `Cargo.toml` 依赖从 `maenad-sdk` 改为 `drop-sdk`。
+- `drop-script/src/main.rs` import 从 `maenad_sdk::...` 改为 `drop_sdk::...`。
+- 清理 `sdk/src/lib.rs` 中的占位 `add()` 示例函数。
+- 对 `sdk/src/chacha8.rs`、`sdk/src/proof.rs`、`sdk/src/walrus.rs` 做轻量格式整理，不改变行为。
+- 新增 `sdk/README.md`。
+- 新增 `.codex/docs/drop-sdk.md`。
+
+验证：
+
+- `PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p drop-script` 已通过。
+- `PROTOC=/tmp/protoc-25.3/bin/protoc cargo check -p drop-sdk` 已通过。
+
+未实施：
+
+- 未运行完整 `drop-script`。
+- 未发 SP1 Prove Network 请求。
+- 未做链上交易。
+- 未部署 subgraph / Worker / 合约。
 
 ## 初始实施方法
 

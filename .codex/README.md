@@ -21,6 +21,7 @@
 - [运行与环境](./docs/operations.md)
 - [合约与部署](./docs/contracts.md)
 - [Drop Script 端到端流程](./docs/drop-script.md)
+- [Drop SDK 用户文档](./docs/drop-sdk.md)
 - [维护建议](./docs/maintenance.md)
 - [0005 Drop Script 全流程环境检查设计](./iterations/0005-drop-script-full-flow-environment-checklist.md)
 - [0006 Chainlink Functions 到 CRE 迁移计划](./iterations/0006-chainlink-functions-to-cre-migration.md)

@@ -19,7 +19,7 @@ members = [
 alloy-sol-types = "1.0"
 
 [dependencies]
-maenad-sdk = { path = "sdk" }
+drop-sdk = { path = "sdk" }
 maenad_gui = { path = "app/gui/src-tauri" }
 
 [[bin]]

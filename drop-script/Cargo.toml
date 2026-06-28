@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-maenad-sdk = { path = "../sdk" }
+drop-sdk = { path = "../sdk" }
 anyhow = "1.0.100"
 ethers = { version = "2.0.14", features = ["rustls"] }
 tokio = { version = "1.0", features = ["full"] }

@@ -1,5 +1,5 @@
 [package]
-name = "maenad-sdk"
+name = "drop-sdk"
 version = "0.1.0"
 edition = "2024"
 
@@ -17,6 +17,5 @@ ethers = { version = "2.0.14", features = ["rustls"] }
 sha2 = "0.10.9"
 sha3 = "0.10"
 chacha20 = "0.9.1"
-sp1-sdk = "6.2.4"
 tokio = { version = "1.0", features = ["full"] }
 dotenv = "0.15.0"

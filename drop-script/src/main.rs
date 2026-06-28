@@ -20,12 +20,12 @@ use drop_lib::kdf::key_derive;
 mod config_check;
 
 // 重构后的内部模块引用
-use maenad_sdk::chacha8::{chacha8_decrypt, chacha8_encrypt};
-// use maenad_sdk::proof::{run_vdd_proof};
+use drop_sdk::chacha8::{chacha8_decrypt, chacha8_encrypt};
+// use drop_sdk::proof::{run_vdd_proof};
 use drop_lib::rslh_ve::{
     create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT, SYMBOL_SIZE,
 };
-use maenad_sdk::walrus::{compute_rs_id, upload_data_idempotent};
+use drop_sdk::walrus::{compute_rs_id, upload_data_idempotent};
 use sha2::{Digest, Sha256};
 use sp1_sdk::{
     network::NetworkMode, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
@@ -33,8 +33,8 @@ use sp1_sdk::{
 };
 
 // ABI 引用
-use maenad_sdk::abi::exchange_channel_contract as channel_abi;
-use maenad_sdk::abi::exchange_hub_contract as hub_abi;
+use drop_sdk::abi::exchange_channel_contract as channel_abi;
+use drop_sdk::abi::exchange_hub_contract as hub_abi;
 
 abigen!(
     VSSVerifierContract,
@@ -50,7 +50,7 @@ abigen!(
 ]"#
 );
 
-use maenad_sdk::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter};
+use drop_sdk::abi::{DataKeySharedFilter, ExchangeChannelCreatedFilter};
 
 const VSS_ELF: Elf = Elf::Static(include_bytes!(
     "../../guest/vss/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/vss-program"
