@@ -31,6 +31,18 @@ type FulfillRequest = {
   requestLogIndex?: number;
 };
 
+type WalrusAvailability = {
+  blobId: string;
+  found: boolean;
+  expired: boolean;
+  status: 0 | 1;
+  statusName: "active" | "expired" | "not_found";
+  endEpoch: number | null;
+  endTime: number;
+  expiresAt: string | null;
+  upstreamStatus: number;
+};
+
 const ORACLE_ABI = parseAbi([
   "event OracleRequested(bytes32 indexed requestId, address indexed client, bytes cid, uint256 nonce, uint8 mode)",
   "function requests(bytes32 requestId) view returns (bytes cid, address client, uint8 mode, bool fulfilled)",
@@ -53,6 +65,10 @@ export default {
       if (url.pathname === "/status" && request.method === "GET") {
         requireAuth(request, env);
         return json(await status(env));
+      }
+      if (url.pathname === "/walrus/blob-status" && request.method === "GET") {
+        requireAuth(request, env);
+        return json(await walrusBlobStatus(url, env));
       }
       if (url.pathname === "/oracle/fulfill" && request.method === "POST") {
         requireAuth(request, env);
@@ -155,7 +171,7 @@ async function fulfill(request: Request, env: Env) {
     throw httpError("REQUEST_NOT_CENTRALIZED", 400);
   }
 
-  const availability = await checkWalrusAvailability(env, requested.cCipher);
+  const availability = await checkWalrusAvailabilityByCipher(env, requested.cCipher);
   const report = encodeAbiParameters(
     [
       { name: "requestId", type: "bytes32" },
@@ -198,6 +214,15 @@ async function fulfill(request: Request, env: Env) {
   };
 }
 
+async function walrusBlobStatus(url: URL, env: Env) {
+  const blobId = parseWalrusBlobId(url);
+  const availability = await checkWalrusBlobAvailability(env, blobId);
+  return {
+    ok: true,
+    ...availability,
+  };
+}
+
 function extractOracleRequest(logs: Log[], oracleProxy: Hex, requestLogIndex?: number) {
   const matches = logs
     .filter((log) => log.address.toLowerCase() === oracleProxy.toLowerCase())
@@ -233,8 +258,14 @@ function extractOracleRequest(logs: Log[], oracleProxy: Hex, requestLogIndex?: n
   return matches[0];
 }
 
-async function checkWalrusAvailability(env: Env, cCipher: Hex) {
-  const blobId = hexToBase64Url(cCipher);
+async function checkWalrusAvailabilityByCipher(env: Env, cCipher: Hex) {
+  return checkWalrusBlobAvailability(env, hexToBase64Url(cCipher));
+}
+
+async function checkWalrusBlobAvailability(
+  env: Env,
+  blobId: string,
+): Promise<WalrusAvailability> {
   const baseUrl = env.BLOCKBERRY_WALRUS_BASE_URL ?? "https://api.blockberry.one/walrus-mainnet/v1";
   const response = await fetch(`${baseUrl}/blobs/${blobId}`, {
     headers: {
@@ -243,20 +274,17 @@ async function checkWalrusAvailability(env: Env, cCipher: Hex) {
     },
   });
   if (!response.ok) {
-    return { status: 0, endTime: 0 };
+    return walrusAvailability(blobId, 1, null, response.status);
   }
   const data = await response.json<{ endEpoch?: number | string }>();
   const endEpoch = Number(data.endEpoch);
   if (!Number.isFinite(endEpoch)) {
-    return { status: 0, endTime: 0 };
+    return walrusAvailability(blobId, 1, null, response.status);
   }
   const currentEpoch =
     INIT_EPOCH + (Date.now() / 1000 - INIT_DATE_SECONDS) / EPOCH_LENGTH_SECONDS;
-  const status = endEpoch > currentEpoch ? 2 : 1;
-  const endTime = Math.floor(
-    INIT_DATE_SECONDS + (endEpoch - INIT_EPOCH) * EPOCH_LENGTH_SECONDS,
-  );
-  return { status, endTime };
+  const status = endEpoch > currentEpoch ? 0 : 1;
+  return walrusAvailability(blobId, status, endEpoch, response.status);
 }
 
 async function assertRelayerReady(env: Env, clients: ReturnType<typeof makeClients>) {
@@ -342,6 +370,51 @@ function hexToBase64Url(hex: Hex): string {
     binary += String.fromCharCode(Number.parseInt(clean.slice(i, i + 2), 16));
   }
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+function parseWalrusBlobId(url: URL): string {
+  const blobId = url.searchParams.get("blobId");
+  const cCipher = url.searchParams.get("cCipher");
+  if (blobId && cCipher) throw httpError("AMBIGUOUS_BLOB_ID", 400);
+  if (blobId) return normalizeWalrusBlobId(blobId);
+  if (cCipher) {
+    if (!isHex(cCipher)) throw httpError("INVALID_C_CIPHER", 400);
+    return hexToBase64Url(cCipher);
+  }
+  throw httpError("MISSING_BLOB_ID", 400);
+}
+
+function normalizeWalrusBlobId(value: string): string {
+  const blobId = value.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(blobId)) {
+    throw httpError("INVALID_WALRUS_BLOB_ID", 400);
+  }
+  return blobId;
+}
+
+function walrusAvailability(
+  blobId: string,
+  status: 0 | 1,
+  endEpoch: number | null,
+  upstreamStatus: number,
+): WalrusAvailability {
+  const endTime =
+    endEpoch === null
+      ? 0
+      : Math.floor(INIT_DATE_SECONDS + (endEpoch - INIT_EPOCH) * EPOCH_LENGTH_SECONDS);
+  const found = endEpoch !== null;
+  const statusName = status === 0 ? "active" : found ? "expired" : "not_found";
+  return {
+    blobId,
+    found,
+    expired: status === 1 && found,
+    status,
+    statusName,
+    endEpoch,
+    endTime,
+    expiresAt: endTime === 0 ? null : new Date(endTime * 1000).toISOString(),
+    upstreamStatus,
+  };
 }
 
 function normalizePrivateKey(value: string): Hex {
