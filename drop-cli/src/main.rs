@@ -46,6 +46,7 @@ async fn run() -> Result<()> {
     match args[0].as_str() {
         "init" => cmd_init(&args[1..]),
         "db" => cmd_db(&args[1..]),
+        "keys" => cmd_keys(&args[1..]),
         "doctor" => cmd_doctor().await,
         "status" => cmd_status(&args[1..]).await,
         "next" => cmd_next(&args[1..]).await,
@@ -76,6 +77,7 @@ fn print_help() {
 Usage:
   drop-cli init
   drop-cli db init|migrate|inspect
+  drop-cli keys check
   drop-cli doctor
   drop-cli status <sale-id>
   drop-cli next <sale-id>
@@ -149,6 +151,43 @@ fn cmd_db(args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => bail!("usage: drop-cli db init|migrate|inspect"),
+    }
+}
+
+fn cmd_keys(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("check") => {
+            let config = load_config()?;
+            println!("drop-cli keys check");
+            println!("config: {}", config_source());
+            println!("chainId: {}", config.chain_id);
+
+            let seller_key = config
+                .seller_private_key
+                .as_deref()
+                .ok_or_else(|| anyhow!("SELLER_KEY is missing"))?;
+            let seller_wallet = seller_key
+                .parse::<LocalWallet>()?
+                .with_chain_id(config.chain_id);
+            println!("sellerAddress: {:?}", seller_wallet.address());
+
+            let owner_secret_key = config.require_owner_secret_key()?;
+            let owner_pubkey = owner_public_key_bytes(&owner_secret_key)?;
+            println!("ownerPublicKey: 0x{}", hex::encode(owner_pubkey));
+
+            let asset_encryption_key = config.require_asset_encryption_key()?;
+            let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
+            println!("assetKeyCommitment: 0x{}", hex::encode(commitment));
+
+            if config.dev_insecure_default_keys {
+                println!(
+                    "WARN TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS is enabled; do not use this for seller production operations"
+                );
+            }
+            println!("status: ready");
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli keys check"),
     }
 }
 
@@ -336,7 +375,7 @@ async fn channel_create(sale_id: Option<&str>) -> Result<()> {
             .ok_or_else(|| anyhow!("HUB_ADDRESS is missing"))?,
     )?;
     let hub = hub_abi::ExchangeHubContract::new(hub_address, client);
-    let owner_pubkey = owner_public_key_bytes(&config.owner_secret_key)?;
+    let owner_pubkey = owner_public_key_bytes(&config.require_owner_secret_key()?)?;
     let pubkey = hub_abi::Pubkey {
         data: owner_pubkey.into(),
     };
@@ -456,7 +495,8 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
     let channel_address = parse_address(state.channel_address.as_deref().ok_or_else(|| {
         anyhow!("state missing channel_address; run drop-cli phase publish <local-sale-id> --yes")
     })?)?;
-    let commitment = *blake3::hash(&config.asset_encryption_key).as_bytes();
+    let asset_encryption_key = config.require_asset_encryption_key()?;
+    let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
     let client = signer_client(&config).await?;
     let channel = channel_abi::ExchangeChannelContract::new(channel_address, client);
     let current = channel.data_key_commitment().call().await?;
@@ -621,6 +661,7 @@ async fn cmd_purchase(args: &[String]) -> Result<()> {
                 .into_iter()
                 .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx_hash))
                 .ok_or_else(|| anyhow!("purchase not found in local state: {tx_hash}"))?;
+            let purchase = enrich_purchase_or_assume_vss(&config, purchase).await;
             print_purchase(&purchase);
             println!("next: drop-cli phase respond {}", purchase.purchase_tx_hash);
             Ok(())
@@ -733,7 +774,7 @@ async fn cmd_phase(args: &[String]) -> Result<()> {
             }
             complete_test_flow(sale_id).await
         }
-        Some("respond") => phase_respond(&args[1..]),
+        Some("respond") => phase_respond(&args[1..]).await,
         Some("fulfill") => {
             let thread_id = require_arg(&args[1..], "thread-id")?;
             phase_fulfill(thread_id)
@@ -795,6 +836,7 @@ struct PurchaseView {
     sale_id: String,
     channel_address: Option<String>,
     buyer: Option<String>,
+    needs_vss: Option<bool>,
     status: String,
     settle_tx_hash: Option<String>,
 }
@@ -942,6 +984,7 @@ fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
                 sale_id: state.sale_id.clone(),
                 channel_address: state.channel_address.clone(),
                 buyer: None,
+                needs_vss: None,
                 status: status.to_string(),
                 settle_tx_hash: settle_tx_hash.clone(),
             });
@@ -949,6 +992,75 @@ fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
     }
     purchases.sort_by(|left, right| left.purchase_tx_hash.cmp(&right.purchase_tx_hash));
     purchases
+}
+
+async fn enrich_purchase_or_assume_vss(
+    config: &DropCliConfig,
+    purchase: PurchaseView,
+) -> PurchaseView {
+    match enrich_purchase_from_chain(config, purchase.clone()).await {
+        Ok(purchase) => purchase,
+        Err(error) => {
+            println!("WARN could not inspect purchase on chain; assuming VSS is required: {error}");
+            PurchaseView {
+                needs_vss: Some(true),
+                ..purchase
+            }
+        }
+    }
+}
+
+async fn enrich_purchase_from_chain(
+    config: &DropCliConfig,
+    mut purchase: PurchaseView,
+) -> Result<PurchaseView> {
+    let rpc_url = config
+        .rpc_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("ARBITRUM_SEPOLIA_RPC_URL is missing"))?;
+    let hub_address = parse_address(
+        config
+            .hub_address
+            .as_deref()
+            .ok_or_else(|| anyhow!("HUB_ADDRESS is missing"))?,
+    )?;
+    let expected_sale_id = parse_hex32_state(&purchase.sale_id)?;
+    let provider = Provider::<Http>::try_from(rpc_url)?;
+    let tx_hash: H256 = purchase.purchase_tx_hash.parse()?;
+    let receipt = provider
+        .get_transaction_receipt(tx_hash)
+        .await?
+        .ok_or_else(|| anyhow!("purchase receipt not found"))?;
+    let hub = hub_abi::ExchangeHubContract::new(hub_address, Arc::new(provider.clone()));
+
+    let mut matched_event = None;
+    for log in receipt.logs.iter().filter(|log| log.address == hub_address) {
+        let Ok(event) = hub.decode_event::<hub_abi::PurchaseEventFilter>(
+            "PurchaseEvent",
+            log.topics.clone(),
+            log.data.clone(),
+        ) else {
+            continue;
+        };
+        if event.sale_id != expected_sale_id {
+            continue;
+        }
+        matched_event = Some(event);
+        break;
+    }
+    let event = matched_event.ok_or_else(|| anyhow!("matching PurchaseEvent not found"))?;
+    let channel_address = event.channel;
+    let buyer = event.buyer;
+    let channel = channel_abi::ExchangeChannelContract::new(channel_address, Arc::new(provider));
+    let needs_vss = match channel.needs_vss(buyer).call().await {
+        Ok(value) => value,
+        Err(_) => !channel.is_privy(buyer).call().await?,
+    };
+
+    purchase.channel_address = Some(format!("{channel_address:?}"));
+    purchase.buyer = Some(format!("{buyer:?}"));
+    purchase.needs_vss = Some(needs_vss);
+    Ok(purchase)
 }
 
 fn print_purchase(purchase: &PurchaseView) {
@@ -959,6 +1071,11 @@ fn print_purchase(purchase: &PurchaseView) {
         purchase.channel_address.as_deref().unwrap_or("-")
     );
     println!("buyer: {}", purchase.buyer.as_deref().unwrap_or("-"));
+    match purchase.needs_vss {
+        Some(true) => println!("needsVss: true"),
+        Some(false) => println!("needsVss: false"),
+        None => println!("needsVss: unknown"),
+    }
     println!("status: {}", purchase.status);
     println!(
         "settleTx: {}",
@@ -966,7 +1083,7 @@ fn print_purchase(purchase: &PurchaseView) {
     );
 }
 
-fn phase_respond(purchase_txs: &[String]) -> Result<()> {
+async fn phase_respond(purchase_txs: &[String]) -> Result<()> {
     if purchase_txs.is_empty() {
         bail!("usage: drop-cli phase respond <purchase-tx>...");
     }
@@ -980,7 +1097,7 @@ fn phase_respond(purchase_txs: &[String]) -> Result<()> {
             .iter()
             .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx))
             .ok_or_else(|| anyhow!("purchase not found in local state: {tx}"))?;
-        selected.push(purchase.clone());
+        selected.push(enrich_purchase_or_assume_vss(&config, purchase.clone()).await);
     }
     let first = selected
         .first()
@@ -991,6 +1108,56 @@ fn phase_respond(purchase_txs: &[String]) -> Result<()> {
     {
         bail!("all purchases in one thread must belong to the same sale");
     }
+
+    let mut vss_batch = Vec::new();
+    let mut no_vss_singletons = Vec::new();
+    for purchase in selected {
+        if purchase.needs_vss == Some(false) {
+            no_vss_singletons.push(purchase);
+        } else {
+            vss_batch.push(purchase);
+        }
+    }
+
+    let mut threads = Vec::new();
+    if !vss_batch.is_empty() {
+        threads.push(upsert_thread_for_purchases(&state_dir, &states, vss_batch)?);
+    }
+    for purchase in no_vss_singletons {
+        threads.push(upsert_thread_for_purchases(
+            &state_dir,
+            &states,
+            vec![purchase],
+        )?);
+    }
+
+    for thread in threads {
+        println!("thread: {}", thread.thread_id);
+        println!(
+            "channel: {}",
+            thread.channel_address.as_deref().unwrap_or("-")
+        );
+        println!("sale: {}", thread.sale_id);
+        println!("purchases: {}", thread.purchases.len());
+        println!(
+            "needsVss: {}",
+            thread.purchases.iter().any(|purchase| purchase.needs_vss)
+        );
+        for action in &thread.next_actions {
+            println!("next: {action}");
+        }
+    }
+    Ok(())
+}
+
+fn upsert_thread_for_purchases(
+    state_dir: &Path,
+    states: &[SaleState],
+    selected: Vec<PurchaseView>,
+) -> Result<ThreadState> {
+    let first = selected
+        .first()
+        .ok_or_else(|| anyhow!("at least one purchase is required"))?;
 
     let existing = load_all_thread_states(&state_dir)?
         .into_iter()
@@ -1016,6 +1183,7 @@ fn phase_respond(purchase_txs: &[String]) -> Result<()> {
                 purchase_tx_hash: purchase.purchase_tx_hash.clone(),
                 buyer: purchase.buyer.clone(),
                 sale_id: purchase.sale_id.clone(),
+                needs_vss: purchase.needs_vss.unwrap_or(true),
                 status: purchase.status.clone(),
                 settle_tx_hash: purchase.settle_tx_hash.clone(),
             })
@@ -1039,6 +1207,7 @@ fn phase_respond(purchase_txs: &[String]) -> Result<()> {
                 purchase_tx_hash: purchase.purchase_tx_hash,
                 buyer: purchase.buyer,
                 sale_id: purchase.sale_id,
+                needs_vss: purchase.needs_vss.unwrap_or(true),
                 status: purchase.status,
                 settle_tx_hash: purchase.settle_tx_hash,
             });
@@ -1072,18 +1241,7 @@ fn phase_respond(purchase_txs: &[String]) -> Result<()> {
     }
     thread.updated_at = unix_timestamp_string();
     save_thread_state(&state_dir, &thread)?;
-
-    println!("thread: {}", thread.thread_id);
-    println!(
-        "channel: {}",
-        thread.channel_address.as_deref().unwrap_or("-")
-    );
-    println!("sale: {}", thread.sale_id);
-    println!("purchases: {}", thread.purchases.len());
-    for action in &thread.next_actions {
-        println!("next: {action}");
-    }
-    Ok(())
+    Ok(thread)
 }
 
 fn phase_fulfill(thread_id: &str) -> Result<()> {
@@ -1162,6 +1320,7 @@ fn print_thread(thread: &ThreadState) {
     for purchase in &thread.purchases {
         println!("  - tx: {}", purchase.purchase_tx_hash);
         println!("    buyer: {}", purchase.buyer.as_deref().unwrap_or("-"));
+        println!("    needsVss: {}", purchase.needs_vss);
         println!("    status: {}", purchase.status);
         println!(
             "    settleTx: {}",
@@ -1247,9 +1406,9 @@ fn asset_prepare(file: &str) -> Result<()> {
     payload.resize(padded_len, 0);
 
     let original_asset_id = compute_rs_id(&payload)?;
-    let asset_nonce = derive_rslh_nonce(&config.asset_encryption_key, b"maenad_v1");
-    let encrypted_payload =
-        chacha8_encrypt(&payload, &config.asset_encryption_key, &asset_nonce, 0)?;
+    let asset_encryption_key = config.require_asset_encryption_key()?;
+    let asset_nonce = derive_rslh_nonce(&asset_encryption_key, b"trustdrop_asset_v1");
+    let encrypted_payload = chacha8_encrypt(&payload, &asset_encryption_key, &asset_nonce, 0)?;
     let encrypted_blob_id = compute_rs_id(&encrypted_payload)?;
 
     let sale_id = sale_id_from_asset_id(&original_asset_id);

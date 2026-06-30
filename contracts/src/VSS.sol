@@ -96,6 +96,26 @@ contract VSS is Pausable {
         return (privyBitmaps[bucketId] & (uint256(1) << offset)) != 0;
     }
 
+    function needsVSS(address user) public view returns (bool) {
+        return !isPrivy(user);
+    }
+
+    function audienceCount() public view returns (uint256) {
+        return audienceList.length;
+    }
+
+    function getAudienceVssKeyCommitments(
+        address[] calldata audiences
+    ) external view returns (bytes32[] memory commitments) {
+        commitments = new bytes32[](audiences.length);
+        for (uint256 i = 0; i < audiences.length; i++) {
+            require(isRegistered[audiences[i]], "Unregistered");
+            commitments[i] = audienceList[audienceIndex[audiences[i]]]
+                .vssKeyCommitment
+                .unwrap();
+        }
+    }
+
     function submitDataKeyCommitment(Types.Hash _commitment) public onlyOwner {
         if (Types.Hash.unwrap(dataKeyCommitment) != bytes32(0)) {
             revert("Cannot submit data key commitment again");

@@ -115,11 +115,12 @@ extract_last_value() {
 ensure_drop_cli_env_file() {
   mkdir -p "$RUN_DIR" "$DROP_CLI_STATE_DIR"
   local test_env="$RUN_DIR/drop-cli.env"
-  cp "$TRUSTDROP_ENV" "$test_env"
   {
-    printf '\n# drop-cli e2e generated settings\n'
+    printf '# drop-cli e2e generated settings\n'
+    printf 'DROP_CLI_BASE_ENV=%s\n' "$TRUSTDROP_ENV"
     printf 'DROP_CLI_STATE_DIR=%s\n' "$DROP_CLI_STATE_DIR"
     printf 'ORACLE_MODE=centralized\n'
+    printf 'TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1\n'
   } >> "$test_env"
   DROP_CLI_ENV="$test_env"
   export DROP_CLI_ENV DROP_CLI_STATE_DIR ORACLE_MODE

@@ -754,22 +754,35 @@ DROP_CLI_DB=/tmp/drop-cli-e2e/drop.sqlite
 
 ```text
 channel
-  sale/listing
+  sale/listing A
     purchase 1
     purchase 2
+  sale/listing B
     purchase 3
       ...
-    thread A: 处理 purchase 1, purchase 2, purchase 3
+  thread A: 处理一组需要 VSS 的 purchase batch
+  thread B: 处理一个不需要 VSS 的单笔 purchase
 ```
 
 `purchase` 是链上购买请求，是协议业务对象。它来自 buyer 的 purchase 交易，表示某个 buyer 对某个 sale 的购买意图和支付状态。
 
 `thread` 是 CLI/daemon 在 seller 选择响应 purchase 时自动维护的处理流程。它不是 seller 手动创建的协议对象，也不是用户需要显式管理的工作单。用户在 TUI 中操作的是 purchase 或 purchase batch，例如“响应这些购买请求”；CLI 根据这些操作自动生成或复用一个 thread 来跟踪 VSS 批处理、fulfill、oracle 和 settle。
 
+合约层面的 VSS 复用依据：
+
+- `ExchangeChannel.fulfill` 只有在 `!isPrivy(buyer)` 时才调用 `shareDataKey` 并验证 VSS proof。
+- `ExchangeChannel.settle` 只要求最终 `isPrivy(buyer)`、VDD verified、oracle success window 有效。
+- `isPrivy` 来自 channel 内的 audience bitmap，不绑定单个 sale。因此同一 channel 下如果多个 asset 使用同一个 data key / `dataKeyCommitment`，buyer 成为 privy 后，后续 purchase 可以跳过 VSS。
+- 合约源码已新增 `needsVSS(address)`、`audienceCount()`、`getAudienceVssKeyCommitments(address[])` 三个只读辅助函数，用于 CLI/daemon 判断 batch 和构造 VSS proof 输入。
+- `drop-cli` 必须从 purchase tx receipt 解析 `PurchaseEvent`，拿到 `buyer` 和 `channel`，再调用 `needsVSS(buyer)` 判断 `needsVss`；如果链上仍是旧合约没有 `needsVSS`，CLI 应 fallback 到 `!isPrivy(buyer)`。
+- 当 `needsVss=false`，CLI/daemon 应该为该 purchase 单独维护 thread，直接进入 fulfill/oracle/settle 路径。
+- 当 `needsVss=true`，CLI/daemon 应按配置等待多个 purchase 进入 batch，再生成一次 VSS proof。未来完整实现应优先调用 channel 的 batch `shareDataKey`，再对每笔 purchase 执行 fulfill，使 fulfill 跳过 VSS。
+
 为什么需要 thread：
 
 - 一个 channel 下会有多个 purchase。
 - 一次 VSS 可以处理多个 purchase 请求，不能把操作模型设计成每个 purchase 都孤立处理。
+- 不是所有 purchase 都需要 VSS；已 privy 的 buyer 要走单笔 no-vss thread，避免等待无意义的 batch。
 - fulfill 之后会触发 oracle request，需要跟踪 request/report/success window。
 - settle 依赖 VDD、VSS/fulfill、oracle signal、purchase 状态，必须把这些条件合并展示。
 - TUI 需要给 seller 一个易于理解的响应流程视图，而不是要求 seller 理解或手动创建 thread。
@@ -838,6 +851,35 @@ thread 和 purchase 的状态同步规则：
 - oracle report 成功后，满足条件的 purchase 进入 `settle_ready`。
 - settle 可以逐个 purchase 执行，也可以由 thread 批量驱动多笔 settle。
 - 如果 thread 中部分 purchase 失败，不能阻塞其它已满足条件的 purchase settle；TUI 必须显示 partial success。
+
+#### 2026-06-30 实施进度: VSS 复用与密钥检查
+
+已完成：
+
+- `contracts/src/VSS.sol` 新增 VSS 复用辅助 view：`needsVSS`、`audienceCount`、`getAudienceVssKeyCommitments`。
+- `contracts/test/BitmapTest.t.sol` 增加 batch helper 测试，覆盖新 audience 需要 VSS、批量 `shareDataKey` 后跳过 VSS、批量读取 commitment。
+- `drop-sdk` hardcoded ABI 已同步新增 view。
+- `drop-cli purchase show` / `phase respond` 已从 purchase receipt 解析 `PurchaseEvent`，读取 buyer/channel，并按 `needsVSS` 或旧合约 fallback `!isPrivy` 写入 thread。
+- `drop-cli keys check` 已新增，只输出 seller address、owner public key、asset key commitment，不输出私钥。
+- `maenad_v1` nonce domain 已替换为 `trustdrop_asset_v1`，并同步 `drop-cli`、`drop-script` 和 VDD walrus_rslhve host scripts。
+
+仍未完成：
+
+- 原生 `drop-cli phase fulfill <thread-id>` 和 `phase settle <thread-id>` 仍未替代 `drop-script` bridge。
+- 原生 batch VSS proof 还没有在 CLI 中生成和提交；当前只是完成 `needsVss` 分类和 thread 组织。
+- buyer purchase 的跨进程元数据仍缺失。现有 `drop-script` bridge 依赖内存中的 `purchase.secret_sharing_key` 和 `purchase.ephemeral_pubkey`；如果 purchase 来自独立 buyer 前端，CLI 必须从链上事件或链下订单元数据拿到解封装所需材料。
+- SQLite/TUI/daemon 尚未实现。
+- 密钥管理仍未达到完整产品级 keystore。当前已经禁止静默默认 key，但还没有加密 keystore、外部 signer、硬件钱包、密钥轮换和 profile 权限模型。
+
+当前配置缺口：
+
+- `drop-script/.env` 当前缺少 `OWNER_SECRET_KEY` 和/或 `ASSET_ENCRYPTION_KEY` 时，`drop-cli keys check` 会失败；测试脚本可显式设置 `TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1`，但 seller 正式操作不能使用该开关。
+
+合约部署影响：
+
+- 本轮合约源码已更新，但 Arbitrum Sepolia 上的当前 Hub 仍指向旧 `Exchange logic` 地址。
+- 因为 `ExchangeHub.implementation()` 是 immutable，若要让新建 channel 也具备新增 view，需要重新部署 `ExchangeChannelImplementation` 和 `ExchangeHub`，然后更新 `drop-script/.env`、`contracts/deployed.md`、subgraph manifest start block/address。
+- 旧 channel 没有新增 view，但 `drop-cli` 已保留 fallback，因此不强制立即重新部署才能继续测试现有链上 flow。
 
 resume 规则：
 
@@ -1596,4 +1638,68 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 
 ## 经验总结
 
-待实施后补充。
+### 2026-06-30 合约与配套设施更新
+
+本轮因为 `VSS` 新增了供 CLI / daemon 判断 VSS 复用的辅助 view，重新部署了主合约组件。最终有效部署如下：
+
+- `ExchangeHub`: `0xc857542964E8F7618F1A372c36E180D5670b1669`, block `282682922`
+- `ExchangeChannelImplementation`: `0xBAA3089aC201AEc7A33B0DE42C1598Af92d9Fc24`, block `282682879`
+- `OracleProxy`: `0xA79E3d31A95eB1368028ba7b25a2B7b8f56146D9`, block `282682863`
+- `VSS verifier`: `0x90933a2D8556Bf0785be48D95516238F8C788eBf`
+- `VDD verifier`: `0x23e85B3d3dCD4597a40CcDE987ac2BA5c7F3481D`
+- `centralizedOracleSigner`: `0x5318831f07e8E5e3e8Fdf2a53ef0F0c3996a88dF`
+- `subgraph`: Studio `v0.0.8`, query URL `https://api.studio.thegraph.com/query/1722405/test-arbitrum-store/v0.0.8`
+
+这次部署曾出现一次参数错误：`contracts/.env` 的 `VSS_ADDRESS` / `VDD_ADDRESS` 仍是旧 verifier，导致第一次新 Hub 指向 `0x5e80...` / `0x154D...`。该部署不作为有效版本使用。修正 `contracts/.env` 后重新部署，最终 Hub 已验证指向 `0x9093...` / `0x23e8...`，与 `drop-script/.env`、`contracts/deployed.md`、subgraph manifest 一致。
+
+验证结果：
+
+- `forge test --use /usr/local/bin/solc`: 28 passed。
+- `cargo check -p drop-cli`: passed，仅有既有 warning。
+- `cargo check -p drop-script`: passed，仅有既有 warning。
+- `pnpm --dir subgraph codegen`: passed。
+- `pnpm --dir subgraph build`: passed。
+- `drop-script/scripts/check-env.sh --section contracts` 在显式加载 `drop-script/.env` 和 `contracts/.env` 后：21 pass，0 warn，0 action required。
+
+注意：默认 `forge test` 会尝试安装 solc `0.8.25`，当前网络下可能超时。本轮使用系统 `solc 0.8.20` 完成编译、测试和最终部署；源码 pragma 均兼容 `^0.8.20`，但 Arbitrum Sepolia RPC 仍会提示 EIP-3855 兼容性 warning。
+
+### 当前 CLI 完成度
+
+当前 `drop-cli` 已经能通过测试脚本完成 prototype full-flow，且底层合约、Oracle Worker、subgraph、VSS/VDD verifier 已重新对齐。但从产品级 CLI 角度还没有全部完成：
+
+- 已完成：底层 publish / prepare / proof / oracle / settle / verify 所需的大部分链路能力。
+- 已完成：`phase` 复合命令和 `test-drop-cli-full-flow.sh` 覆盖现有主流程。
+- 已完成：`needsVSS` / `isPrivy` 兼容判断，用于区分 buyer 是否需要 VSS。
+- 未完成：TUI。
+- 未完成：daemon 自动刷新 channel、划分 batch、自动 fulfill / settle。
+- 未完成：内置轻量级数据库替代 fixture 文件。
+- 未完成：产品级密钥管理，包括加密 keystore、外部 signer、key rotation 和最小权限 profile。
+- 未完成：原生 batch VSS 证明调度。当前逻辑具备判断基础，但还不是完整订阅频道批处理产品。
+
+因此，当前不能把 `drop-cli` 描述为“产品级全部开发完成”；只能描述为“prototype full-flow 可用，核心合约/脚本/Worker 配套已对齐”。
+
+### File Mall 与 Channel 设计匹配性
+
+用户提出的产品假设：
+
+- 第一个应用是 file mall。
+- seller 给每一个 list 的文件开一个 channel。
+- 因此 channel 内 VSS 复用不重要。
+- 以后做订阅频道时，channel 复用才重要。
+
+这个判断与当前合约设计匹配：
+
+- 当前 `ExchangeChannel` 的 `dataKeyCommitment` 和 `privyBitmaps` 是 channel 级状态。
+- `listFile` 可以在一个 channel 下登记多个 `saleId -> dataId/version`。
+- buyer 一旦在 channel 里完成 VSS 并被标记为 privy，后续同 channel 的 sale 可以复用这一状态。
+- 因此一个 file mall 资产一个 channel 时，VSS 复用价值不大，但隔离性好，避免不同文件共享 channel 级 key / privy 状态。
+- 订阅频道场景中，一个 channel 下多个 sale 共享访问关系，VSS 复用才有实际价值。
+
+限制也必须明确：如果未来订阅频道要求每个 asset 使用完全独立的数据密钥，而不是共享 channel 级密钥，则当前 channel 级 `dataKeyCommitment` 设计不够，需要把 key commitment / privy 状态下沉到 sale 或 asset 维度。
+
+### 本轮经验
+
+- 重新部署合约前必须同时核对 `contracts/.env`、`drop-script/.env` 和上一轮实际跑通的链上 Hub verifier，不能只看变量名。
+- 每次部署后必须立刻读链验证 Hub 的 `implementation`、`oracleWrapper`、`vssVerifier`、`vddVerifier`，以及 OracleProxy 的 `controller`、`centralizedOracleSigner`、`defaultMode`。
+- `check-env.sh` 的 contracts 检查需要显式加载包含 RPC 的 env；否则会给出假的 no-code 结果。
+- 重任务必须串行执行。本轮曾错误并行启动 `forge test`、`cargo check -p drop-cli`、`cargo check -p drop-script`，后续不能重复。

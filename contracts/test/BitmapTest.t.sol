@@ -114,4 +114,44 @@ contract BitmapTest is BaseTest {
         );
         assertEq(channel.privyBitmaps(1), 0, "Bucket 1 should be empty");
     }
+
+    function test_VssReuseHelpersForBatching() public {
+        address userA = address(0xA11CE);
+        address userB = address(0xB0B);
+
+        vm.prank(userA);
+        channel.join(
+            Types.Hash.wrap(bytes32(uint256(0xaaa))),
+            Types.Cipher32.wrap(bytes32(uint256(0x111)))
+        );
+        vm.prank(userB);
+        channel.join(
+            Types.Hash.wrap(bytes32(uint256(0xbbb))),
+            Types.Cipher32.wrap(bytes32(uint256(0x222)))
+        );
+
+        assertEq(channel.audienceCount(), 2, "audience count mismatch");
+        assertTrue(channel.needsVSS(userA), "new audience should need VSS");
+        assertTrue(channel.needsVSS(userB), "new audience should need VSS");
+
+        address[] memory audiences = new address[](2);
+        audiences[0] = userA;
+        audiences[1] = userB;
+
+        bytes32[] memory commitments = channel.getAudienceVssKeyCommitments(
+            audiences
+        );
+        assertEq(commitments[0], bytes32(uint256(0xaaa)));
+        assertEq(commitments[1], bytes32(uint256(0xbbb)));
+
+        Types.Cipher32[] memory encryptedKeys = new Types.Cipher32[](2);
+        encryptedKeys[0] = Types.Cipher32.wrap(bytes32(uint256(0x333)));
+        encryptedKeys[1] = Types.Cipher32.wrap(bytes32(uint256(0x444)));
+
+        vm.prank(owner);
+        channel.shareDataKey("", "", audiences, encryptedKeys);
+
+        assertFalse(channel.needsVSS(userA), "privy audience should skip VSS");
+        assertFalse(channel.needsVSS(userB), "privy audience should skip VSS");
+    }
 }

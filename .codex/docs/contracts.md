@@ -55,26 +55,45 @@
 
 | 合约 | 地址 | 备注 |
 | --- | --- | --- |
-| VSS | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | SP1 verifier |
-| VDD | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | walrus rslh SP1 verifier |
-| Oracle proxy | `0x13A59912Fe91211FB7a901974997F716f11EcFe8` | hybrid centralized/CRE oracle, block `280261101` |
-| Exchange hub | `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1` | latest broadcast, block `280261185` |
-| Exchange logic | `0xAf34AE4156d304f8C65F5Fa211A9005B0477bbd6` | latest broadcast, block `280261144` |
+| VSS | `0x90933a2D8556Bf0785be48D95516238F8C788eBf` | SP1 verifier, block `282520554` |
+| VDD | `0x23e85B3d3dCD4597a40CcDE987ac2BA5c7F3481D` | walrus rslh SP1 verifier, block `282520794` |
+| Oracle proxy | `0xA79E3d31A95eB1368028ba7b25a2B7b8f56146D9` | hybrid centralized/CRE oracle, block `282682863` |
+| Exchange hub | `0xc857542964E8F7618F1A372c36E180D5670b1669` | latest broadcast, block `282682922` |
+| Exchange logic | `0xBAA3089aC201AEc7A33B0DE42C1598Af92d9Fc24` | latest broadcast, block `282682879` |
 
 注意：`drop-script` 当前从 `.env` 读取 `HUB_ADDRESS`、`VSS_VERIFIER_ADDRESS`、`VDD_VERIFIER_ADDRESS`，源码常量只作为默认回退。每次重新部署后要同步更新 `contracts/deployed.md`、`drop-script/.env` 和 `subgraph/subgraph.yaml`。
 
 ## 最新部署检查
 
-2026-06-23 已完成 Arbitrum Sepolia hybrid oracle 部署，并确认以下链上连线：
+2026-06-30 已完成 Arbitrum Sepolia hybrid oracle 重新部署，并确认以下链上连线：
 
-- `ExchangeHub.implementation()` 指向 `0xAf34AE4156d304f8C65F5Fa211A9005B0477bbd6`。
-- `ExchangeHub.oracleWrapper()` 指向 `0x13A59912Fe91211FB7a901974997F716f11EcFe8`。
-- `ExchangeHub.vssVerifier()` 仍指向 `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2`。
-- `ExchangeHub.vddVerifier()` 仍指向 `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071`。
-- `OracleProxy.controller()` 指向 `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1`。
+- `ExchangeHub.implementation()` 指向 `0xBAA3089aC201AEc7A33B0DE42C1598Af92d9Fc24`。
+- `ExchangeHub.oracleWrapper()` 指向 `0xA79E3d31A95eB1368028ba7b25a2B7b8f56146D9`。
+- `ExchangeHub.vssVerifier()` 仍指向 `0x90933a2D8556Bf0785be48D95516238F8C788eBf`。
+- `ExchangeHub.vddVerifier()` 仍指向 `0x23e85B3d3dCD4597a40CcDE987ac2BA5c7F3481D`。
+- `OracleProxy.controller()` 指向 `0xc857542964E8F7618F1A372c36E180D5670b1669`。
 - `OracleProxy.creForwarder()` 指向 `0x76c9cf548b4179F8901cda1f8623568b58215E62`。
 - `OracleProxy.centralizedOracleSigner()` 当前为 `0x5318831f07e8E5e3e8Fdf2a53ef0F0c3996a88dF`。
 - `OracleProxy.defaultMode()` 为 `0`，即 centralized。
+
+## 2026-06-30 VSS 复用 view
+
+当前源码和最新部署中的 `VSS` 已新增 VSS 复用辅助 view：
+
+- `needsVSS(address user) -> bool`
+- `audienceCount() -> uint256`
+- `getAudienceVssKeyCommitments(address[] audiences) -> bytes32[]`
+
+这些函数用于 `drop-cli` / daemon 判断 buyer 是否需要 VSS、构造 batch VSS proof 输入。它们不改变现有 `purchase`、`fulfill`、`settle` 的 ABI，因此旧 `drop-script` full-flow 不受影响。
+
+这次改动不改变现有 `purchase`、`fulfill`、`settle` 的 ABI。重新部署 `ExchangeChannelImplementation`、`ExchangeHub` 和 `OracleProxy` 后，已同步：
+
+- `contracts/deployed.md`
+- `drop-script/.env`
+- `drop-cli` 使用的 env/profile
+- `subgraph/subgraph.yaml` 的 Hub 地址和 start block
+
+`drop-cli` 对旧链上 channel 保留 fallback：优先调用 `needsVSS`，如果旧合约不支持该函数，则退回 `!isPrivy(buyer)`。
 
 ## 配置 centralized Oracle signer
 
@@ -82,7 +101,7 @@
 
 ```sh
 ORACLE_RELAYER_PRIVATE_KEY=<worker signer private key>
-ORACLE_PROXY_ADDRESS=0x13A59912Fe91211FB7a901974997F716f11EcFe8
+ORACLE_PROXY_ADDRESS=0xA79E3d31A95eB1368028ba7b25a2B7b8f56146D9
 ```
 
 然后运行：

@@ -18,7 +18,7 @@ pnpm --dir subgraph deploy:studio
 
 The manifest tracks the current local Foundry broadcast deployment:
 
-- ExchangeHub: `0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1`
-- Start block: `280261185`
+- ExchangeHub: `0xc857542964E8F7618F1A372c36E180D5670b1669`
+- Start block: `282682922`
 
 If contracts are redeployed, update `subgraph.yaml` before codegen/build/deploy.

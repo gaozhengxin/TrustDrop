@@ -1,95 +1,774 @@
 [
   {
-    "anonymous": false,
+    "type": "constructor",
     "inputs": [
-      { "indexed": true, "internalType": "address", "name": "owner", "type": "address" },
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" }
-    ],
-    "name": "ExchangeChannelCreated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
-      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
-      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
-      { "indexed": false, "internalType": "uint256", "name": "price", "type": "uint256" },
-      { "indexed": false, "internalType": "bytes32", "name": "version", "type": "bytes32" },
-      { "indexed": false, "internalType": "string", "name": "info", "type": "string" }
-    ],
-    "name": "SaleListed",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
-      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
-      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
-      { "indexed": false, "internalType": "uint256", "name": "newPrice", "type": "uint256" },
-      { "indexed": false, "internalType": "bytes32", "name": "version", "type": "bytes32" },
-      { "indexed": false, "internalType": "string", "name": "info", "type": "string" }
-    ],
-    "name": "SaleUpdated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
-      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" }
-    ],
-    "name": "SaleDelisted",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
-      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
-      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
-      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
-      { "indexed": false, "internalType": "uint256", "name": "price", "type": "uint256" },
       {
-        "components": [
-          { "internalType": "bytes32", "name": "saleDigest", "type": "bytes32" },
-          { "internalType": "uint256", "name": "price", "type": "uint256" },
-          { "internalType": "uint256", "name": "initTime", "type": "uint256" },
-          { "internalType": "uint256", "name": "deadline", "type": "uint256" },
-          { "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
-          { "internalType": "Types.Hash", "name": "vssKeyCommitment", "type": "bytes32" }
-        ],
-        "indexed": false,
-        "internalType": "struct ExchangeInfo",
-        "name": "exchangeInfo",
-        "type": "tuple"
+        "name": "_oracleWrapper",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_vssVerifier",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_vddVerifier",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_implementation",
+        "type": "address",
+        "internalType": "address"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelTransfer",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimOwnership",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createExchangeChannel",
+    "inputs": [
+      {
+        "name": "ownerPubKey",
+        "type": "tuple",
+        "internalType": "struct Types.Pubkey",
+        "components": [
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "implementation",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isRegisteredChannel",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "oracleWrapper",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IOracleProxy"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingOwner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reportDelistEvent",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reportListEvent",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "version",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "info",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reportPurchaseEvent",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "exchangeInfo",
+        "type": "tuple",
+        "internalType": "struct ExchangeInfo",
+        "components": [
+          {
+            "name": "saleDigest",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "price",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "initTime",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dataCommitment",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "vssKeyCommitment",
+            "type": "bytes32",
+            "internalType": "Types.Hash"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reportRefundEvent",
+    "inputs": [
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reportSettleEvent",
+    "inputs": [
+      {
+        "name": "buyer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reportUpdateEvent",
+    "inputs": [
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "newPrice",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "version",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "info",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setOracleWrapper",
+    "inputs": [
+      {
+        "name": "_oracleWrapper",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVDDVerifier",
+    "inputs": [
+      {
+        "name": "_vddVerifier",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setVSSVerifier",
+    "inputs": [
+      {
+        "name": "_vssVerifier",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "transferOwner",
+    "inputs": [
+      {
+        "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "vddVerifier",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IVDDVerifier"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vssVerifier",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IVSSVerifier"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "ExchangeChannelCreated",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OracleWrapperUpdated",
+    "inputs": [
+      {
+        "name": "oracleWrapper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferCanceled",
+    "inputs": [
+      {
+        "name": "pendingOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferStarted",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PurchaseEvent",
-    "type": "event"
+    "inputs": [
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "exchangeInfo",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct ExchangeInfo",
+        "components": [
+          {
+            "name": "saleDigest",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "price",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "initTime",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "dataCommitment",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "vssKeyCommitment",
+            "type": "bytes32",
+            "internalType": "Types.Hash"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
   },
   {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
-      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
-      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
-      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" }
-    ],
-    "name": "SettleEvent",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      { "indexed": true, "internalType": "address", "name": "channel", "type": "address" },
-      { "indexed": true, "internalType": "address", "name": "buyer", "type": "address" },
-      { "indexed": true, "internalType": "bytes32", "name": "saleId", "type": "bytes32" },
-      { "indexed": false, "internalType": "bytes", "name": "dataCommitment", "type": "bytes" },
-      { "indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256" }
-    ],
+    "type": "event",
     "name": "RefundEvent",
-    "type": "event"
+    "inputs": [
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SaleDelisted",
+    "inputs": [
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SaleListed",
+    "inputs": [
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "price",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "version",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "info",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SaleUpdated",
+    "inputs": [
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "newPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "version",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "info",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SettleEvent",
+    "inputs": [
+      {
+        "name": "channel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "buyer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "saleId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dataCommitment",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VDDVerifierUpdated",
+    "inputs": [
+      {
+        "name": "verifier",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VSSVerifierUpdated",
+    "inputs": [
+      {
+        "name": "verifier",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ERC1167FailedCreateClone",
+    "inputs": []
   }
 ]

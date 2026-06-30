@@ -53,7 +53,7 @@ async fn main() {
 
     let c_key_bytes: [u8; 32] = *blake3::hash(&key).as_bytes();
 
-    let aux_data = b"maenad_v1";
+    let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&key, aux_data);
 
     // 线性加密生成密文

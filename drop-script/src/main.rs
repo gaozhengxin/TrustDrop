@@ -601,7 +601,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
 
     let original_asset_id = compute_rs_id(&file_payload)?;
 
-    let asset_nonce = derive_rslh_nonce(&ctx.asset_encryption_key, b"maenad_v1");
+    let asset_nonce = derive_rslh_nonce(&ctx.asset_encryption_key, b"trustdrop_asset_v1");
     let encrypted_asset_data =
         chacha8_encrypt(&file_payload, &ctx.asset_encryption_key, &asset_nonce, 0)?;
     let encrypted_blob_id = compute_rs_id(&encrypted_asset_data)?;
@@ -1084,7 +1084,7 @@ pub async fn generate_vdd_proof(
 
     // 【重大修复】：必须使用和 stage_1_5_submit_key_commitment 相同的哈希算法
     let c_key_bytes = data_key_commitment(&ctx.asset_encryption_key);
-    let aux_data = b"maenad_v1";
+    let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
 
     println!(">>> [VDD PROOF] zkVM Inputs:");
@@ -1320,7 +1320,7 @@ pub async fn stage_4_recovery(
     let mut ciphertext = Vec::new();
     reader.read_to_end(&mut ciphertext).await?;
 
-    let nonce = derive_rslh_nonce(&asset_key, b"maenad_v1");
+    let nonce = derive_rslh_nonce(&asset_key, b"trustdrop_asset_v1");
     let mut recovered_data = chacha8_decrypt(&ciphertext, &asset_key, &nonce, 0)?;
     recovered_data.truncate(original_len);
     fs::write(RECOVERED_ASSET_NAME, recovered_data)?;

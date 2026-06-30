@@ -4,10 +4,10 @@ use clap::{Parser, ValueEnum};
 use rand::{rng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sp1_sdk::network::{FulfillmentStrategy, NetworkMode};
+use sp1_sdk::network::NetworkMode;
 use sp1_sdk::{
-    include_elf, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
-    SP1VerifyingKey,
+    include_elf, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
 };
 use std::path::PathBuf;
 
@@ -16,7 +16,7 @@ use drop_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_C
 use drop_lib::walrus_address::compute_blob_id_default;
 
 /// ELF of the Walrus VDD program
-pub const VDD_WALRUS_RSLHVE_ELF: &[u8] = include_elf!("program-vdd-walrus-rslhve");
+pub const VDD_WALRUS_RSLHVE_ELF: Elf = include_elf!("program-vdd-walrus-rslhve");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -44,7 +44,8 @@ struct SP1VDDProofFixture {
     proof: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     dotenv::dotenv().ok();
     sp1_sdk::utils::setup_logger();
 
@@ -53,7 +54,8 @@ fn main() {
     // 初始化 Network Prover 客户端
     let client = ProverClient::builder()
         .network_for(NetworkMode::Mainnet)
-        .build();
+        .build()
+        .await;
 
     // --- 1. 准备输入数据 ---
     const DATA_SIZE: usize = 1 * 1024 * 1024;
@@ -68,7 +70,7 @@ fn main() {
 
     let c_key_bytes: [u8; 32] = *blake3::hash(&key).as_bytes();
 
-    let aux_data = b"maenad_v1";
+    let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&key, aux_data);
 
     let mut cipher_data = origin_data.clone();
@@ -105,8 +107,11 @@ fn main() {
     }
 
     // --- 3. Setup & Prove ---
-    let (pk, vk) = client.setup(VDD_WALRUS_RSLHVE_ELF);
-    println!("SP1 Setup finished. Program VKey: {}", vk.bytes32());
+    let pk = client.setup(VDD_WALRUS_RSLHVE_ELF).await.unwrap();
+    println!(
+        "SP1 Setup finished. Program VKey: {}",
+        pk.verifying_key().bytes32()
+    );
 
     if args.idle {
         write_fixture_data(
@@ -114,7 +119,7 @@ fn main() {
             &c_key_bytes,
             &c_cipher_bytes,
             None,
-            &vk,
+            pk.verifying_key(),
             args.system,
         );
         return;
@@ -126,20 +131,8 @@ fn main() {
     );
 
     let proof = match args.system {
-        ProofSystem::Plonk => client
-            .prove(&pk, &stdin)
-            .compressed()
-            .strategy(FulfillmentStrategy::Auction)
-            .max_price_per_pgu(100_000_000u64)
-            .plonk()
-            .run(),
-        ProofSystem::Groth16 => client
-            .prove(&pk, &stdin)
-            .compressed()
-            .strategy(FulfillmentStrategy::Auction)
-            .max_price_per_pgu(100_000_000u64)
-            .groth16()
-            .run(),
+        ProofSystem::Plonk => client.prove(&pk, stdin).compressed().plonk().await,
+        ProofSystem::Groth16 => client.prove(&pk, stdin).compressed().groth16().await,
     }
     .expect("failed to generate network proof");
 
@@ -151,7 +144,7 @@ fn main() {
         &c_key_bytes,
         &c_cipher_bytes,
         Some(&proof),
-        &vk,
+        pk.verifying_key(),
         args.system,
     );
 }

@@ -117,6 +117,8 @@ pub struct ThreadPurchase {
     pub purchase_tx_hash: String,
     pub buyer: Option<String>,
     pub sale_id: String,
+    #[serde(default = "default_needs_vss")]
+    pub needs_vss: bool,
     pub status: String,
     pub settle_tx_hash: Option<String>,
 }
@@ -272,4 +274,8 @@ fn sanitize_sale_id(sale_id: &str) -> String {
             }
         })
         .collect()
+}
+
+fn default_needs_vss() -> bool {
+    true
 }

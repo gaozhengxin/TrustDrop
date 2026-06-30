@@ -8,9 +8,9 @@ dataSources:
     name: ExchangeHub
     network: arbitrum-sepolia
     source:
-      address: "0x1C01E8E981909926Ed67B5eEfAbfDfeCAcC882a1"
+      address: "0xc857542964E8F7618F1A372c36E180D5670b1669"
       abi: ExchangeHub
-      startBlock: 280261185
+      startBlock: 282682922
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.9
