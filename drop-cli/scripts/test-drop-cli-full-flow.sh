@@ -19,9 +19,10 @@ cd "$ROOT_DIR"
 
 TRUSTDROP_ENV="${TRUSTDROP_ENV:-drop-script/.env}"
 DROP_CLI_ENV="${DROP_CLI_ENV:-$TRUSTDROP_ENV}"
-DROP_CLI_STATE_DIR="${DROP_CLI_STATE_DIR:-/tmp/drop-cli-e2e-state}"
 RUN_DIR="${DROP_CLI_TEST_RUN_DIR:-/tmp/drop-cli-e2e-$(date +%Y%m%d-%H%M%S)}"
+DROP_CLI_STATE_DIR="${DROP_CLI_STATE_DIR:-$RUN_DIR/state}"
 ASSET_FILE=""
+RECOVERED_FILE="KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4"
 
 YES_WALRUS=0
 YES_CHAIN=0
@@ -218,6 +219,14 @@ if ! drop_cli phase complete-test-flow "$ONCHAIN_SALE_ID" --yes >"$COMPLETE_LOG"
   fail "phase complete-test-flow failed"
 fi
 cat "$COMPLETE_LOG"
+
+log "verify recovered asset"
+[ -f "$RECOVERED_FILE" ] || fail "recovered file not found: $RECOVERED_FILE"
+ORIGINAL_SHA="$(sha256sum "$ASSET_FILE" | awk '{print $1}')"
+RECOVERED_SHA="$(sha256sum "$RECOVERED_FILE" | awk '{print $1}')"
+printf 'original_sha256=%s\n' "$ORIGINAL_SHA"
+printf 'recovered_sha256=%s\n' "$RECOVERED_SHA"
+[ "$ORIGINAL_SHA" = "$RECOVERED_SHA" ] || fail "recovered asset hash mismatch"
 
 log "final status"
 drop_cli status "$ONCHAIN_SALE_ID"

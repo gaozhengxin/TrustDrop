@@ -252,8 +252,9 @@ async fn asset_upload(sale_id: &str) -> Result<()> {
     });
 
     println!("Uploading encrypted asset to Walrus. This consumes Walrus storage.");
+    let epochs = env::var("DROP_CLI_WALRUS_EPOCHS").unwrap_or_else(|_| "4".to_string());
     let blob_id = walrus
-        .upload_blob(encrypted_payload.into(), Some("1"))
+        .upload_blob(encrypted_payload.into(), Some(&epochs))
         .await
         .map_err(|error| anyhow!("walrus upload failed: {}", error))?
         .0;
@@ -262,14 +263,17 @@ async fn asset_upload(sale_id: &str) -> Result<()> {
     save_sale_state(&state_dir, &state)?;
     println!("walrusBlobId: {blob_id}");
 
-    if let Ok(worker) = oracle_worker(&config) {
-        match worker.blob_status_by_blob_id(&blob_id).await {
-            Ok(status) => {
-                println!("oracleBlobStatus: {}", status.status_name);
-                println!("endEpoch: {:?}", status.end_epoch);
-            }
-            Err(error) => println!("WARN oracle blob status check failed: {error}"),
-        }
+    let worker = oracle_worker(&config)?;
+    let status = worker.blob_status_by_blob_id(&blob_id).await?;
+    println!("oracleBlobStatus: {}", status.status_name);
+    println!("endEpoch: {:?}", status.end_epoch);
+    if status.status != 0 || status.expired || !status.found {
+        bail!(
+            "uploaded Walrus blob is not active according to Oracle Worker: status={}, expired={}, found={}",
+            status.status_name,
+            status.expired,
+            status.found
+        );
     }
     println!("next: drop-cli phase publish {sale_id}");
     Ok(())
@@ -412,11 +416,12 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
 
     if current == commitment {
         state.data_commitment = Some(format!("0x{}", hex::encode(commitment)));
-        state.next_actions = vec![format!(
-            "drop-cli phase complete-test-flow {sale_id} --yes"
-        )];
+        state.next_actions = vec![format!("drop-cli phase complete-test-flow {sale_id} --yes")];
         save_sale_state(state_dir, &state)?;
-        println!("dataKeyCommitment already set: 0x{}", hex::encode(commitment));
+        println!(
+            "dataKeyCommitment already set: 0x{}",
+            hex::encode(commitment)
+        );
         return Ok(());
     }
     if current != [0u8; 32] {
@@ -449,9 +454,7 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
         TxStatus::Confirmed,
         receipt.block_number.map(|value| value.as_u64()),
     ));
-    state.next_actions = vec![format!(
-        "drop-cli phase complete-test-flow {sale_id} --yes"
-    )];
+    state.next_actions = vec![format!("drop-cli phase complete-test-flow {sale_id} --yes")];
     save_sale_state(&state_dir, &state)?;
     println!("dataKeyCommitment: 0x{}", hex::encode(commitment));
     println!("state updated");
@@ -631,7 +634,10 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
         .arg("--")
         .arg(sale_id)
         .env("DROP_CLI_STATE_DIR", state_dir)
-        .env("DROP_SCRIPT_INPUT_ASSET", state.input_asset_path.unwrap_or_default())
+        .env(
+            "DROP_SCRIPT_INPUT_ASSET",
+            state.input_asset_path.unwrap_or_default(),
+        )
         .env("ORACLE_MODE", "centralized");
 
     let status = command.status()?;
@@ -664,6 +670,7 @@ fn asset_prepare(file: &str) -> Result<()> {
 
     let mut state = SaleState::new(&sale_id);
     state.input_asset_path = Some(file.to_string());
+    state.original_len = Some(original_len);
     state.original_asset_id = Some(format!("0x{}", hex::encode(original_asset_id)));
     state.encrypted_blob_id = Some(format!("0x{}", hex::encode(encrypted_blob_id)));
     state.encrypted_asset_path = Some(encrypted_asset_path.display().to_string());
@@ -800,6 +807,13 @@ fn print_state(state: &SaleState) {
         state.input_asset_path.as_deref().unwrap_or("-")
     );
     println!(
+        "originalLength: {}",
+        state
+            .original_len
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!(
         "originalAssetId: {}",
         state.original_asset_id.as_deref().unwrap_or("-")
     );
@@ -828,6 +842,15 @@ fn print_state(state: &SaleState) {
 }
 
 fn infer_next_action(state: &SaleState) -> String {
+    if has_confirmed_tx(state, "settle") {
+        return format!("next: drop-cli phase verify {}", state.sale_id);
+    }
+    if has_confirmed_tx(state, "fulfill") {
+        return format!("next: drop-cli phase settle {}", state.sale_id);
+    }
+    if has_confirmed_tx(state, "submit_vdd_proof") {
+        return format!("next: drop-cli phase settle {}", state.sale_id);
+    }
     if state.input_asset_path.is_none() {
         return "next: drop-cli phase prepare <file>".to_string();
     }
@@ -838,6 +861,13 @@ fn infer_next_action(state: &SaleState) -> String {
         return format!("next: drop-cli asset upload {}", state.sale_id);
     }
     format!("next: drop-cli phase prove {}", state.sale_id)
+}
+
+fn has_confirmed_tx(state: &SaleState, kind: &str) -> bool {
+    state
+        .transactions
+        .iter()
+        .any(|tx| tx.kind == kind && tx.status == TxStatus::Confirmed)
 }
 
 fn load_config() -> Result<DropCliConfig> {

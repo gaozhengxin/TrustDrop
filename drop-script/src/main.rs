@@ -117,15 +117,13 @@ fn configured_oracle_mode() -> String {
 }
 
 fn configured_oracle_worker_url() -> Result<String> {
-    env::var("ORACLE_WORKER_URL").map_err(|_| {
-        anyhow!("ORACLE_WORKER_URL is required when ORACLE_MODE=centralized")
-    })
+    env::var("ORACLE_WORKER_URL")
+        .map_err(|_| anyhow!("ORACLE_WORKER_URL is required when ORACLE_MODE=centralized"))
 }
 
 fn configured_oracle_worker_token() -> Result<String> {
-    env::var("ORACLE_WORKER_TOKEN").map_err(|_| {
-        anyhow!("ORACLE_WORKER_TOKEN is required when ORACLE_MODE=centralized")
-    })
+    env::var("ORACLE_WORKER_TOKEN")
+        .map_err(|_| anyhow!("ORACLE_WORKER_TOKEN is required when ORACLE_MODE=centralized"))
 }
 
 fn required_env(key: &str) -> Result<String> {
@@ -170,7 +168,7 @@ pub struct PurchaseState {
     pub ephemeral_pubkey: Vec<u8>,
 }
 
-fn seller_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
+pub fn seller_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
     let sk = SecretKey::from_slice(sk_bytes)
         .map_err(|e| anyhow!("Invalid seller VSS secret key: {}", e))?;
     Ok(sk.public_key().to_encoded_point(true).as_bytes().to_vec())
@@ -607,8 +605,14 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     let encrypted_asset_data =
         chacha8_encrypt(&file_payload, &ctx.asset_encryption_key, &asset_nonce, 0)?;
     let encrypted_blob_id = compute_rs_id(&encrypted_asset_data)?;
-    println!("  - original_asset_id: 0x{}", hex::encode(original_asset_id));
-    println!("  - encrypted_blob_id: 0x{}", hex::encode(encrypted_blob_id));
+    println!(
+        "  - original_asset_id: 0x{}",
+        hex::encode(original_asset_id)
+    );
+    println!(
+        "  - encrypted_blob_id: 0x{}",
+        hex::encode(encrypted_blob_id)
+    );
     println!("  - original_len: {}", original_len);
     println!("  - padded_len: {}", padded_len);
 
@@ -642,10 +646,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
         .ok_or(anyhow!("listFile receipt missing"))?;
     println!("  - list_file_tx: {:#x}", receipt.transaction_hash);
     println!("  - sale_id: 0x{}", hex::encode(unique_sale_id));
-    println!(
-        "  - data_version: 0x{}",
-        hex::encode(onchain_data_version)
-    );
+    println!("  - data_version: 0x{}", hex::encode(onchain_data_version));
     Ok(ListingState {
         unique_sale_id,
         onchain_data_version: onchain_data_version.into(),
@@ -669,7 +670,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
 /// ## 输入
 /// - `ctx`: 卖家的上下文，包含钱包签名器和密钥
 /// - `channel_address`: 交易通道地址
-async fn stage_1_5_submit_key_commitment(
+pub async fn stage_1_5_submit_key_commitment(
     ctx: &SellerContext,
     channel_address: Address,
 ) -> Result<()> {
@@ -697,7 +698,7 @@ async fn stage_1_5_submit_key_commitment(
 ///
 /// VDD 只依赖当前资产、加密资产、data key commitment 和 cCipher，不依赖具体买家。
 /// 因此它应当在 publish/listing 后提前完成，fulfill 阶段只处理 buyer-bound VSS。
-async fn stage_1_6_submit_vdd_proof(
+pub async fn stage_1_6_submit_vdd_proof(
     walrus_client: &WalrusClient,
     listing: &ListingState,
     ctx: &SellerContext,
@@ -1005,7 +1006,10 @@ pub async fn trigger_centralized_oracle_worker_if_enabled(fulfill_tx_hash: H256)
     println!(">>> [ORACLE] Triggering centralized Worker report...");
     let fulfill_tx_hash_hex = format!("{:#x}", fulfill_tx_hash);
     let response = client
-        .post(format!("{}/oracle/fulfill", worker_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/oracle/fulfill",
+            worker_url.trim_end_matches('/')
+        ))
         .bearer_auth(&worker_token)
         .json(&serde_json::json!({
             "chainId": ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -1278,9 +1282,8 @@ pub async fn stage_4_recovery(
         .get_transaction_receipt(fulfill_tx_hash)
         .await?
         .ok_or(anyhow!("fulfill receipt not found: {fulfill_tx_hash:#x}"))?;
-    let event_topic = H256::from_slice(
-        &ethers::utils::keccak256("DataKeyShared(address[],bytes32[])")[..],
-    );
+    let event_topic =
+        H256::from_slice(&ethers::utils::keccak256("DataKeyShared(address[],bytes32[])")[..]);
     let log = receipt
         .logs
         .into_iter()
@@ -1388,7 +1391,7 @@ pub async fn stage_5_settle(
     info: channel_abi::ExchangeInfo,
     data_ver: [u8; 32],
     encrypted_blob_id: [u8; 32],
-) -> Result<()> {
+) -> Result<H256> {
     println!(">>> [STAGE 5] SETTLEMENT...");
     let channel_contract =
         channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
@@ -1396,12 +1399,13 @@ pub async fn stage_5_settle(
     let arg_ver = data_ver.into();
     let arg_cipher = encrypted_blob_id.to_vec().into();
 
-    channel_contract
+    let receipt = channel_contract
         .settle(buyer, info, arg_ver, arg_cipher)
         .send()
         .await?
-        .await?;
-    Ok(())
+        .await?
+        .ok_or(anyhow!("settle receipt missing"))?;
+    Ok(receipt.transaction_hash)
 }
 
 // ==========================================================
@@ -1417,10 +1421,7 @@ pub struct BuyerContext {
     pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>,
 }
 
-async fn run_recovery_only(
-    walrus_client: &WalrusClient,
-    buyer_ctx: &BuyerContext,
-) -> Result<()> {
+async fn run_recovery_only(walrus_client: &WalrusClient, buyer_ctx: &BuyerContext) -> Result<()> {
     println!(">>> [MODE] RECOVERY ONLY");
     let channel_address = required_env("DROP_RECOVERY_CHANNEL_ADDRESS")?
         .parse::<Address>()
@@ -1538,7 +1539,7 @@ async fn main() -> Result<()> {
         listing.unique_sale_id,
     )
     .await?;
-    stage_5_settle(
+    let settle_tx_hash = stage_5_settle(
         &seller_ctx,
         listing.channel_address,
         buyer_address,
@@ -1547,6 +1548,7 @@ async fn main() -> Result<()> {
         listing.encrypted_blob_id,
     )
     .await?;
+    println!(">>> settle txHash: {:#x}", settle_tx_hash);
 
     // 6. 买家恢复数据
     stage_4_recovery(

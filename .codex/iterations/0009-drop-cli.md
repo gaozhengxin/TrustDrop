@@ -764,6 +764,82 @@ CLI 只负责：
 - 需要排查 VSS Prove Network `unexecutable` 和 VDD verifier `InvalidPublicValues()` 的根因，再由用户批准后重新请求证明。
 - 需要补 Oracle Worker fulfill、settle、recover-test 的真实命令实现。
 
+2026-06-30 已补齐原型 full-flow 缺口并完成一次真实全流程测试：
+
+- 明确 `drop-cli` 不承载 buyer 前端 `purchase` 原子命令；当前 full-flow 原型中 buyer purchase 只作为测试流程的一部分，由 `complete-test-flow` 桥接脚本执行。
+- 补充显式 bridge binary：`drop-script/src/bin/resume_drop_cli_sale.rs`。
+  - 该 binary 是 0009 原型过渡层，不是隐藏入口。
+  - 它读取 `drop-cli` sale state，复用 `drop-script` 已跑通的阶段函数完成 `submitVDDProof -> oracle worker -> buyer purchase -> fulfill -> oracle worker -> settle -> recover`。
+  - 后续产品化时，应把这部分流程拆回 `drop-sdk` workflow，再由 `drop-cli` 原生命令调用。
+- `drop-script` 阶段函数调整：
+  - `stage_1_6_submit_vdd_proof` 可被 bridge binary 调用。
+  - `stage_5_settle` 返回 settle tx hash，便于写入 drop-cli state。
+- `drop-cli` state 补充 `original_len`，用于恢复时截断 padding 后的明文。
+- `asset upload` 默认 Walrus 保存 epoch 从 `1` 调整为 `4`，可通过 `DROP_CLI_WALRUS_EPOCHS` 覆盖。
+  - 原因：一次测试中 1 epoch 上传后 Worker 返回 `expired`，继续证明会浪费 Prove Network 请求。
+  - 现在上传后会强制查询 Oracle Worker blob status，只有 `found=true`、`status=0`、`expired=false` 才允许继续。
+- `drop-cli status/next` 修正 settle 后的下一步判断：
+  - `settle` 已 confirmed 时，下一步为 `drop-cli phase verify <sale-id>`。
+  - 不再错误提示继续 `phase prove`。
+- `drop-cli/scripts/test-drop-cli-full-flow.sh` 调整：
+  - 默认每次使用独立 `DROP_CLI_STATE_DIR=$RUN_DIR/state`，避免旧 state 污染。
+  - 串行执行，不并行上传、证明或链上交易。
+  - 结尾增加恢复文件 hash 对比，确保 recovered asset 与原始 asset 内容一致。
+
+2026-06-30 真实测试命令：
+
+```bash
+drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove --yes-oracle --yes-settle
+```
+
+测试环境：
+
+- Arbitrum Sepolia。
+- Walrus mainnet publisher：本地 `/home/justin/walrus/start.sh` 提供的 publisher endpoint。
+- Oracle：中心化 Oracle Worker。
+- SP1：Prove Network，未使用本地 proving。
+- run dir：`/tmp/drop-cli-e2e-20260630-151101`。
+- state dir：`/tmp/drop-cli-e2e-20260630-151101/state`。
+
+本次 full-flow sale：
+
+- sale id：`0xf233787bf2ce13674def62efa65a81609033bad584bcf861d02d800208564a01`
+- channel：`0x60af842e015ca84573752e51f815710462f6eb81`
+- Walrus blob id：`eOoGKz_sTuLcLt_QAycdIWll1DKFES2GEodVxphyY80`
+- Oracle Worker blob status：`status=0`，`expired=false`，`endEpoch=37`
+
+链上交易：
+
+- `channel_create`：`0xe5d4fa7f1d1da590ffad9b260da549032321974d0f3c091c29ca7f7ed6e42112`
+- `sale_list`：`0x2612d9c06946edcf4a49d5c78297048d1e434a1628df52031422c2556224d3d2`
+- `submit_data_key_commitment`：`0x846a98401eacb7c2acbb19b3f53878b8cd3a1f412a196e8f6f6b953f20ee8993`
+- `submit_vdd_proof`：`0x3e1d04bd311228fe8fa95d9da2345b6ee749a033479c917e3d6c8cd408f841ea`
+- Oracle Worker report tx：`0x953bbf1cfa13cf5bb2364fdbc3546a877c03bfc13b148c3f956d776728a3a5fd`
+- buyer `purchase`：`0xed425ab2f7c883b9a3c3732d1781768f4a102a3419d7ed08ce5e219b40f37150`
+- seller `fulfill`：`0xf7e4cbb4deff8c8db8f6e848b3b9f728e316667e703f31e7fa24e8db3e9db095`
+- seller `settle`：`0x717fc53fff14bfbac2b587b30b88910b7ce60b29f3161666ea8258f29fc180a8`
+
+证明和验证：
+
+- VDD Prove Network Groth16 证明生成成功。
+- VDD wrapper simulation 成功。
+- VSS Prove Network Groth16 证明生成成功。
+- VSS wrapper simulation 成功。
+- `drop-cli status <sale-id>` 显示所有关键交易均为 `Confirmed`。
+- settle 后 next action 正确为 `drop-cli phase verify <sale-id>`。
+
+恢复验证：
+
+- 恢复文件：`KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4`
+- 原始文件 hash：`32a991b1aaef858dab6759d5b131533ec6c782eb8e81dc0306d7f0cbd8daf334`
+- 恢复文件 hash：`32a991b1aaef858dab6759d5b131533ec6c782eb8e81dc0306d7f0cbd8daf334`
+- 结论：恢复内容与原始内容一致。
+
+本次没有重跑完整流程的原因：
+
+- 已经完成一次真实 full-flow，且包含 Walrus 上传、SP1 Prove Network、Arbitrum Sepolia 交易、Oracle Worker fulfill、settle、recover hash 对比。
+- 后续只做了 `drop-cli status` 和本地 hash 对比，不再次消耗 Prove Network / Walrus / 链上资源。
+
 ### 单元测试
 
 - 配置解析。
