@@ -82,6 +82,10 @@ pub fn configured_input_asset_name() -> String {
     env_or_default("DROP_SCRIPT_INPUT_ASSET", INPUT_ASSET_NAME)
 }
 
+fn configured_drop_script_mode() -> String {
+    env::var("DROP_SCRIPT_MODE").unwrap_or_else(|_| "full-flow".to_string())
+}
+
 pub fn configured_rpc_url() -> String {
     env_or_default("ARBITRUM_SEPOLIA_RPC", ARBITRUM_SEPOLIA_RPC)
 }
@@ -122,6 +126,25 @@ fn configured_oracle_worker_token() -> Result<String> {
     env::var("ORACLE_WORKER_TOKEN").map_err(|_| {
         anyhow!("ORACLE_WORKER_TOKEN is required when ORACLE_MODE=centralized")
     })
+}
+
+fn required_env(key: &str) -> Result<String> {
+    env::var(key).map_err(|_| anyhow!("{key} is required"))
+}
+
+fn parse_hex32_env(key: &str) -> Result<[u8; 32]> {
+    let value = required_env(key)?;
+    let clean = value.strip_prefix("0x").unwrap_or(&value);
+    let bytes = hex::decode(clean).map_err(|error| anyhow!("Invalid {key}: {error}"))?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("{key} must be exactly 32 bytes"))
+}
+
+fn parse_u64_env(key: &str) -> Result<u64> {
+    required_env(key)?
+        .parse::<u64>()
+        .map_err(|error| anyhow!("Invalid {key}: {error}"))
 }
 
 fn configured_oracle_worker_status_url(worker_url: &str) -> String {
@@ -1394,6 +1417,35 @@ pub struct BuyerContext {
     pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>,
 }
 
+async fn run_recovery_only(
+    walrus_client: &WalrusClient,
+    buyer_ctx: &BuyerContext,
+) -> Result<()> {
+    println!(">>> [MODE] RECOVERY ONLY");
+    let channel_address = required_env("DROP_RECOVERY_CHANNEL_ADDRESS")?
+        .parse::<Address>()
+        .map_err(|_| anyhow!("Invalid DROP_RECOVERY_CHANNEL_ADDRESS"))?;
+    let fulfill_tx_hash = required_env("DROP_RECOVERY_FULFILL_TX")?
+        .parse::<H256>()
+        .map_err(|_| anyhow!("Invalid DROP_RECOVERY_FULFILL_TX"))?;
+    let walrus_blob_id = required_env("DROP_RECOVERY_WALRUS_BLOB_ID")?;
+    let original_asset_id = parse_hex32_env("DROP_RECOVERY_ORIGINAL_ASSET_ID")?;
+    let original_len = parse_u64_env("DROP_RECOVERY_ORIGINAL_LEN")? as usize;
+    let secret_sharing_key =
+        key_derive(&[0xbb; 32], &original_asset_id).map_err(|error| anyhow!(error))?;
+
+    stage_4_recovery(
+        walrus_client,
+        buyer_ctx,
+        channel_address,
+        fulfill_tx_hash,
+        walrus_blob_id,
+        secret_sharing_key,
+        original_len,
+    )
+    .await
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // 在执行主流程前，先进行全面的配置和环境检查
@@ -1427,6 +1479,12 @@ async fn main() -> Result<()> {
     let buyer_ctx = BuyerContext {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), buyer_wallet)),
     };
+
+    if configured_drop_script_mode() == "recovery-only" {
+        run_recovery_only(&walrus_client, &buyer_ctx).await?;
+        println!("\n>>> Recovery-only process completed successfully!");
+        return Ok(());
+    }
 
     // --- 执行端到端完整流程 ---
 

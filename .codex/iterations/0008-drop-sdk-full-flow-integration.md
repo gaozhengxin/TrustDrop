@@ -134,6 +134,7 @@
   - `/oracle/fulfill` 上链 report 映射到合约协议：`2=Ensured, 1=Retrievable, 0=Fail`。
 - 部署更新后的 Oracle Worker。
 - 修复 `drop-script` recovery 事件读取：从 `fulfill_tx_hash` 的 receipt 解析 `DataKeyShared`，不再依赖宽泛历史 `eth_getLogs`。
+- 增加公开的 `DROP_SCRIPT_MODE=recovery-only` 模式，用于基于已知 fulfill 交易验证买家恢复流程；这不是隐藏 helper，所有输入参数都必须显式传入。
 - `drop-script` 编译通过。
 - subgraph `codegen` / `build` 通过；本轮没有 Hub 地址、ABI 或 mapping 变更，不需要重新部署 subgraph。
 
@@ -161,6 +162,28 @@
 - `oracleSuccessUntil(cCipher) == 1786406400`
 - Hub 已发出 `SettleEvent(channel, buyer, saleId, dataCommitment)`。
 - `DataKeyShared` 已在 fulfill receipt 中发出；旧 recovery 失败是日志查询方式问题，不是 fulfill/VSS 失败。
+- recovery-only 已基于上面的 fulfill tx 跑通，恢复文件 SHA256 与原始测试视频一致：
+  - 原始文件：`drop-script/KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`
+  - 恢复文件：`KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4`
+  - SHA256：`86da7fef254a6d88747cd88072dfdacd80a9f6b053b1750e9213ccf17da6fcef`
+
+### Recovery-only 验证入口
+
+用于在已经有 settle/fulfill 交易的情况下，只验证买家恢复，不重新发证明请求、不重新发交易：
+
+```sh
+set -a
+. drop-script/.env
+set +a
+
+DROP_SCRIPT_MODE=recovery-only \
+DROP_RECOVERY_CHANNEL_ADDRESS=0x79138b586c69ac33eeb1869a989f0faacff7b349 \
+DROP_RECOVERY_FULFILL_TX=0x080471f718a775dd942391d84061e5c899361616a6f4b0f51e4e2628d7b843f2 \
+DROP_RECOVERY_WALRUS_BLOB_ID=ZzuLyCPR63KYwdTWBySUPedk5SdiJ0LZ4gj2QtgXvjk \
+DROP_RECOVERY_ORIGINAL_ASSET_ID=0x4474981d30c43a8c308edbf65f53a9d608062a589c076660a95a6a110bf26b5a \
+DROP_RECOVERY_ORIGINAL_LEN=102105235 \
+cargo run -p drop-script
+```
 
 ### 每次 live 调试必须逐项检查
 
