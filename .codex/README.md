@@ -27,6 +27,7 @@
 - [0006 Chainlink Functions 到 CRE 迁移计划](./iterations/0006-chainlink-functions-to-cre-migration.md)
 - [0007 中心化 Oracle Worker 与 CRE 兼容合约](./iterations/0007-centralized-oracle-worker.md)
 - [0008 Drop SDK 拆分与全流程集成测试](./iterations/0008-drop-sdk-full-flow-integration.md)
+- [0009 drop-cli](./iterations/0009-drop-cli.md)
 
 ## 项目推进标准流程
 

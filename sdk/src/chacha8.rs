@@ -1,6 +1,6 @@
 use anyhow::Result;
-use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use chacha20::ChaCha8;
+use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 
 pub fn chacha8_encrypt(
     data: &[u8],

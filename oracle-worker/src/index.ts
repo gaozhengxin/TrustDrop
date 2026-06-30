@@ -43,6 +43,8 @@ type WalrusAvailability = {
   upstreamStatus: number;
 };
 
+type ContractOracleStatus = 0 | 1 | 2;
+
 const ORACLE_ABI = parseAbi([
   "event OracleRequested(bytes32 indexed requestId, address indexed client, bytes cid, uint256 nonce, uint8 mode)",
   "function requests(bytes32 requestId) view returns (bytes cid, address client, uint8 mode, bool fulfilled)",
@@ -172,6 +174,7 @@ async function fulfill(request: Request, env: Env) {
   }
 
   const availability = await checkWalrusAvailabilityByCipher(env, requested.cCipher);
+  const contractStatus = contractOracleStatus(availability);
   const report = encodeAbiParameters(
     [
       { name: "requestId", type: "bytes32" },
@@ -183,7 +186,7 @@ async function fulfill(request: Request, env: Env) {
     [
       requested.requestId,
       requested.cCipher,
-      BigInt(availability.status),
+      BigInt(contractStatus),
       BigInt(availability.endTime),
       "0x",
     ],
@@ -209,7 +212,9 @@ async function fulfill(request: Request, env: Env) {
     ok: true,
     requestId: requested.requestId,
     reportTxHash: hash,
-    status: availability.status,
+    status: contractStatus,
+    walrusStatus: availability.status,
+    walrusStatusName: availability.statusName,
     endTime: availability.endTime,
   };
 }
@@ -415,6 +420,11 @@ function walrusAvailability(
     expiresAt: endTime === 0 ? null : new Date(endTime * 1000).toISOString(),
     upstreamStatus,
   };
+}
+
+function contractOracleStatus(availability: WalrusAvailability): ContractOracleStatus {
+  if (!availability.found || availability.expired) return 0;
+  return availability.endTime > 0 ? 2 : 1;
 }
 
 function normalizePrivateKey(value: string): Hex {

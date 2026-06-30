@@ -78,6 +78,10 @@ fn env_or_default(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+pub fn configured_input_asset_name() -> String {
+    env_or_default("DROP_SCRIPT_INPUT_ASSET", INPUT_ASSET_NAME)
+}
+
 pub fn configured_rpc_url() -> String {
     env_or_default("ARBITRUM_SEPOLIA_RPC", ARBITRUM_SEPOLIA_RPC)
 }
@@ -294,6 +298,10 @@ pub async fn get_or_create_channel(
         .await?
         .await?
         .ok_or(anyhow!("Hub fail"))?;
+    println!(
+        ">>> createExchangeChannel txHash: {:#x}",
+        receipt.transaction_hash
+    );
 
     for log in receipt.logs.iter().filter(|log| log.address == hub_addr) {
         let Ok(ev) = hub_contract.decode_event::<ExchangeChannelCreatedFilter>(
@@ -565,7 +573,7 @@ pub async fn simulate_vdd_verify(
 /// - `encrypted_blob_id`: 加密数据的哈希 ID。
 pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Result<ListingState> {
     println!(">>> [STAGE 1] LISTING...");
-    let mut file_payload = fs::read(INPUT_ASSET_NAME)?;
+    let mut file_payload = fs::read(configured_input_asset_name())?;
     let original_len = file_payload.len();
     let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
     file_payload.resize(padded_len, 0);
@@ -576,13 +584,20 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     let encrypted_asset_data =
         chacha8_encrypt(&file_payload, &ctx.asset_encryption_key, &asset_nonce, 0)?;
     let encrypted_blob_id = compute_rs_id(&encrypted_asset_data)?;
+    println!("  - original_asset_id: 0x{}", hex::encode(original_asset_id));
+    println!("  - encrypted_blob_id: 0x{}", hex::encode(encrypted_blob_id));
+    println!("  - original_len: {}", original_len);
+    println!("  - padded_len: {}", padded_len);
+
     let walrus_blob_id = upload_data_idempotent(walrus, encrypted_asset_data).await?;
+    println!("  - walrus_blob_id: {}", walrus_blob_id);
 
     let channel_addr = get_or_create_channel(
         ctx.signer.clone(),
         seller_public_key_bytes(&ctx.owner_sk_bytes)?,
     )
     .await?;
+    println!("  - channel_address: {:?}", channel_addr);
     let channel_contract =
         channel_abi::ExchangeChannelContract::new(channel_addr, ctx.signer.clone());
 
@@ -596,11 +611,18 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     let arg_price = 10u128.pow(16).into(); // 0.01 ETH
     let arg_meta = "TrustDrop Asset v1".to_string();
 
-    channel_contract
+    let receipt = channel_contract
         .list_file(arg_commit, arg_price, arg_meta)
         .send()
         .await?
-        .await?;
+        .await?
+        .ok_or(anyhow!("listFile receipt missing"))?;
+    println!("  - list_file_tx: {:#x}", receipt.transaction_hash);
+    println!("  - sale_id: 0x{}", hex::encode(unique_sale_id));
+    println!(
+        "  - data_version: 0x{}",
+        hex::encode(onchain_data_version)
+    );
     Ok(ListingState {
         unique_sale_id,
         onchain_data_version: onchain_data_version.into(),
@@ -634,14 +656,84 @@ async fn stage_1_5_submit_key_commitment(
 
     let data_key_commitment = data_key_commitment(&ctx.asset_encryption_key);
 
-    channel_contract
+    let receipt = channel_contract
         .submit_data_key_commitment(data_key_commitment.into())
         .send()
         .await?
-        .await?;
+        .await?
+        .ok_or(anyhow!("submitDataKeyCommitment receipt missing"))?;
 
-    println!(">>> Data key commitment submitted.");
+    println!(
+        ">>> Data key commitment submitted: {:#x}",
+        receipt.transaction_hash
+    );
     Ok(())
+}
+
+/// # [STAGE 1.6] 卖家提前提交 VDD 证明
+///
+/// VDD 只依赖当前资产、加密资产、data key commitment 和 cCipher，不依赖具体买家。
+/// 因此它应当在 publish/listing 后提前完成，fulfill 阶段只处理 buyer-bound VSS。
+async fn stage_1_6_submit_vdd_proof(
+    walrus_client: &WalrusClient,
+    listing: &ListingState,
+    ctx: &SellerContext,
+) -> Result<H256> {
+    println!(">>> [STAGE 1.6] SUBMITTING VDD PROOF...");
+    let channel_contract =
+        channel_abi::ExchangeChannelContract::new(listing.channel_address, ctx.signer.clone());
+    let c_cipher = listing.encrypted_blob_id.to_vec();
+    if channel_contract
+        .vdd_verified(c_cipher.clone().into())
+        .call()
+        .await?
+    {
+        println!(">>> VDD proof already verified for current cCipher.");
+        return Ok(H256::zero());
+    }
+
+    let data_key_commit = data_key_commitment(&ctx.asset_encryption_key);
+    let vdd_binding_hash =
+        compute_vdd_binding_hash(&listing.original_asset_id, data_key_commit, &c_cipher);
+    let vdd_verifier_addr = configured_vdd_verifier_address()?;
+    let (proof, public_values, vk) = generate_vdd_proof(
+        walrus_client,
+        &listing.walrus_blob_id,
+        ctx,
+        listing.original_asset_id,
+        listing.encrypted_blob_id,
+    )
+    .await?;
+
+    validate_vdd_public_values(
+        &public_values,
+        listing.original_asset_id,
+        data_key_commit,
+        listing.encrypted_blob_id,
+    )?;
+    simulate_vdd_verify(
+        ctx.signer.provider(),
+        vdd_verifier_addr,
+        vk,
+        vdd_binding_hash,
+        public_values.clone(),
+        proof.clone(),
+    )
+    .await?;
+
+    let receipt = channel_contract
+        .submit_vdd_proof(
+            proof,
+            public_values,
+            listing.original_asset_id.to_vec().into(),
+            c_cipher.into(),
+        )
+        .send()
+        .await?
+        .await?
+        .ok_or(anyhow!("submitVDDProof receipt missing"))?;
+    println!(">>> submitVDDProof txHash: {:#x}", receipt.transaction_hash);
+    Ok(receipt.transaction_hash)
 }
 
 /// # [STAGE 2] 买家购买 (Purchase)
@@ -721,13 +813,12 @@ pub async fn stage_2_purchase(
 ///    - **输出**: ZK 证明和公开值。
 /// 6. **链上履行**: 调用通道合约的 `fulfill` 方法，提交封装后的数据密钥、VSS 证明和 VDD 证明。
 pub async fn stage_3_fulfill(
-    walrus_client: &WalrusClient,
+    _walrus_client: &WalrusClient,
     listing: &ListingState,
     purchase: &PurchaseState,
     ctx: &SellerContext,
 ) -> Result<H256> {
     println!(">>> [STAGE 3] FULFILL...");
-    let mut errors: Vec<anyhow::Error> = Vec::new();
 
     let channel_contract =
         channel_abi::ExchangeChannelContract::new(listing.channel_address, ctx.signer.clone());
@@ -765,17 +856,9 @@ pub async fn stage_3_fulfill(
     let vss_key_commit = exchange_info.vss_key_commitment;
     let vss_binding_hash =
         compute_vss_binding_hash(data_key_commit, vss_key_commit, wrapped_asset_key);
-    let vdd_binding_hash = compute_vdd_binding_hash(
-        &exchange_info.data_commitment,
-        data_key_commit,
-        &listing.encrypted_blob_id,
-    );
-
     // --- 使用配置的 Verifier 地址 ---
     let vss_verifier_addr = configured_vss_verifier_address()?;
-    let vdd_verifier_addr = configured_vdd_verifier_address()?;
     println!("  - Using VSS Verifier at: {}", vss_verifier_addr);
-    println!("  - Using VDD Verifier at: {}", vdd_verifier_addr);
 
     // --- 生成并独立模拟 VSS 证明 ---
     let vss_result = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await;
@@ -783,7 +866,7 @@ pub async fn stage_3_fulfill(
         if let Err(e) =
             validate_vss_public_values(&pv, wrapped_asset_key, vss_key_commit, [0u8; 12])
         {
-            errors.push(e);
+            return Err(e);
         }
         if let Err(e) = simulate_vss_verify(
             ctx.signer.provider(),
@@ -795,64 +878,22 @@ pub async fn stage_3_fulfill(
         )
         .await
         {
-            errors.push(e);
+            return Err(e);
         }
         (proof, pv)
     } else if let Err(e) = vss_result {
-        errors.push(anyhow!("VSS proof generation failed: {:?}", e));
-        (Bytes::new(), Bytes::new())
+        return Err(anyhow!("VSS proof generation failed: {:?}", e));
     } else {
         (Bytes::new(), Bytes::new())
     };
 
-    // --- 生成并独立模拟 VDD 证明 (无论 VSS 是否成功) ---
-    let vdd_result = generate_vdd_proof(
-        walrus_client,
-        &listing.walrus_blob_id,
-        ctx,
-        listing.original_asset_id,
-        listing.encrypted_blob_id,
-    )
-    .await;
-    let (d_proof, d_pv) = if let Ok((proof, pv, vk)) = vdd_result {
-        if let Err(e) = validate_vdd_public_values(
-            &pv,
-            listing.original_asset_id,
-            data_key_commit,
-            listing.encrypted_blob_id,
-        ) {
-            errors.push(e);
-        }
-        if let Err(e) = simulate_vdd_verify(
-            ctx.signer.provider(),
-            vdd_verifier_addr,
-            vk,
-            vdd_binding_hash,
-            pv.clone(),
-            proof.clone(),
-        )
-        .await
-        {
-            errors.push(e);
-        }
-        (proof, pv)
-    } else if let Err(e) = vdd_result {
-        errors.push(anyhow!("VDD proof generation failed: {:?}", e));
-        (Bytes::new(), Bytes::new())
-    } else {
-        (Bytes::new(), Bytes::new())
-    };
-
-    // --- 统一检查所有错误 ---
-    if !errors.is_empty() {
-        let combined_error = errors
-            .into_iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<String>>()
-            .join("\n- ");
+    if !channel_contract
+        .vdd_verified(listing.encrypted_blob_id.to_vec().into())
+        .call()
+        .await?
+    {
         return Err(anyhow!(
-            "One or more verification steps failed:\n- {}",
-            combined_error
+            "VDD is not verified before fulfill; run stage_1_6_submit_vdd_proof first"
         ));
     }
 
@@ -864,8 +905,8 @@ pub async fn stage_3_fulfill(
         public_values: v_pv,
     };
     let arg_vdd = channel_abi::Vddargs {
-        proof: d_proof,
-        public_values: d_pv,
+        proof: Bytes::new(),
+        public_values: Bytes::new(),
         c_cipher: listing.encrypted_blob_id.to_vec().into(),
     };
     let arg_ver = listing.onchain_data_version.into();
@@ -1005,14 +1046,12 @@ pub async fn generate_vdd_proof(
     encrypted_blob_id: [u8; 32],
 ) -> Result<(Bytes, Bytes, String)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
-    let mut origin_data = fs::read(INPUT_ASSET_NAME)?;
+    let mut origin_data = fs::read(configured_input_asset_name())?;
     let original_len = origin_data.len();
     let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
     origin_data.resize(padded_len, 0);
 
-    let mut reader = walrus_client
-        .download_blob(&BlobId(walrus_blob_id.to_string()))
-        .await?;
+    let mut reader = download_walrus_blob_with_backoff(walrus_client, walrus_blob_id).await?;
     let mut cipher_data = Vec::new();
     reader.read_to_end(&mut cipher_data).await?;
 
@@ -1121,9 +1160,9 @@ pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, 
 
     let mut stdin = SP1Stdin::new();
     stdin.write(&1u8); // length
-    stdin.write_slice(&d_k); // message
-    stdin.write_slice(&v_k); // watcher's key
-    stdin.write_slice(&vec![0u8; 12]); // nonce
+    stdin.write(&d_k.to_vec()); // message, matches guest read::<Vec<u8>>()
+    stdin.write(&v_k); // watcher's key, matches guest read::<[u8; 32]>()
+    stdin.write(&[0u8; 12]); // nonce, matches guest read::<[u8; 12]>()
 
     env::set_var("NETWORK_PRIVATE_KEY", env::var("SP1_PRIVATE_KEY").unwrap());
     let client = ProverClient::builder()
@@ -1150,6 +1189,44 @@ pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, 
     Ok((proof_bytes.into(), public_values, vk_string))
 }
 
+async fn download_walrus_blob_with_backoff(
+    walrus_client: &WalrusClient,
+    walrus_blob_id: &str,
+) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin>> {
+    let max_attempts = env::var("DROP_WALRUS_DOWNLOAD_ATTEMPTS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8);
+    let mut delay_secs = env::var("DROP_WALRUS_DOWNLOAD_INITIAL_DELAY_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(15);
+
+    for attempt in 1..=max_attempts {
+        match walrus_client
+            .download_blob(&BlobId(walrus_blob_id.to_string()))
+            .await
+        {
+            Ok(reader) => return Ok(reader),
+            Err(error) if attempt < max_attempts => {
+                println!(
+                    ">>> [WALRUS] blob not retrievable yet (attempt {attempt}/{max_attempts}): {error}"
+                );
+                println!(">>> [WALRUS] retrying in {delay_secs}s...");
+                tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                delay_secs = (delay_secs * 2).min(120);
+            }
+            Err(error) => {
+                return Err(anyhow!(
+                    "Walrus blob remained unavailable after {max_attempts} attempts: {error}"
+                ));
+            }
+        }
+    }
+
+    Err(anyhow!("unreachable Walrus retry state"))
+}
+
 /// # [STAGE 4] 买家恢复数据 (Recovery)
 ///
 /// ## 角色
@@ -1165,6 +1242,7 @@ pub async fn stage_4_recovery(
     walrus: &WalrusClient,
     ctx: &BuyerContext,
     channel_address: Address,
+    fulfill_tx_hash: H256,
     blob_id: String,
     secret_sharing_key: [u8; 32],
     original_len: usize,
@@ -1172,18 +1250,27 @@ pub async fn stage_4_recovery(
     println!(">>> [STAGE 4] RECOVERY...");
     let channel_inst =
         channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
-    let log = ctx
+    let receipt = ctx
         .signer
-        .get_logs(
-            &Filter::new()
-                .address(vec![channel_address])
-                .event("DataKeyShared(address[],bytes32[])"),
-        )
+        .get_transaction_receipt(fulfill_tx_hash)
         .await?
-        .pop()
+        .ok_or(anyhow!("fulfill receipt not found: {fulfill_tx_hash:#x}"))?;
+    let event_topic = H256::from_slice(
+        &ethers::utils::keccak256("DataKeyShared(address[],bytes32[])")[..],
+    );
+    let log = receipt
+        .logs
+        .into_iter()
+        .find(|log| {
+            log.address == channel_address
+                && log
+                    .topics
+                    .first()
+                    .map(|topic| *topic == event_topic)
+                    .unwrap_or(false)
+        })
         .ok_or(anyhow!(
-            "No DataKeyShared log found on channel {}",
-            channel_address
+            "No DataKeyShared log found in fulfill tx {fulfill_tx_hash:#x}"
         ))?;
     let shared_ev =
         channel_inst.decode_event::<DataKeySharedFilter>("DataKeyShared", log.topics, log.data)?;
@@ -1349,6 +1436,18 @@ async fn main() -> Result<()> {
     // 1.5. 卖家提交数据密钥承诺
     stage_1_5_submit_key_commitment(&seller_ctx, listing.channel_address).await?;
 
+    // 1.6. VDD 与 buyer 无关，提前提交并触发 Oracle。
+    let vdd_tx_hash = stage_1_6_submit_vdd_proof(&walrus_client, &listing, &seller_ctx).await?;
+    if vdd_tx_hash != H256::zero() {
+        trigger_centralized_oracle_worker_if_enabled(vdd_tx_hash).await?;
+    }
+    wait_for_oracle_signal(
+        listing.channel_address,
+        listing.encrypted_blob_id,
+        seller_ctx.signer.clone(),
+    )
+    .await?;
+
     // 2. 买家购买
     let seller_vss_pubkey = seller_public_key_bytes(&seller_ctx.owner_sk_bytes)?;
     let purchase = stage_2_purchase(
@@ -1363,9 +1462,9 @@ async fn main() -> Result<()> {
 
     // 3. 卖家履行
     let fulfill_tx_hash = stage_3_fulfill(&walrus_client, &listing, &purchase, &seller_ctx).await?;
-    trigger_centralized_oracle_worker_if_enabled(fulfill_tx_hash).await?;
+    println!(">>> fulfill txHash: {:#x}", fulfill_tx_hash);
 
-    // 4. 等待 Oracle 确认数据可用性
+    // 4. 确认 Oracle 信号仍然有效
     wait_for_oracle_signal(
         listing.channel_address,
         listing.encrypted_blob_id,
@@ -1396,6 +1495,7 @@ async fn main() -> Result<()> {
         &walrus_client,
         &buyer_ctx,
         listing.channel_address,
+        fulfill_tx_hash,
         listing.walrus_blob_id,
         purchase.secret_sharing_key,
         listing.original_len,

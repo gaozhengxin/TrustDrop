@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use drop_lib::walrus_address::compute_blob_id_default;
 use storage::{BlobId, BlobStatus, StorageNetwork, WalrusClient};
 

@@ -34,9 +34,7 @@ mod tests {
     #[tokio::test]
     async fn run_vdd_proof_returns_placeholder_shape() {
         let c_cipher = [9u8; 32];
-        let (proof, public_values) = run_vdd_proof([1u8; 32], c_cipher, [2u8; 32])
-            .await
-            .unwrap();
+        let (proof, public_values) = run_vdd_proof([1u8; 32], c_cipher, [2u8; 32]).await.unwrap();
 
         assert_eq!(proof.len(), 64);
         assert_eq!(public_values.as_ref(), c_cipher.as_slice());

@@ -13,6 +13,7 @@ members = [
     "storage",
     "walrus-core",
     "drop-script",
+    "drop-cli",
 ]
 
 [workspace.dependencies]
