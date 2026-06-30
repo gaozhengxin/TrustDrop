@@ -634,6 +634,686 @@ CLI 只负责：
 - 打印结果。
 - 退出码。
 
+### 下一阶段架构设计: TUI、daemon、数据库和交易 thread
+
+2026-06-30 新增设计要求：
+
+- 先写清楚架构，等待用户确认后再实施。
+- 不重跑 full-flow。
+- 不破坏 `drop-cli/scripts/test-drop-cli-full-flow.sh` 当前已经跑通的完整功能。
+- 当前 `drop-script/src/bin/resume_drop_cli_sale.rs` 作为已验证 full-flow bridge 暂时保留，直到 `drop-sdk` workflow 和 `drop-cli` 原生命令完全替代它。
+
+#### `resume_drop_cli_sale.rs` 逻辑归属
+
+`drop-script/src/bin/resume_drop_cli_sale.rs` 当前做了这些事情：
+
+- 从 drop-cli state 读取 sale 上下文。
+- 复用 `drop-script` 阶段函数。
+- 执行 `submitVDDProof -> oracle worker -> buyer purchase -> fulfill -> oracle worker -> settle -> recover`。
+- 把关键 tx 写回 drop-cli state。
+
+它不应该长期留在 `drop-script/src/bin/` 中。正确归属应拆成三层：
+
+- `drop-sdk::workflow`: 承载协议 workflow 状态机和业务步骤。
+  - `submit_vdd_proof_for_sale`
+  - `fulfill_purchase`
+  - `trigger_oracle_for_request`
+  - `wait_oracle_signal`
+  - `settle_purchase`
+  - `recover_for_test`
+- `drop-sdk::store`: 承载持久化读取和写入。
+  - 保存 channel、sale、purchase、proof、oracle request、tx、thread。
+  - 提供 migration 和 schema version。
+- `drop-cli`: 只做交互层。
+  - 原子命令调用 `drop-sdk::workflow` 单步。
+  - 阶段命令调用多个 workflow step。
+  - TUI 和 daemon 也只调用 SDK，不直接复用 `drop-script`。
+
+迁移原则：
+
+- 不能一次性删除 bridge。先用 SDK workflow 复刻其功能，并让 `test-drop-cli-full-flow.sh` 通过。
+- 新路径通过后，再把 full-flow 脚本从 bridge 切换到原生 drop-cli 命令。
+- 最后删除 `resume_drop_cli_sale.rs`，或者把它降级为只调用 `drop-cli` / SDK 的兼容 wrapper。
+
+#### 总体架构
+
+目标形态：
+
+```text
+drop-cli
+  commands      命令行入口，适合脚本和调试
+  tui           seller 交互工作台
+  daemon        后台自动跟踪和自动响应
+  views         status / warning / next action 展示
+
+drop-sdk
+  config        配置读取、校验、profile
+  store         SQLite 轻量数据库、migration、repository
+  contracts     Hub / Channel / OracleProxy / verifier client
+  chain         receipt、event scan、confirmation、nonce/tx 状态
+  walrus        upload/download/blob status
+  oracle        worker client、oracle request/report 状态
+  proof         VSS/VDD Prove Network provider
+  workflow      channel/sale/purchase/thread 状态机
+  policy        daemon 自动响应规则
+```
+
+`drop-script` 的长期定位：
+
+- 保留为开发验证脚本。
+- 不再承担产品流程状态管理。
+- 不再保存 fixture 作为主状态。
+- 可以继续用于快速复现实验，但不能成为 `drop-cli` 的核心依赖。
+
+#### 轻量数据库
+
+需要用内置轻量数据库替代当前 JSON fixture/state 文件。建议默认使用 SQLite：
+
+- 本地单文件，适合 CLI、TUI、daemon 共享。
+- 支持事务，便于防止同一 purchase 被重复 fulfill 或 settle。
+- 支持索引，便于 TUI 按 channel/sale/purchase/thread 查询。
+- Rust 生态成熟，后续可用 `sqlx` 或 `rusqlite`。
+
+建议默认路径：
+
+```text
+~/.trustdrop/drop.sqlite
+```
+
+项目开发环境可通过配置覆盖：
+
+```text
+DROP_CLI_DB=/tmp/drop-cli-e2e/drop.sqlite
+```
+
+数据库至少包含：
+
+- `profiles`: 当前 seller profile、chain id、配置来源。
+- `channels`: seller 拥有的 channel、创建 tx、当前状态。
+- `sales`: sale/listing、asset id、data version、Walrus blob、价格、状态。
+- `purchases`: buyer purchase request、purchase tx、buyer、sale id、purchase context、所属处理 thread、状态。
+- `proofs`: VSS/VDD proof request、VK、public values hash、proof tx、状态。
+- `oracle_requests`: request tx、request id、report tx、success until、状态。
+- `transactions`: 所有链上 tx 的生命周期。
+- `threads`: seller 对一组 purchase 的可恢复处理流程。
+- `thread_purchases`: thread 和 purchase 的多对多/一对多成员关系。
+- `warnings`: daemon 检测到的异常和待处理项。
+- `events_cursor`: 每个 channel / Hub / subgraph 的扫描游标。
+
+敏感数据规则：
+
+- 不保存 seller private key。
+- 不保存 SP1 private key。
+- 不保存 Oracle Worker token。
+- 不保存 Walrus API key。
+- 明文 data key 默认不入库；如果开发期必须保存，需要显式 `dev_store_plaintext_keys=true`，并在 TUI/doctor 中醒目标记。
+
+#### Purchase 和 Thread 模型
+
+核心关系：
+
+```text
+channel
+  sale/listing
+    purchase 1
+    purchase 2
+    purchase 3
+      ...
+    thread A: 处理 purchase 1, purchase 2, purchase 3
+```
+
+`purchase` 是链上购买请求，是协议业务对象。它来自 buyer 的 purchase 交易，表示某个 buyer 对某个 sale 的购买意图和支付状态。
+
+`thread` 是 CLI/daemon 在 seller 选择响应 purchase 时自动维护的处理流程。它不是 seller 手动创建的协议对象，也不是用户需要显式管理的工作单。用户在 TUI 中操作的是 purchase 或 purchase batch，例如“响应这些购买请求”；CLI 根据这些操作自动生成或复用一个 thread 来跟踪 VSS 批处理、fulfill、oracle 和 settle。
+
+为什么需要 thread：
+
+- 一个 channel 下会有多个 purchase。
+- 一次 VSS 可以处理多个 purchase 请求，不能把操作模型设计成每个 purchase 都孤立处理。
+- fulfill 之后会触发 oracle request，需要跟踪 request/report/success window。
+- settle 依赖 VDD、VSS/fulfill、oracle signal、purchase 状态，必须把这些条件合并展示。
+- TUI 需要给 seller 一个易于理解的响应流程视图，而不是要求 seller 理解或手动创建 thread。
+
+purchase 状态：
+
+- `detected`: 已从链上或 subgraph 发现。
+- `paid`: purchase tx 已确认，等待 seller 响应。
+- `queued`: 已加入某个 thread，等待批处理。
+- `vss_ready`: 所属 thread 的 VSS proof 已生成并通过校验。
+- `fulfill_submitted`: fulfill tx 已提交。
+- `fulfilled`: fulfill tx 已确认，`DataKeyShared` 已发出。
+- `oracle_pending`: fulfill/listing 相关 oracle request 已触发，等待 report。
+- `settle_ready`: oracle success window 有效，且合约状态满足 settle。
+- `settle_submitted`: settle tx 已提交。
+- `settled`: settle 已确认。
+- `blocked`: 需要人工处理。
+- `failed`: 当前处理失败，等待诊断。
+
+thread 类型：
+
+- `PublishSaleThread`: prepare / upload / channel create / list / VDD proof。
+- `PurchaseFulfillmentThread`: 对同一 channel/sale 下的一组 purchase 做 VSS batch、fulfill、oracle、settle。
+- `RecoveryTestThread`: 开发期恢复验证。
+
+`PurchaseFulfillmentThread` 状态：
+
+- `planned`: seller 已选择响应一组 purchase，CLI 已自动建立 thread。
+- `ready`: 已有 purchase 可处理，等待 CLI/daemon 执行或等待用户确认资源消耗动作。
+- `proving_vss`: 正在为该组 purchase 请求 VSS proof。
+- `vss_ready`: VSS proof 已完成，可以提交 fulfill。
+- `fulfilling`: 正在提交 fulfill tx。
+- `fulfilled`: fulfill tx 已确认。
+- `oracle_pending`: 等待 Oracle Worker report 或链上 oracle signal。
+- `settle_ready`: 一个或多个 purchase 已可 settle。
+- `settling`: 正在提交 settle tx。
+- `completed`: thread 内所有 purchase 已 settled 或被明确跳过。
+- `blocked`: 缺少余额、证明失败、oracle 超时、nonce/pending tx 异常等，需要人工处理。
+- `failed`: 自动流程失败，必须人工诊断后才能 resume。
+
+每个 thread 至少记录：
+
+- `thread_id`
+- `kind`
+- `channel_address`
+- `sale_id`
+- `purchase_count`
+- `purchase_ids`
+- `batch_policy`: seller 选择的 purchase batch、daemon 规则命中的 batch、按时间窗口或数量阈值形成的 batch。
+- `current_step`
+- `status`: 使用 `PurchaseFulfillmentThread` 状态枚举，例如 `planned` / `ready` / `proving_vss` / `vss_ready` / `fulfilling` / `oracle_pending` / `settle_ready` / `settling` / `completed` / `blocked` / `failed`
+- `vss_proof_id` 可选
+- `fulfill_tx_hash` 可选
+- `oracle_request_ids`
+- `settle_tx_hashes`
+- `lock_owner` 和 `lock_until`
+- `last_error`
+- `next_action`
+- `created_at`、`updated_at`
+
+thread 和 purchase 的状态同步规则：
+
+- seller 选择响应 purchase 后，CLI 自动创建或复用 thread，purchase 进入 `queued`。
+- thread 的 VSS proof 成功后，所有成员 purchase 可进入 `vss_ready`。
+- fulfill tx 确认后，所有被该 fulfill 覆盖的 purchase 进入 `fulfilled` 或 `oracle_pending`。
+- oracle report 成功后，满足条件的 purchase 进入 `settle_ready`。
+- settle 可以逐个 purchase 执行，也可以由 thread 批量驱动多笔 settle。
+- 如果 thread 中部分 purchase 失败，不能阻塞其它已满足条件的 purchase settle；TUI 必须显示 partial success。
+
+resume 规则：
+
+- 每一步必须幂等。执行前先读 DB 和链上状态。
+- 对已经 confirmed 的 tx 不重复发送。
+- 对已经 submitted 但 pending 的 tx 只刷新 receipt，不用新 nonce 覆盖。
+- 对证明请求失败，默认停止并要求人工确认。
+- 对 Oracle Worker 失败，记录 warning，不盲目循环触发。
+- 对 nonce/replacement 不确定状态，标记 `blocked`，等待人工检查。
+- resume 的主要用户入口是 purchase 或 purchase batch；实现上 CLI 找到对应 thread，没有则从 purchase 状态自动恢复出 thread。
+
+#### Channel 状态管理
+
+seller 需要管理所有自己的 channel，而不是只管理当前一次测试 sale。
+
+核心状态：
+
+- channel 是否已创建。
+- channel 所属 seller 是否匹配当前 profile。
+- channel 当前 open sale 数量。
+- 每个 sale 是否已 list、VDD verified、Oracle verified。
+- 每个 purchase 是否需要 seller 响应。
+- 每个 purchase 是否已经 fulfill。
+- 每个 purchase 是否可以 settle。
+- 每个 purchase 是否已经 settle 或异常。
+
+状态来源按优先级组合：
+
+- 本地 DB：保存执行历史、purchase 状态和 thread 状态。
+- 链上 RPC：权威确认 tx、events、contract view。
+- subgraph：加速查询和列表视图，但不能作为唯一可信来源。
+- Oracle Worker：补充 Walrus blob status、relayer/pending 状态。
+- Walrus：补充 blob active/expired。
+
+#### TUI 设计
+
+TUI 是 seller 的交互工作台，目标是让 seller 看到 channel 上的购买请求，并选择对哪些 purchase 做响应。thread 是 CLI 背后的流程跟踪对象，由 CLI 自动维护；TUI 展示 thread 进度，但不要求 seller 手动创建 thread。
+
+入口：
+
+```text
+drop-cli tui
+```
+
+主要视图：
+
+- Dashboard：profile、chain、余额、daemon 状态、warning 数量。
+- Channels：所有 seller channel、同步状态、open sale/purchase 数。
+- Sales：每个 sale 的 Walrus、VDD、oracle、purchase 概览。
+- Purchases：购买请求列表，重点显示未入队、已入队、待 fulfill、待 settle。
+- Threads：seller 响应流程列表，显示每个自动维护 thread 覆盖的 purchase 数量、VSS、fulfill、oracle、settle 进度。
+- Thread Detail：某个 thread 的 purchase 成员、批处理 proof、fulfill tx、oracle request、settle tx。
+- Warnings：daemon 发现的异常、建议命令、是否需要人工处理。
+- Logs：最近 daemon/CLI 操作日志，不显示 secret。
+
+TUI 中允许的操作：
+
+- refresh：只读刷新 channel/sale/purchase 状态。
+- respond selected：选择一个或多个同一 channel/sale 下的 paid purchase，CLI 自动创建或复用 thread 并进入响应流程。
+- add selected to thread：把新的 purchase 加入 CLI 判定仍可合并的 thread。
+- prove VSS：为 thread 中的 purchase batch 生成一次 VSS proof。
+- fulfill thread：对 thread 覆盖的 purchase 提交 fulfill。
+- retry oracle：对 thread 中明确失败且允许重试的 oracle request 触发一次。
+- settle ready：对 thread 中满足条件的 purchase 执行 settle。
+- open detail：查看 tx、proof、oracle、Walrus 状态。
+- mark reviewed：把 warning 标记为已读。
+
+TUI 展示原则：
+
+- 默认按 channel 分组，再按 sale 分组，再显示 purchases 和 threads。
+- purchase 列表强调“是否需要 seller 操作”。
+- thread 列表强调“下一步是什么”和“这批 purchase 当前处理到哪里”。
+- 对 partial success 要直接展示：例如 10 个 purchase 中 8 个 settled、1 个 oracle pending、1 个 blocked。
+- 用户不应该被迫理解每个底层表；TUI 文案应该围绕“购买请求”“处理批次”“等待证明”“等待预言机”“可以结算”。
+
+安全规则：
+
+- 会发链上交易、请求 Prove Network、触发 Oracle Worker 的操作必须弹确认。
+- 默认不自动重试证明。
+- TUI 不能显示私钥、token、明文 data key。
+- TUI 操作也必须通过同一套 `drop-sdk::workflow` 和 DB lock，不能绕过 daemon/CLI 的幂等规则。
+
+#### Daemon 设计
+
+daemon 用来自动跟踪 seller 所有 channel 状态，并按配置规则响应。
+
+入口：
+
+```text
+drop-cli daemon run
+drop-cli daemon status
+drop-cli daemon stop
+```
+
+daemon 是单机本地进程，不要求高可用。它必须用 DB lock 防止和 TUI/CLI 同时处理同一 thread。
+
+配置示例：
+
+```toml
+[daemon]
+enabled = true
+poll_interval_secs = 30
+warning_interval_secs = 300
+max_concurrent_threads = 1
+
+[daemon.channels]
+auto_discover = true
+include = []
+exclude = []
+
+[daemon.policy]
+auto_respond = false
+auto_fulfill = false
+auto_settle = false
+auto_trigger_oracle = true
+require_manual_approval_for_proof = true
+require_manual_approval_for_settle = true
+
+[daemon.batch]
+max_purchases_per_thread = 16
+max_thread_wait_secs = 120
+only_batch_same_sale = true
+
+[daemon.limits]
+min_seller_eth_wei = "10000000000000000"
+min_oracle_relayer_eth_ok = true
+max_pending_tx_age_secs = 600
+max_oracle_wait_secs = 900
+
+[daemon.scan]
+use_subgraph = true
+fallback_rpc_logs = true
+purchase_refresh_secs = 20
+sale_refresh_secs = 60
+walrus_refresh_secs = 120
+oracle_refresh_secs = 30
+```
+
+刷新职责：
+
+- 定期发现 seller channel。
+- 定期扫描 channel 上的新 purchase。
+- 按 batch 规则判断哪些 purchase 可以一起响应；默认只提示 seller，不自动响应。
+- 刷新 pending tx receipt。
+- 刷新 VDD/VSS proof 状态。
+- 刷新 Oracle request/report 状态。
+- 刷新 Walrus blob active/expired。
+- 生成 warning。
+
+自动响应规则：
+
+- `auto_respond=false` 时，只发现 purchase 和生成 warning，由 seller 在 TUI/CLI 中选择是否响应。
+- `auto_respond=true` 时，daemon 可按同一 channel/sale、时间窗口、数量阈值自动选择 purchase 并创建 thread。
+- `auto_fulfill=false` 时，只维护待处理 thread 和 warning，由 TUI/CLI 人工执行。
+- `auto_fulfill=true` 时，可自动执行 thread 的 fulfill，但如果需要新的 SP1 proof 且 `require_manual_approval_for_proof=true`，必须阻塞等待确认。
+- `auto_settle=false` 时，只提示可 settle。
+- `auto_settle=true` 时，可对 thread 中满足 `vddVerified && isPrivy && oracleSuccessUntil valid` 的 purchase 自动 settle。
+- Oracle Worker trigger 可以默认自动，因为它不使用 seller 私钥，但仍需记录 report tx 和 warning。
+
+warning 类型：
+
+- seller ETH 余额低。
+- Oracle Worker relayer 余额不足或有 pending tx。
+- Walrus blob 已过期或即将过期。
+- purchase 等待 fulfill 超时。
+- oracle request 等待 report 超时。
+- settle 条件满足但长时间未执行。
+- tx pending 时间过长。
+- proof request failed。
+- DB lock 过期或 thread 状态不一致。
+- subgraph lagging，已切回 RPC logs。
+
+#### CLI 三层操作面
+
+CLI 必须同时提供三套操作方式。三套方式调用同一套 SDK workflow 和数据库状态机，不能各自维护一套逻辑。
+
+第一层是 primitive 命令：每个命令只做一次底层动作，便于调试、定位和恢复。
+
+```text
+drop-cli db init
+drop-cli db migrate
+drop-cli db inspect
+
+drop-cli channel list
+drop-cli channel show <channel>
+drop-cli channel sync
+drop-cli channel watch <channel>
+drop-cli channel create
+
+drop-cli sale list [--channel <channel>]
+drop-cli sale show <sale-id>
+
+drop-cli purchase list [--channel <addr>] [--sale <id>]
+drop-cli purchase show <purchase-tx>
+drop-cli purchase settle <purchase-tx>
+
+drop-cli asset prepare <file>
+drop-cli asset upload <sale-id>
+drop-cli sale list <sale-id>
+drop-cli proof vdd <sale-id>
+drop-cli proof vss <thread-id>
+drop-cli fulfill <thread-id>
+drop-cli oracle fulfill <tx-hash>
+drop-cli settle <purchase-tx>
+
+drop-cli thread list [--channel <addr>] [--sale <id>]
+drop-cli thread show <thread-id>
+drop-cli thread cancel <thread-id>
+```
+
+primitive 命令规则：
+
+- 可以发单笔链上交易、上传一次 Walrus、请求一次证明、触发一次 Oracle Worker。
+- 每次资源消耗动作都必须有确认或显式 `--yes`。
+- 不自动选择 purchase batch。
+- 不自动推进下一阶段。
+- 写入 DB，供 phase、TUI、daemon 继续识别。
+
+第二层是 phase 复合命令：把一个阶段里 seller 通常需要连续做的 primitive 串起来。
+
+```text
+drop-cli phase prepare <file>
+drop-cli phase publish <sale-id>
+drop-cli phase prove-sale <sale-id>
+drop-cli phase respond <purchase-tx>...
+drop-cli phase fulfill <thread-id>
+drop-cli phase settle <thread-id>
+drop-cli phase verify <sale-id|thread-id>
+```
+
+phase 命令规则：
+
+- `phase prepare`: 本地准备，不上传、不发交易、不证明。
+- `phase publish`: upload Walrus、create channel if needed、list sale、submit VDD proof。
+- `phase respond <purchase-tx>...`: seller 选择响应一批 purchase，CLI 自动创建或复用 thread，但不要求 seller 手动创建 thread。
+- `phase fulfill <thread-id>`: 为 thread 生成 VSS proof，提交 fulfill，触发必要 oracle request。
+- `phase settle <thread-id>`: 刷新 oracle signal，对满足条件的 purchase 执行 settle。
+- 每个 phase 必须能从 DB 中识别已完成步骤，不重复发 confirmed tx。
+- Prove Network 失败后停止，不自动重试。
+
+对象发现和 id 获取规则：
+
+- `purchase-tx` 来自 `drop-cli purchase list` 或 `drop-cli purchase show`。
+- `thread-id` 来自 `drop-cli phase respond <purchase-tx>...` 的输出，或来自 `drop-cli thread list`。
+- seller 不应该被要求凭记忆输入 id；每个 list/show/phase 命令都必须打印下一步建议。
+- `phase respond` 必须输出它创建或复用的 thread：
+
+```text
+thread: th_20260630_000001
+channel: 0x...
+sale: 0x...
+purchases: 2
+next: drop-cli phase fulfill th_20260630_000001
+```
+
+推荐手动运营路径：
+
+```text
+drop-cli channel list
+drop-cli sale list --channel <channel>
+drop-cli purchase list --channel <channel> --sale <sale-id> --status paid
+drop-cli phase respond <purchase-tx-1> <purchase-tx-2>
+drop-cli thread show <thread-id>
+drop-cli phase fulfill <thread-id>
+drop-cli thread show <thread-id>
+drop-cli phase settle <thread-id>
+drop-cli thread show <thread-id>
+```
+
+`thread show <thread-id>` 必须展示：
+
+- thread id、channel、sale、status、next action。
+- thread 内 purchase 列表：tx hash、buyer、amount、purchase 状态、settle 状态。
+- VSS proof 状态：not requested / proving / ready / failed。
+- fulfill 状态：tx hash、receipt、是否发出 `DataKeyShared`。
+- oracle 状态：request tx、report tx、success window、失败原因。
+- settle 状态：每个 purchase 的 settle tx、confirmed/reverted/pending。
+- partial success：例如 10 个 purchase 中 8 个 settled、1 个 oracle pending、1 个 blocked。
+
+第三层是 daemon：定期自动发现 purchase，并按规则自动划分 batch、自动维护 thread。
+
+```text
+drop-cli daemon run
+drop-cli daemon status
+drop-cli daemon check
+drop-cli tui
+```
+
+daemon 操作规则：
+
+- 定期同步 channel/sale/purchase 状态。
+- 按配置自动把购买请求划分 batch。
+- batch 命中后自动创建或更新 thread。
+- 是否自动证明、fulfill、settle 由配置决定。
+- 默认不自动发 seller 交易、不自动请求证明，只生成 thread 建议和 warning。
+
+TUI 是这三层之上的交互界面：
+
+- 可以直接调用 primitive 动作。
+- 可以触发 phase 复合动作。
+- 可以查看 daemon 自动维护的 thread 和 warning。
+
+不把 `thread resume` 作为主命令。原因：
+
+- thread 不是用户手动创建的对象，用户不应该需要“恢复一个抽象 thread”才能继续。
+- 正常恢复入口应该是 `phase fulfill <thread-id>`、`phase settle <thread-id>` 或 TUI 中的 continue action。
+- 如果实现层需要 `thread resume`，只能作为 debug/maintainer 命令，含义是：读取 DB 中一个 `blocked/failed` thread，刷新链上 receipt、proof、oracle 状态，计算下一步，不默认发交易、不请求证明。
+
+可选 debug 命令：
+
+```text
+drop-cli debug thread resume <thread-id>
+```
+
+`debug thread resume` 不进入普通 seller CLI 主流程。
+
+#### 当前已有命令的处理
+
+- `status <sale-id>` 保留，但数据源逐步从 JSON state 切到 DB。
+- `next <sale-id>` 保留，但基于 purchase / thread / DB 状态给建议。
+- `purchase fulfill <purchase-tx>` 不作为主入口；fulfill 应通过 thread 执行，因为一次 VSS 可以覆盖多个 purchase。
+- `purchase settle <purchase-tx>` 可以保留为 primitive 调试命令，但 TUI/daemon 应通过 thread 展示和驱动 settle。
+- `phase complete-test-flow` 保留到 full-flow 脚本迁移完成，不作为长期公开命令。
+- `test-drop-cli-full-flow.sh` 继续作为回归测试入口；迁移期间必须同时支持旧 state 或提供兼容层。
+
+#### 与 `test-drop-cli-full-flow.sh` 的兼容要求
+
+这条脚本已经证明当前全流程闭合，后续重构必须保护它：
+
+- 每次改 `drop-cli` workflow、DB、proof、oracle、settle 相关逻辑，都必须先跑轻量编译和脚本静态检查。
+- 未经用户批准，不重新执行会消耗资源的 full-flow。
+- 实施 DB 后，脚本应使用独立临时 DB：
+
+```text
+DROP_CLI_DB=$RUN_DIR/drop.sqlite
+DROP_CLI_STATE_DIR=$RUN_DIR/state
+```
+
+- 迁移阶段允许双写：DB 为主，JSON state 作为兼容输出。
+- 当 DB 路径完全稳定后，再删除 JSON state 依赖。
+- full-flow 脚本最终仍要验证：
+  - Walrus blob active。
+  - VDD proof 上链。
+  - buyer purchase 上链。
+  - seller fulfill 上链。
+  - Oracle Worker report 上链。
+  - seller settle 上链。
+  - recovered asset hash 与原文件一致。
+
+2026-06-30 本轮新增功能实施记录：
+
+- 保留 `phase complete-test-flow <sale-id> --yes` 原型兼容路径，未改动其 bridge 逻辑。
+- 新增 JSON 轻量 store 作为 SQLite 前的兼容实现：
+  - `SaleState` 继续保留在 `DROP_CLI_STATE_DIR/*.json`。
+  - `ThreadState` 新增到 `DROP_CLI_STATE_DIR/threads/*.json`。
+  - 后续迁移 SQLite 时必须保持 CLI 命令语义不变。
+- 新增 `drop-cli db init|migrate|inspect`：
+  - 当前初始化 state/thread 目录。
+  - `inspect` 输出本地 sale/thread/purchase 数量。
+- 新增本地对象发现命令：
+  - `drop-cli channel list`
+  - `drop-cli channel show <channel>`
+  - `drop-cli sale list [--channel <channel>]`
+  - `drop-cli sale show <sale-id>`
+  - `drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]`
+  - `drop-cli purchase show <purchase-tx>`
+  - `drop-cli thread list [--channel <channel>] [--sale <sale-id>]`
+  - `drop-cli thread show <thread-id>`
+  - `drop-cli thread cancel <thread-id>`
+- 新增 phase thread 入口：
+  - `drop-cli phase respond <purchase-tx>...`
+  - `drop-cli phase fulfill <thread-id>`
+  - `drop-cli phase settle <thread-id>`
+- 当前限制：
+  - `purchase list/show` 先基于本地 state 中已记录的 purchase tx，不主动扫全链 purchase event。
+  - `phase respond` 可基于本地 purchase tx 自动创建或复用 thread，并输出 thread id。
+  - 对已经 settled 的 purchase，thread 会直接显示 `Completed`，并展示 fulfill/settle tx。
+  - native batch VSS fulfill / native thread settle 尚未替代 `complete-test-flow` bridge；未完成路径会标记 `Blocked`，不伪造链上交易。
+- 已用上次 full-flow run dir 验证：
+  - `drop-cli db inspect`
+  - `drop-cli sale list`
+  - `drop-cli purchase list`
+  - `drop-cli phase respond <purchase-tx>`
+  - `drop-cli thread list`
+  - `drop-cli thread show <thread-id>`
+  - `drop-cli phase fulfill <thread-id>` 对 completed thread 幂等。
+  - `drop-cli phase settle <thread-id>` 对 completed thread 幂等。
+- 本轮未重跑 `test-drop-cli-full-flow.sh` 的原因：
+  - 脚本文件没有代码 diff。
+  - `phase complete-test-flow` 兼容入口仍存在，且无 `--yes` 时仍只打印 gate，不执行资源消耗动作。
+  - 本轮新增的是本地对象发现/thread JSON 管理和幂等展示，没有改 Walrus 上传、链上交易、Prove Network、Oracle Worker 或 recover hash 逻辑。
+  - 已执行 `bash -n drop-cli/scripts/test-drop-cli-full-flow.sh` 通过。
+
+2026-06-30 产品化缺口复盘：
+
+当前 `drop-cli` 还不能视为功能全部完成。已跑通的是 prototype full-flow 和本地对象管理雏形，不是完整 seller CLI。
+
+功能不达标项：
+
+- `phase fulfill <thread-id>` 尚未实现 native batch VSS + fulfill；未完成 thread 会标记 `Blocked`。
+- `phase settle <thread-id>` 尚未实现 native thread settle；缺少 purchase exchange info、buyer、data commitment、oracle success window 等持久化信息。
+- `proof vss/vdd` 仍是 planned 提示，不是 CLI 内置 Prove Network flow。
+- `settle <sale-id>`、`recover-test <sale-id>` 仍是 planned 提示。
+- `tx resume` 不是真 resume，只提示 status。
+- `purchase list/show` 只读取本地 state 已记录的 purchase，不主动扫链上 event 或 subgraph。
+- `channel sync/watch` 在设计中存在，但代码未实现。
+- TUI 未实现。
+- daemon 未实现。
+- SQLite 未实现；当前只是 JSON 兼容 store。
+- `phase complete-test-flow` 仍依赖 `drop-script/src/bin/resume_drop_cli_sale.rs` bridge，不是产品化 CLI 主流程。
+
+密钥管理不达标项：
+
+- `SELLER_KEY` / `PRIVATE_KEY` 直接从明文 `.env` 读取。
+- `ORACLE_WORKER_TOKEN` 直接从明文 `.env` 读取。
+- `test-drop-cli-full-flow.sh` 会把 `.env` 复制到 `/tmp/.../drop-cli.env`，包含私钥和 token。
+- `ASSET_ENCRYPTION_KEY` 缺失时默认 `[0x22; 32]`。
+- `OWNER_SECRET_KEY` 缺失时默认 `[0x11; 32]`。
+- 没有 keystore、系统 keyring、硬件钱包、加密配置文件或权限检查。
+- 没有 key rotation / per-sale data key 生成策略。
+- 没有统一 secret redaction 层。
+- `drop-script` 仍有调试输出会打印 `asset_encryption_key`、VSS key 等 secret；`complete-test-flow` bridge 仍会经过这条路径。
+
+产品级补齐标准：
+
+- 不再默认使用固定 key。
+- 不把私钥/token 复制到 `/tmp`。
+- seller key 支持 keystore / wallet / signer abstraction，至少在 CLI 层不再把明文私钥写入生成文件。
+- asset key 每个 sale 生成，开发期可明文保存但必须显式 `--dev-insecure-store-keys` 或配置开启。
+- SP1 key、oracle token、wallet key 分开管理。
+- 所有日志统一做 secret redaction。
+- `doctor` 检查配置文件权限，发现 group/world readable secret env 时 warning。
+- bridge 迁出或禁止任何 secret debug print。
+- 新增功能必须保持 `test-drop-cli-full-flow.sh` 可用，直到 native CLI flow 完全替代 bridge。
+
+#### 架构测试要求
+
+不需要跑 live full-flow，也必须给新架构配测试。
+
+单元测试：
+
+- DB migration 从空库初始化。
+- repository CRUD：channel/sale/purchase/thread/tx/warning。
+- purchase 状态机：detected/paid/queued/fulfilled/oracle_pending/settle_ready/settled/blocked。
+- thread 状态机：collecting/ready/proving_vss/vss_ready/fulfilling/fulfilled/oracle_pending/settle_ready/settling/completed/blocked/failed。
+- batch policy：同一 channel/sale 的 purchase 可以进入同一个 thread，不同 sale 默认不能混批。
+- policy 判断：哪些 purchase 可以 auto fulfill，哪些必须人工确认。
+- warning 生成：余额低、pending tx 超时、oracle 超时、Walrus 过期。
+- secret redaction：任何输出不得包含 private key/token。
+
+集成测试：
+
+- mock RPC logs，测试 channel sync 和 purchase discovery。
+- mock receipt，测试 pending/confirmed/reverted/replaced。
+- mock Oracle Worker，测试 fulfill/report 状态。
+- mock Walrus blob status，测试 active/expired/not found。
+- 使用临时 SQLite，测试 daemon tick 幂等性。
+- TUI 使用 snapshot 或 view-model 测试，不依赖真实终端交互；重点测试 channel -> sale -> purchases -> thread 的展示层级。
+
+回归测试：
+
+- `cargo check -p drop-sdk`
+- `cargo check -p drop-cli`
+- `cargo check -p drop-script`
+- `bash -n drop-cli/scripts/test-drop-cli-full-flow.sh`
+- 在用户批准 live test 时，再跑 `test-drop-cli-full-flow.sh`。
+
+验收标准：
+
+- 旧 full-flow 脚本功能不退化。
+- TUI 可以按 channel/sale 列出 purchases、threads 和 warnings。
+- TUI 可以把多个 purchase 组织成一个 thread，并清楚展示 VSS/fulfill/oracle/settle 进度。
+- daemon 可以只读同步 channel 状态并生成 warning。
+- daemon 在默认配置下不自动响应 purchase、不自动发 seller 交易、不自动请求证明。
+- 开启 `auto_fulfill/auto_settle` 后，仍遵守证明失败停止、tx 幂等、DB lock 和人工确认策略。
+
 ## 测试验收标准
 
 ## 当前实施记录

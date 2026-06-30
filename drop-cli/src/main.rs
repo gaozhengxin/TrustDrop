@@ -5,7 +5,11 @@ use drop_sdk::{
     chacha8::chacha8_encrypt,
     config::DropCliConfig,
     oracle::OracleWorkerClient,
-    state::{default_state_dir, load_sale_state, save_sale_state, SaleState, TxRecord, TxStatus},
+    state::{
+        default_state_dir, load_all_sale_states, load_all_thread_states, load_sale_state,
+        load_thread_state, save_sale_state, save_thread_state, thread_state_dir, SaleState,
+        ThreadPurchase, ThreadState, ThreadStatus, TxRecord, TxStatus,
+    },
     walrus::compute_rs_id,
 };
 use ethers::abi::RawLog;
@@ -41,6 +45,7 @@ async fn run() -> Result<()> {
 
     match args[0].as_str() {
         "init" => cmd_init(&args[1..]),
+        "db" => cmd_db(&args[1..]),
         "doctor" => cmd_doctor().await,
         "status" => cmd_status(&args[1..]).await,
         "next" => cmd_next(&args[1..]).await,
@@ -53,6 +58,9 @@ async fn run() -> Result<()> {
         "recover-test" => cmd_recover_test(&args[1..]).await,
         "phase" => cmd_phase(&args[1..]).await,
         "tx" => cmd_tx(&args[1..]).await,
+        "thread" => cmd_thread(&args[1..]).await,
+        "purchase" => cmd_purchase(&args[1..]).await,
+        "debug" => cmd_debug(&args[1..]).await,
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -67,27 +75,37 @@ fn print_help() {
 
 Usage:
   drop-cli init
+  drop-cli db init|migrate|inspect
   drop-cli doctor
   drop-cli status <sale-id>
   drop-cli next <sale-id>
   drop-cli oracle check <sale-id|--blob-id <id>|--c-cipher <0x...>>
   drop-cli asset prepare <file>
   drop-cli asset upload <sale-id>
-  drop-cli channel create
-  drop-cli sale list <sale-id>
+  drop-cli channel list|show <channel>|create
+  drop-cli sale list [--channel <channel>] | show <sale-id>
+  drop-cli sale list <sale-id> --yes
   drop-cli sale submit-key-commitment <sale-id>
+  drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]
+  drop-cli purchase show <purchase-tx>
   drop-cli proof vss <sale-id>
   drop-cli proof vdd <sale-id>
   drop-cli settle <sale-id>
+  drop-cli thread list [--channel <channel>] [--sale <sale-id>]
+  drop-cli thread show <thread-id>
+  drop-cli thread cancel <thread-id>
   drop-cli recover-test <sale-id>
   drop-cli phase prepare <file>
   drop-cli phase publish <sale-id>
   drop-cli phase complete-test-flow <sale-id>
+  drop-cli phase respond <purchase-tx>...
+  drop-cli phase fulfill <thread-id>
+  drop-cli phase settle <thread-id|sale-id>
   drop-cli phase prove <sale-id>
-  drop-cli phase settle <sale-id>
   drop-cli phase verify <sale-id>
   drop-cli tx status <tx-hash>
   drop-cli tx resume <sale-id>
+  drop-cli debug thread resume <thread-id>
 
 Prototype target:
   Arbitrum Sepolia + centralized Oracle Worker.
@@ -99,10 +117,39 @@ fn cmd_init(_args: &[String]) -> Result<()> {
     let config = load_config()?;
     let dir = state_dir(&config)?;
     fs::create_dir_all(&dir)?;
+    fs::create_dir_all(thread_state_dir(&dir))?;
     println!("created state dir: {}", dir.display());
+    println!("created thread dir: {}", thread_state_dir(&dir).display());
     println!("config source for prototype: {}", config_source());
     println!("next: drop-cli doctor");
     Ok(())
+}
+
+fn cmd_db(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("init") | Some("migrate") => {
+            let config = load_config()?;
+            let dir = state_dir(&config)?;
+            fs::create_dir_all(&dir)?;
+            fs::create_dir_all(thread_state_dir(&dir))?;
+            println!("stateDir: {}", dir.display());
+            println!("threadDir: {}", thread_state_dir(&dir).display());
+            println!("status: ready");
+            Ok(())
+        }
+        Some("inspect") => {
+            let config = load_config()?;
+            let dir = state_dir(&config)?;
+            let sales = load_all_sale_states(&dir)?;
+            let threads = load_all_thread_states(&dir)?;
+            println!("stateDir: {}", dir.display());
+            println!("sales: {}", sales.len());
+            println!("threads: {}", threads.len());
+            println!("purchases: {}", collect_purchases(&sales).len());
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli db init|migrate|inspect"),
+    }
 }
 
 async fn cmd_doctor() -> Result<()> {
@@ -463,6 +510,47 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
 
 async fn cmd_channel(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
+        Some("list") => {
+            let config = load_config()?;
+            let states = load_all_sale_states(state_dir(&config)?)?;
+            let mut channels = Vec::<String>::new();
+            for state in states {
+                if let Some(channel) = state.channel_address {
+                    if !channels.iter().any(|known| known.eq_ignore_ascii_case(&channel)) {
+                        channels.push(channel);
+                    }
+                }
+            }
+            if channels.is_empty() {
+                println!("No channels recorded locally.");
+                println!("next: drop-cli phase publish <sale-id> --yes");
+            } else {
+                for channel in channels {
+                    println!("channel: {channel}");
+                    println!("next: drop-cli channel show {channel}");
+                }
+            }
+            Ok(())
+        }
+        Some("show") => {
+            let channel = require_arg(&args[1..], "channel")?;
+            let config = load_config()?;
+            let states = load_all_sale_states(state_dir(&config)?)?;
+            println!("channel: {channel}");
+            for state in states.iter().filter(|state| {
+                state
+                    .channel_address
+                    .as_deref()
+                    .map(|value| value.eq_ignore_ascii_case(channel))
+                    .unwrap_or(false)
+            }) {
+                println!("  sale: {}", state.sale_id);
+                println!("    walrusBlobId: {}", state.walrus_blob_id.as_deref().unwrap_or("-"));
+                println!("    next: {}", infer_next_action(state).trim_start_matches("next: "));
+            }
+            println!("next: drop-cli purchase list --channel {channel}");
+            Ok(())
+        }
         Some("create") => {
             let sale_id = args
                 .get(1)
@@ -476,20 +564,34 @@ async fn cmd_channel(args: &[String]) -> Result<()> {
             channel_create(sale_id).await?;
             Ok(())
         }
-        _ => bail!("usage: drop-cli channel create [sale-id] --yes"),
+        _ => bail!("usage: drop-cli channel list | channel show <channel> | channel create [sale-id] --yes"),
     }
 }
 
 async fn cmd_sale(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("list") => {
-            let sale_id = require_arg(&args[1..], "sale-id")?;
-            if !has_flag(args, "--yes") {
-                println!("sale list requires --yes to send an Arbitrum Sepolia transaction.");
+            let maybe_sale_id = args
+                .get(1)
+                .filter(|value| !value.starts_with("--"))
+                .map(String::as_str);
+            if has_flag(args, "--yes") {
+                let sale_id = maybe_sale_id.ok_or_else(|| anyhow!("missing sale-id"))?;
+                sale_list(sale_id).await?;
+            } else if let Some(sale_id) = maybe_sale_id {
+                println!("sale list <sale-id> requires --yes to send an Arbitrum Sepolia transaction.");
                 println!("usage: drop-cli sale list <sale-id> --yes");
-                return Ok(());
+                println!("for local sale details use: drop-cli sale show {sale_id}");
+            } else {
+                list_sales(args)?;
             }
-            sale_list(sale_id).await?;
+            Ok(())
+        }
+        Some("show") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            let config = load_config()?;
+            let state = load_sale_state(state_dir(&config)?, sale_id)?;
+            print_state(&state);
             Ok(())
         }
         Some("submit-key-commitment") => {
@@ -504,7 +606,70 @@ async fn cmd_sale(args: &[String]) -> Result<()> {
             sale_submit_key_commitment(sale_id).await?;
             Ok(())
         }
-        _ => bail!("usage: drop-cli sale list <sale-id> --yes | sale submit-key-commitment <sale-id> --yes"),
+        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale submit-key-commitment <sale-id> --yes"),
+    }
+}
+
+async fn cmd_purchase(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("list") => list_purchases(args),
+        Some("show") => {
+            let tx_hash = require_arg(&args[1..], "purchase-tx")?;
+            let config = load_config()?;
+            let states = load_all_sale_states(state_dir(&config)?)?;
+            let purchase = collect_purchases(&states)
+                .into_iter()
+                .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx_hash))
+                .ok_or_else(|| anyhow!("purchase not found in local state: {tx_hash}"))?;
+            print_purchase(&purchase);
+            println!("next: drop-cli phase respond {}", purchase.purchase_tx_hash);
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>] | purchase show <purchase-tx>"),
+    }
+}
+
+async fn cmd_thread(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("list") => list_threads(args),
+        Some("show") => {
+            let thread_id = require_arg(&args[1..], "thread-id")?;
+            let config = load_config()?;
+            let thread = load_thread_state(state_dir(&config)?, thread_id)?;
+            print_thread(&thread);
+            Ok(())
+        }
+        Some("cancel") => {
+            let thread_id = require_arg(&args[1..], "thread-id")?;
+            let config = load_config()?;
+            let state_dir = state_dir(&config)?;
+            let mut thread = load_thread_state(&state_dir, thread_id)?;
+            thread.status = ThreadStatus::Canceled;
+            thread.updated_at = unix_timestamp_string();
+            thread.next_actions = Vec::new();
+            save_thread_state(state_dir, &thread)?;
+            println!("thread: {}", thread.thread_id);
+            println!("status: canceled");
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli thread list [--channel <channel>] [--sale <sale-id>] | thread show <thread-id> | thread cancel <thread-id>"),
+    }
+}
+
+async fn cmd_debug(args: &[String]) -> Result<()> {
+    match (
+        args.first().map(String::as_str),
+        args.get(1).map(String::as_str),
+    ) {
+        (Some("thread"), Some("resume")) => {
+            let thread_id = require_arg(&args[2..], "thread-id")?;
+            let config = load_config()?;
+            let thread = load_thread_state(state_dir(&config)?, thread_id)?;
+            println!("debug thread resume only refreshes local state and prints next action.");
+            print_thread(&thread);
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli debug thread resume <thread-id>"),
     }
 }
 
@@ -568,14 +733,29 @@ async fn cmd_phase(args: &[String]) -> Result<()> {
             }
             complete_test_flow(sale_id).await
         }
-        Some("prove") | Some("settle") | Some("verify") => {
+        Some("respond") => phase_respond(&args[1..]),
+        Some("fulfill") => {
+            let thread_id = require_arg(&args[1..], "thread-id")?;
+            phase_fulfill(thread_id)
+        }
+        Some("settle") => {
+            let id = require_arg(&args[1..], "thread-id|sale-id")?;
+            if load_thread_state(state_dir(&load_config()?)?, id).is_ok() {
+                phase_settle(id)
+            } else {
+                println!("phase settle is planned but not implemented yet for sale {id}");
+                println!("next: drop-cli status {id}");
+                Ok(())
+            }
+        }
+        Some("prove") | Some("verify") => {
             let phase = args[0].as_str();
             let sale_id = require_arg(&args[1..], "sale-id")?;
             println!("phase {phase} is planned but not implemented yet for {sale_id}");
             println!("next: drop-cli status {sale_id}");
             Ok(())
         }
-        _ => bail!("usage: drop-cli phase prepare <file> | publish|complete-test-flow|prove|settle|verify <sale-id>"),
+        _ => bail!("usage: drop-cli phase prepare <file> | publish|complete-test-flow|prove|settle|verify <sale-id> | respond <purchase-tx>... | fulfill <thread-id>"),
     }
 }
 
@@ -606,6 +786,417 @@ async fn cmd_tx(args: &[String]) -> Result<()> {
             Ok(())
         }
         _ => bail!("usage: drop-cli tx status <tx-hash> | tx resume <sale-id>"),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PurchaseView {
+    purchase_tx_hash: String,
+    sale_id: String,
+    channel_address: Option<String>,
+    buyer: Option<String>,
+    status: String,
+    settle_tx_hash: Option<String>,
+}
+
+fn list_sales(args: &[String]) -> Result<()> {
+    let config = load_config()?;
+    let channel_filter = flag_value(args, "--channel");
+    let states = load_all_sale_states(state_dir(&config)?)?;
+    let mut count = 0usize;
+    for state in states.iter().filter(|state| {
+        channel_filter
+            .map(|channel| {
+                state
+                    .channel_address
+                    .as_deref()
+                    .map(|value| value.eq_ignore_ascii_case(channel))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true)
+    }) {
+        count += 1;
+        println!("saleId: {}", state.sale_id);
+        println!(
+            "  channel: {}",
+            state.channel_address.as_deref().unwrap_or("-")
+        );
+        println!(
+            "  walrusBlobId: {}",
+            state.walrus_blob_id.as_deref().unwrap_or("-")
+        );
+        println!(
+            "  dataVersion: {}",
+            state.data_version.as_deref().unwrap_or("-")
+        );
+        println!("  next: drop-cli sale show {}", state.sale_id);
+    }
+    if count == 0 {
+        println!("No local sales found.");
+        println!("next: drop-cli phase prepare <file>");
+    }
+    Ok(())
+}
+
+fn list_purchases(args: &[String]) -> Result<()> {
+    let config = load_config()?;
+    let states = load_all_sale_states(state_dir(&config)?)?;
+    let channel_filter = flag_value(args, "--channel");
+    let sale_filter = flag_value(args, "--sale");
+    let status_filter = flag_value(args, "--status");
+    let purchases = collect_purchases(&states);
+    let mut count = 0usize;
+    for purchase in purchases.iter().filter(|purchase| {
+        channel_filter
+            .map(|channel| {
+                purchase
+                    .channel_address
+                    .as_deref()
+                    .map(|value| value.eq_ignore_ascii_case(channel))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true)
+            && sale_filter
+                .map(|sale| purchase.sale_id.eq_ignore_ascii_case(sale))
+                .unwrap_or(true)
+            && status_filter
+                .map(|status| purchase.status.eq_ignore_ascii_case(status))
+                .unwrap_or(true)
+    }) {
+        count += 1;
+        println!("purchaseTx: {}", purchase.purchase_tx_hash);
+        println!("  saleId: {}", purchase.sale_id);
+        println!(
+            "  channel: {}",
+            purchase.channel_address.as_deref().unwrap_or("-")
+        );
+        println!("  status: {}", purchase.status);
+        println!(
+            "  next: drop-cli purchase show {}",
+            purchase.purchase_tx_hash
+        );
+    }
+    if count == 0 {
+        println!("No local purchases found.");
+        println!("Purchases are recorded after buyer purchase is observed by a flow.");
+    }
+    Ok(())
+}
+
+fn list_threads(args: &[String]) -> Result<()> {
+    let config = load_config()?;
+    let threads = load_all_thread_states(state_dir(&config)?)?;
+    let channel_filter = flag_value(args, "--channel");
+    let sale_filter = flag_value(args, "--sale");
+    let mut count = 0usize;
+    for thread in threads.iter().filter(|thread| {
+        channel_filter
+            .map(|channel| {
+                thread
+                    .channel_address
+                    .as_deref()
+                    .map(|value| value.eq_ignore_ascii_case(channel))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true)
+            && sale_filter
+                .map(|sale| thread.sale_id.eq_ignore_ascii_case(sale))
+                .unwrap_or(true)
+    }) {
+        count += 1;
+        println!("thread: {}", thread.thread_id);
+        println!("  saleId: {}", thread.sale_id);
+        println!(
+            "  channel: {}",
+            thread.channel_address.as_deref().unwrap_or("-")
+        );
+        println!("  status: {:?}", thread.status);
+        println!("  purchases: {}", thread.purchases.len());
+        println!("  next: drop-cli thread show {}", thread.thread_id);
+    }
+    if count == 0 {
+        println!("No local threads found.");
+        println!("next: drop-cli purchase list");
+    }
+    Ok(())
+}
+
+fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
+    let mut purchases = Vec::new();
+    for state in states {
+        let settle_tx_hash = confirmed_tx_hash(state, "settle");
+        for tx in state
+            .transactions
+            .iter()
+            .filter(|tx| tx.kind == "purchase" && tx.tx_hash.is_some())
+        {
+            let status = if settle_tx_hash.is_some() {
+                "settled"
+            } else if has_confirmed_tx(state, "fulfill") {
+                "fulfilled"
+            } else {
+                "paid"
+            };
+            purchases.push(PurchaseView {
+                purchase_tx_hash: tx.tx_hash.clone().unwrap_or_default(),
+                sale_id: state.sale_id.clone(),
+                channel_address: state.channel_address.clone(),
+                buyer: None,
+                status: status.to_string(),
+                settle_tx_hash: settle_tx_hash.clone(),
+            });
+        }
+    }
+    purchases.sort_by(|left, right| left.purchase_tx_hash.cmp(&right.purchase_tx_hash));
+    purchases
+}
+
+fn print_purchase(purchase: &PurchaseView) {
+    println!("purchaseTx: {}", purchase.purchase_tx_hash);
+    println!("saleId: {}", purchase.sale_id);
+    println!(
+        "channel: {}",
+        purchase.channel_address.as_deref().unwrap_or("-")
+    );
+    println!("buyer: {}", purchase.buyer.as_deref().unwrap_or("-"));
+    println!("status: {}", purchase.status);
+    println!(
+        "settleTx: {}",
+        purchase.settle_tx_hash.as_deref().unwrap_or("-")
+    );
+}
+
+fn phase_respond(purchase_txs: &[String]) -> Result<()> {
+    if purchase_txs.is_empty() {
+        bail!("usage: drop-cli phase respond <purchase-tx>...");
+    }
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let states = load_all_sale_states(&state_dir)?;
+    let purchases = collect_purchases(&states);
+    let mut selected = Vec::new();
+    for tx in purchase_txs {
+        let purchase = purchases
+            .iter()
+            .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx))
+            .ok_or_else(|| anyhow!("purchase not found in local state: {tx}"))?;
+        selected.push(purchase.clone());
+    }
+    let first = selected
+        .first()
+        .ok_or_else(|| anyhow!("at least one purchase is required"))?;
+    if selected
+        .iter()
+        .any(|purchase| !purchase.sale_id.eq_ignore_ascii_case(&first.sale_id))
+    {
+        bail!("all purchases in one thread must belong to the same sale");
+    }
+
+    let existing = load_all_thread_states(&state_dir)?
+        .into_iter()
+        .find(|thread| {
+            thread.sale_id.eq_ignore_ascii_case(&first.sale_id)
+                && thread.purchases.iter().any(|thread_purchase| {
+                    selected.iter().any(|purchase| {
+                        thread_purchase
+                            .purchase_tx_hash
+                            .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
+                    })
+                })
+        });
+
+    let mut thread = if let Some(thread) = existing {
+        thread
+    } else {
+        let now = unix_timestamp_string();
+        let thread_id = format!("th_{}", now);
+        let thread_purchases = selected
+            .iter()
+            .map(|purchase| ThreadPurchase {
+                purchase_tx_hash: purchase.purchase_tx_hash.clone(),
+                buyer: purchase.buyer.clone(),
+                sale_id: purchase.sale_id.clone(),
+                status: purchase.status.clone(),
+                settle_tx_hash: purchase.settle_tx_hash.clone(),
+            })
+            .collect();
+        ThreadState::new(
+            thread_id,
+            first.sale_id.clone(),
+            first.channel_address.clone(),
+            thread_purchases,
+            now,
+        )
+    };
+
+    for purchase in selected {
+        if !thread.purchases.iter().any(|thread_purchase| {
+            thread_purchase
+                .purchase_tx_hash
+                .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
+        }) {
+            thread.purchases.push(ThreadPurchase {
+                purchase_tx_hash: purchase.purchase_tx_hash,
+                buyer: purchase.buyer,
+                sale_id: purchase.sale_id,
+                status: purchase.status,
+                settle_tx_hash: purchase.settle_tx_hash,
+            });
+        }
+    }
+    if let Some(sale_state) = states
+        .iter()
+        .find(|state| state.sale_id.eq_ignore_ascii_case(&thread.sale_id))
+    {
+        thread.fulfill_tx_hash = confirmed_tx_hash(sale_state, "fulfill");
+        if let Some(settle_tx_hash) = confirmed_tx_hash(sale_state, "settle") {
+            if !thread
+                .settle_tx_hashes
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(&settle_tx_hash))
+            {
+                thread.settle_tx_hashes.push(settle_tx_hash);
+            }
+        }
+    }
+    if thread.purchases.iter().all(|purchase| {
+        purchase.status == "settled" || purchase.settle_tx_hash.as_deref().is_some()
+    }) {
+        thread.status = ThreadStatus::Completed;
+        thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+    } else if thread.fulfill_tx_hash.is_some() {
+        thread.status = ThreadStatus::Fulfilled;
+        thread.next_actions = vec![format!("drop-cli phase settle {}", thread.thread_id)];
+    } else {
+        thread.next_actions = vec![format!("drop-cli phase fulfill {}", thread.thread_id)];
+    }
+    thread.updated_at = unix_timestamp_string();
+    save_thread_state(&state_dir, &thread)?;
+
+    println!("thread: {}", thread.thread_id);
+    println!(
+        "channel: {}",
+        thread.channel_address.as_deref().unwrap_or("-")
+    );
+    println!("sale: {}", thread.sale_id);
+    println!("purchases: {}", thread.purchases.len());
+    for action in &thread.next_actions {
+        println!("next: {action}");
+    }
+    Ok(())
+}
+
+fn phase_fulfill(thread_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut thread = load_thread_state(&state_dir, thread_id)?;
+    if thread.purchases.iter().all(|purchase| {
+        purchase.status == "settled" || purchase.settle_tx_hash.as_deref().is_some()
+    }) {
+        thread.status = ThreadStatus::Completed;
+        thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+        thread.updated_at = unix_timestamp_string();
+        save_thread_state(&state_dir, &thread)?;
+        print_thread(&thread);
+        return Ok(());
+    }
+    if matches!(
+        thread.status,
+        ThreadStatus::Fulfilled
+            | ThreadStatus::OraclePending
+            | ThreadStatus::SettleReady
+            | ThreadStatus::Settling
+            | ThreadStatus::Completed
+    ) {
+        print_thread(&thread);
+        return Ok(());
+    }
+
+    thread.status = ThreadStatus::Blocked;
+    thread.last_error = Some(
+        "native batch VSS fulfill is not implemented yet; prototype full-flow remains available through phase complete-test-flow".to_string(),
+    );
+    thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+    thread.updated_at = unix_timestamp_string();
+    save_thread_state(&state_dir, &thread)?;
+    print_thread(&thread);
+    Ok(())
+}
+
+fn phase_settle(thread_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut thread = load_thread_state(&state_dir, thread_id)?;
+    if thread.purchases.iter().all(|purchase| {
+        purchase.status == "settled" || purchase.settle_tx_hash.as_deref().is_some()
+    }) {
+        thread.status = ThreadStatus::Completed;
+        thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+        thread.updated_at = unix_timestamp_string();
+        save_thread_state(&state_dir, &thread)?;
+        print_thread(&thread);
+        return Ok(());
+    }
+
+    thread.status = ThreadStatus::Blocked;
+    thread.last_error = Some(
+        "native thread settle requires purchase exchange info persistence and is not implemented yet"
+            .to_string(),
+    );
+    thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+    thread.updated_at = unix_timestamp_string();
+    save_thread_state(&state_dir, &thread)?;
+    print_thread(&thread);
+    Ok(())
+}
+
+fn print_thread(thread: &ThreadState) {
+    println!("thread: {}", thread.thread_id);
+    println!("saleId: {}", thread.sale_id);
+    println!(
+        "channel: {}",
+        thread.channel_address.as_deref().unwrap_or("-")
+    );
+    println!("status: {:?}", thread.status);
+    println!("purchases:");
+    for purchase in &thread.purchases {
+        println!("  - tx: {}", purchase.purchase_tx_hash);
+        println!("    buyer: {}", purchase.buyer.as_deref().unwrap_or("-"));
+        println!("    status: {}", purchase.status);
+        println!(
+            "    settleTx: {}",
+            purchase.settle_tx_hash.as_deref().unwrap_or("-")
+        );
+    }
+    println!(
+        "vssProof: {}",
+        thread.vss_proof_id.as_deref().unwrap_or("-")
+    );
+    println!(
+        "fulfillTx: {}",
+        thread.fulfill_tx_hash.as_deref().unwrap_or("-")
+    );
+    if !thread.oracle_request_ids.is_empty() {
+        println!("oracleRequests:");
+        for request in &thread.oracle_request_ids {
+            println!("  - {request}");
+        }
+    }
+    if !thread.settle_tx_hashes.is_empty() {
+        println!("settleTxs:");
+        for tx_hash in &thread.settle_tx_hashes {
+            println!("  - {tx_hash}");
+        }
+    }
+    if let Some(error) = &thread.last_error {
+        println!("lastError: {error}");
+    }
+    if thread.next_actions.is_empty() {
+        println!("next: drop-cli thread show {}", thread.thread_id);
+    } else {
+        for action in &thread.next_actions {
+            println!("next: {action}");
+        }
     }
 }
 
@@ -796,6 +1387,12 @@ fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|arg| arg == flag)
 }
 
+fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|window| window[0] == flag)
+        .map(|window| window[1].as_str())
+}
+
 fn print_state(state: &SaleState) {
     println!("saleId: {}", state.sale_id);
     println!(
@@ -868,6 +1465,14 @@ fn has_confirmed_tx(state: &SaleState, kind: &str) -> bool {
         .transactions
         .iter()
         .any(|tx| tx.kind == kind && tx.status == TxStatus::Confirmed)
+}
+
+fn confirmed_tx_hash(state: &SaleState, kind: &str) -> Option<String> {
+    state
+        .transactions
+        .iter()
+        .find(|tx| tx.kind == kind && tx.status == TxStatus::Confirmed)
+        .and_then(|tx| tx.tx_hash.clone())
 }
 
 fn load_config() -> Result<DropCliConfig> {
