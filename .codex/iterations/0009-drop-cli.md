@@ -641,11 +641,11 @@ CLI 只负责：
 - 先写清楚架构，等待用户确认后再实施。
 - 不重跑 full-flow。
 - 不破坏 `drop-cli/scripts/test-drop-cli-full-flow.sh` 当前已经跑通的完整功能。
-- 当前 `drop-script/src/bin/resume_drop_cli_sale.rs` 作为已验证 full-flow bridge 暂时保留，直到 `drop-sdk` workflow 和 `drop-cli` 原生命令完全替代它。
+- 当前 bridge binary 已删除；`complete-test-flow` 直接调用 drop-script library。后续仍应继续把 workflow 下沉到 drop-sdk。
 
-#### `resume_drop_cli_sale.rs` 逻辑归属
+#### 已删除 bridge binary 的逻辑归属
 
-`drop-script/src/bin/resume_drop_cli_sale.rs` 当前做了这些事情：
+早期 bridge binary 曾做了这些事情：
 
 - 从 drop-cli state 读取 sale 上下文。
 - 复用 `drop-script` 阶段函数。
@@ -669,11 +669,12 @@ CLI 只负责：
   - 阶段命令调用多个 workflow step。
   - TUI 和 daemon 也只调用 SDK，不直接复用 `drop-script`。
 
-迁移原则：
+当前状态：
 
-- 不能一次性删除 bridge。先用 SDK workflow 复刻其功能，并让 `test-drop-cli-full-flow.sh` 通过。
-- 新路径通过后，再把 full-flow 脚本从 bridge 切换到原生 drop-cli 命令。
-- 最后删除 `resume_drop_cli_sale.rs`，或者把它降级为只调用 `drop-cli` / SDK 的兼容 wrapper。
+- bridge binary 已删除。
+- `drop-cli phase complete-test-flow` 直接调用 `drop-script` library。
+- `drop-cli proof vdd`、`drop-cli proof vss`、`drop-cli settle`、`drop-cli recover-test` 已从 placeholder 改为实际调用已验证阶段函数。
+- 后续仍应继续把这些 workflow 下沉到 `drop-sdk`，让 `drop-script` 只保留脚本层入口。
 
 #### 总体架构
 
@@ -1277,19 +1278,21 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
 
 当前 `drop-cli` 还不能视为功能全部完成。已跑通的是 prototype full-flow 和本地对象管理雏形，不是完整 seller CLI。
 
-功能不达标项：
+功能当前状态：
 
-- `phase fulfill <thread-id>` 尚未实现 native batch VSS + fulfill；未完成 thread 会标记 `Blocked`。
-- `phase settle <thread-id>` 尚未实现 native thread settle；缺少 purchase exchange info、buyer、data commitment、oracle success window 等持久化信息。
-- `proof vss/vdd` 仍是 planned 提示，不是 CLI 内置 Prove Network flow。
-- `settle <sale-id>`、`recover-test <sale-id>` 仍是 planned 提示。
+- `proof vdd <sale-id> --yes` 已调用 VDD Prove Network flow 并提交 `submitVDDProof`。
+- `proof vss <sale-id> --yes` 已对 state 中第一笔 purchase context 执行 VSS fulfill。
+- `settle <sale-id> --yes` 已对 state 中第一笔 purchase 执行 settle。
+- `recover-test <sale-id>` 已基于 purchase context 和 fulfill tx 执行恢复测试。
+- `phase fulfill <thread-id>` 已调用 sale 级 fulfill，但当前只覆盖 thread 中第一笔 purchase；batch VSS 还未产品化。
+- `phase settle <thread-id>` 已调用 sale 级 settle，但当前只覆盖 thread 中第一笔 purchase；多 purchase partial success 还未产品化。
 - `tx resume` 不是真 resume，只提示 status。
 - `purchase list/show` 只读取本地 state 已记录的 purchase，不主动扫链上 event 或 subgraph。
 - `channel sync/watch` 在设计中存在，但代码未实现。
 - TUI 未实现。
 - daemon 未实现。
 - SQLite 未实现；当前只是 JSON 兼容 store。
-- `phase complete-test-flow` 仍依赖 `drop-script/src/bin/resume_drop_cli_sale.rs` bridge，不是产品化 CLI 主流程。
+- `phase complete-test-flow` 已改为直接调用 drop-script library，不再依赖 bridge binary，但仍是 prototype e2e 入口。
 
 密钥管理不达标项：
 
@@ -1301,7 +1304,7 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
 - 没有 keystore、系统 keyring、硬件钱包、加密配置文件或权限检查。
 - 没有 key rotation / per-sale data key 生成策略。
 - 没有统一 secret redaction 层。
-- `drop-script` 仍有调试输出会打印 `asset_encryption_key`、VSS key 等 secret；`complete-test-flow` bridge 仍会经过这条路径。
+- `drop-script` 仍有调试输出会打印 `asset_encryption_key`、VSS key 等 secret；`complete-test-flow` library path 仍会经过这条路径。
 
 产品级补齐标准：
 
@@ -1459,10 +1462,7 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
   - 只从已有 sale state 继续，不重新 prepare、不重新上传 Walrus、不重新创建 channel、不重新 list。
   - 串行执行：`submitDataKeyCommitment -> buyer purchase -> seller fulfill(VSS+VDD) -> centralized oracle worker -> settle`。
   - `drop-cli/scripts/test-drop-cli-full-flow.sh` 新增 `--yes-settle` 开关，可在 full-flow 中显式进入 settlement 阶段。
-- 补充 `drop-script` resume binary：
-  - 路径：`drop-script/src/bin/resume_drop_cli_sale.rs`。
-  - 读取 drop-cli state，构造当前 sale 的 `ListingState`，复用 `drop-script` 阶段函数执行剩余链路。
-  - `drop-script` 新增 `DROP_SCRIPT_INPUT_ASSET` 覆盖项，避免 VDD proof 继续读取硬编码 Apollo 视频，确保 proof 输入来自当前 sale state 的实际资产文件。
+- 当时曾补充过 `drop-script` bridge binary；该过渡文件后来已删除，功能迁移为 `drop-cli` 直接调用 `drop-script` library。
 - 2026-06-29 执行 settlement resume：
   - 已发送 `submitDataKeyCommitment` tx: `0xcc2b81c714320d2f6b50c13684517df69c220099771033bdc1fe6ded15954eaa`
   - 已发送 buyer `purchase` tx: `0xc249bb439c7f28142169723b765b88aa8296afc94e378673ee5673bc5e3c4fd0`
@@ -1471,13 +1471,13 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
   - 已修正 `stage_3_fulfill`：VSS proof 或 VSS verifier 模拟失败后立即返回，不再继续请求 VDD proof。
   - 发现状态设计问题：buyer purchase 后 `ephemeral_pubkey` 没有写入 drop-cli state；如果进程在 purchase 后失败，不能安全恢复同一笔 purchase 的 seller fulfill。后续必须把 purchase context 持久化，或者把 purchase/fulfill 设计成单次不中断的原子阶段。
 
-未执行：
+当时未执行：
 
 - 未运行 `asset prepare` 处理大视频，避免触发耗时 Walrus blob id 计算。
 - 未通过 `drop-cli proof vss/vdd` 自身提交证明；当前 full-flow 脚本用 `guest/scripts/zk-proof-test.sh` 跑 VSS/VDD Prove Network 和 preflight。
 - settlement resume 已执行到 buyer purchase，但未完成 fulfill、Oracle Worker fulfill、settle 和 recover-test 的真实闭环。
 
-当前剩余实施：
+当时剩余实施：
 
 - `proof vss/vdd` 需要从门禁提示升级为调用现有 SP1 Prove Network proof flow，并严格防止失败后盲目重试。
 - `phase prove/settle/verify` 需要在 proof、Oracle fulfill、settle 实装后串联。
@@ -1488,13 +1488,10 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
 
 2026-06-30 已补齐原型 full-flow 缺口并完成一次真实全流程测试：
 
-- 明确 `drop-cli` 不承载 buyer 前端 `purchase` 原子命令；当前 full-flow 原型中 buyer purchase 只作为测试流程的一部分，由 `complete-test-flow` 桥接脚本执行。
-- 补充显式 bridge binary：`drop-script/src/bin/resume_drop_cli_sale.rs`。
-  - 该 binary 是 0009 原型过渡层，不是隐藏入口。
-  - 它读取 `drop-cli` sale state，复用 `drop-script` 已跑通的阶段函数完成 `submitVDDProof -> oracle worker -> buyer purchase -> fulfill -> oracle worker -> settle -> recover`。
-  - 后续产品化时，应把这部分流程拆回 `drop-sdk` workflow，再由 `drop-cli` 原生命令调用。
+- 明确 `drop-cli` 不承载 buyer 前端 `purchase` 原子命令；当前 full-flow 原型中 buyer purchase 只作为测试流程的一部分，由 `complete-test-flow` 执行。
+- 过渡 bridge binary 已删除；`complete-test-flow` 现在直接调用 `drop-script` library，执行 `submitVDDProof -> oracle worker -> buyer purchase -> fulfill -> oracle wait -> settle -> recover`。
 - `drop-script` 阶段函数调整：
-  - `stage_1_6_submit_vdd_proof` 可被 bridge binary 调用。
+  - `stage_1_6_submit_vdd_proof` 可被 `drop-cli` library path 调用。
   - `stage_5_settle` 返回 settle tx hash，便于写入 drop-cli state。
 - `drop-cli` state 补充 `original_len`，用于恢复时截断 padding 后的明文。
 - `asset upload` 默认 Walrus 保存 epoch 从 `1` 调整为 `4`，可通过 `DROP_CLI_WALRUS_EPOCHS` 覆盖。

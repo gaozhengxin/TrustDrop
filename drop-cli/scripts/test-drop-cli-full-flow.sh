@@ -9,10 +9,10 @@ set -euo pipefail
 #   2. drop-cli phase publish
 #   3. drop-cli phase complete-test-flow
 #
-# `complete-test-flow` is a prototype-only e2e phase. It reuses the existing
-# drop-script implementation for buyer purchase, sale-bound VSS/VDD proofs,
-# fulfill, centralized oracle trigger, oracle wait, and settle. Buyer purchase
-# is still not a seller product command.
+# `complete-test-flow` is a prototype-only e2e phase. It calls the shared
+# drop-script library implementation for buyer purchase, sale-bound VSS/VDD
+# proofs, fulfill, centralized oracle trigger, oracle wait, and settle. Buyer
+# purchase is still not a seller product command.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"

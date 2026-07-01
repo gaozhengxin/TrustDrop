@@ -8,6 +8,7 @@ anyhow = "1.0.100"
 blake3 = "1.8.2"
 drop-lib = { path = "../drop-lib" }
 drop-sdk = { path = "../sdk" }
+drop-script = { path = "../drop-script" }
 ethers = { version = "2.0.14", features = ["rustls"] }
 hex = "0.4"
 k256 = { version = "0.13.4", features = ["ecdh", "ecdsa", "serde"] }

@@ -68,6 +68,8 @@ pub struct SaleState {
     pub data_version: Option<String>,
     pub stages: Vec<StageRecord>,
     pub transactions: Vec<TxRecord>,
+    #[serde(default)]
+    pub purchases: Vec<PurchaseContextRecord>,
     pub next_actions: Vec<String>,
     pub last_error: Option<String>,
 }
@@ -87,10 +89,23 @@ impl SaleState {
             data_version: None,
             stages: Vec::new(),
             transactions: Vec::new(),
+            purchases: Vec::new(),
             next_actions: Vec::new(),
             last_error: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseContextRecord {
+    pub purchase_tx_hash: String,
+    pub buyer: Option<String>,
+    pub secret_sharing_key: Option<String>,
+    pub ephemeral_pubkey: Option<String>,
+    pub status: String,
+    pub fulfill_tx_hash: Option<String>,
+    pub settle_tx_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

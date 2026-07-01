@@ -6,6 +6,7 @@ pub struct DropCliConfig {
     pub rpc_url: Option<String>,
     pub chain_id: u64,
     pub seller_private_key: Option<String>,
+    pub buyer_private_key: Option<String>,
     pub hub_address: Option<String>,
     pub oracle_worker_url: Option<String>,
     pub oracle_worker_token: Option<String>,
@@ -31,6 +32,7 @@ impl DropCliConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(421614),
             seller_private_key: first_value(&vars, &["SELLER_KEY", "PRIVATE_KEY"]),
+            buyer_private_key: first_value(&vars, &["BUYER_KEY"]),
             hub_address: first_value(&vars, &["HUB_ADDRESS"]),
             oracle_worker_url: first_value(&vars, &["ORACLE_WORKER_URL"]),
             oracle_worker_token: first_value(&vars, &["ORACLE_WORKER_TOKEN"]),

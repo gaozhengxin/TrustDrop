@@ -8,7 +8,7 @@ use drop_sdk::{
     state::{
         default_state_dir, load_all_sale_states, load_all_thread_states, load_sale_state,
         load_thread_state, save_sale_state, save_thread_state, thread_state_dir, SaleState,
-        ThreadPurchase, ThreadState, ThreadStatus, TxRecord, TxStatus,
+        PurchaseContextRecord, ThreadPurchase, ThreadState, ThreadStatus, TxRecord, TxStatus,
     },
     walrus::compute_rs_id,
 };
@@ -19,7 +19,6 @@ use sha3::{Digest, Keccak256};
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -61,6 +60,8 @@ async fn run() -> Result<()> {
         "tx" => cmd_tx(&args[1..]).await,
         "thread" => cmd_thread(&args[1..]).await,
         "purchase" => cmd_purchase(&args[1..]).await,
+        "tui" => cmd_tui(&args[1..]),
+        "daemon" => cmd_daemon(&args[1..]).await,
         "debug" => cmd_debug(&args[1..]).await,
         "help" | "--help" | "-h" => {
             print_help();
@@ -90,20 +91,22 @@ Usage:
   drop-cli sale submit-key-commitment <sale-id>
   drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]
   drop-cli purchase show <purchase-tx>
-  drop-cli proof vss <sale-id>
-  drop-cli proof vdd <sale-id>
-  drop-cli settle <sale-id>
+  drop-cli proof vss <sale-id> --yes
+  drop-cli proof vdd <sale-id> --yes
+  drop-cli settle <sale-id> --yes
   drop-cli thread list [--channel <channel>] [--sale <sale-id>]
   drop-cli thread show <thread-id>
   drop-cli thread cancel <thread-id>
+  drop-cli tui
+  drop-cli daemon run --once
   drop-cli recover-test <sale-id>
   drop-cli phase prepare <file>
   drop-cli phase publish <sale-id>
-  drop-cli phase complete-test-flow <sale-id>
+  drop-cli phase complete-test-flow <sale-id> --yes
   drop-cli phase respond <purchase-tx>...
   drop-cli phase fulfill <thread-id>
   drop-cli phase settle <thread-id|sale-id>
-  drop-cli phase prove <sale-id>
+  drop-cli phase prove <sale-id> --yes
   drop-cli phase verify <sale-id>
   drop-cli tx status <tx-hash>
   drop-cli tx resume <sale-id>
@@ -477,7 +480,7 @@ async fn sale_list(sale_id: &str) -> Result<String> {
         TxStatus::Confirmed,
         receipt.block_number.map(|value| value.as_u64()),
     ));
-    state.next_actions = vec![format!("drop-cli proof vss {} --yes", state.sale_id)];
+    state.next_actions = vec![format!("drop-cli proof vdd {} --yes", state.sale_id)];
     save_sale_state(&state_dir, &state)?;
     println!("saleId: {}", state.sale_id);
     println!(
@@ -503,7 +506,7 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
 
     if current == commitment {
         state.data_commitment = Some(format!("0x{}", hex::encode(commitment)));
-        state.next_actions = vec![format!("drop-cli phase complete-test-flow {sale_id} --yes")];
+        state.next_actions = vec![format!("drop-cli proof vdd {sale_id} --yes")];
         save_sale_state(state_dir, &state)?;
         println!(
             "dataKeyCommitment already set: 0x{}",
@@ -541,7 +544,7 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
         TxStatus::Confirmed,
         receipt.block_number.map(|value| value.as_u64()),
     ));
-    state.next_actions = vec![format!("drop-cli phase complete-test-flow {sale_id} --yes")];
+    state.next_actions = vec![format!("drop-cli proof vdd {sale_id} --yes")];
     save_sale_state(&state_dir, &state)?;
     println!("dataKeyCommitment: 0x{}", hex::encode(commitment));
     println!("state updated");
@@ -697,6 +700,78 @@ async fn cmd_thread(args: &[String]) -> Result<()> {
     }
 }
 
+fn cmd_tui(args: &[String]) -> Result<()> {
+    if !args.is_empty() {
+        bail!("usage: drop-cli tui");
+    }
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let sales = load_all_sale_states(&state_dir)?;
+    let threads = load_all_thread_states(&state_dir)?;
+    println!("TrustDrop seller console");
+    println!("stateDir: {}", state_dir.display());
+    println!("sales: {}", sales.len());
+    println!("threads: {}", threads.len());
+    println!();
+    for state in &sales {
+        println!("sale: {}", state.sale_id);
+        println!("  channel: {}", state.channel_address.as_deref().unwrap_or("-"));
+        println!("  walrus: {}", state.walrus_blob_id.as_deref().unwrap_or("-"));
+        println!("  purchases: {}", state.purchases.len());
+        println!("  next: {}", infer_next_action(state).trim_start_matches("next: "));
+    }
+    if !threads.is_empty() {
+        println!();
+        println!("threads:");
+        for thread in threads {
+            println!(
+                "  {} {:?} sale={} purchases={}",
+                thread.thread_id,
+                thread.status,
+                thread.sale_id,
+                thread.purchases.len()
+            );
+            for action in thread.next_actions {
+                println!("    next: {action}");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_daemon(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("run") => {
+            if !has_flag(args, "--once") {
+                println!("daemon continuous mode is not enabled in the prototype.");
+                println!("usage: drop-cli daemon run --once");
+                return Ok(());
+            }
+            daemon_run_once().await
+        }
+        _ => bail!("usage: drop-cli daemon run --once"),
+    }
+}
+
+async fn daemon_run_once() -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let sales = load_all_sale_states(&state_dir)?;
+    let purchases = collect_purchases(&sales);
+    println!("daemon: one-shot scan");
+    println!("sales: {}", sales.len());
+    println!("purchases: {}", purchases.len());
+    for purchase in purchases {
+        if purchase.status == "paid" {
+            println!("paidPurchase: {}", purchase.purchase_tx_hash);
+            println!("  saleId: {}", purchase.sale_id);
+            println!("  next: drop-cli phase respond {}", purchase.purchase_tx_hash);
+        }
+    }
+    println!("daemon: complete");
+    Ok(())
+}
+
 async fn cmd_debug(args: &[String]) -> Result<()> {
     match (
         args.first().map(String::as_str),
@@ -716,29 +791,49 @@ async fn cmd_debug(args: &[String]) -> Result<()> {
 
 async fn cmd_proof(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
-        Some("vss") | Some("vdd") => {
+        Some("vdd") => {
             let proof_kind = args[0].as_str();
             let sale_id = require_arg(&args[1..], "sale-id")?;
-            println!("proof {proof_kind} is planned but not implemented yet for {sale_id}.");
-            println!("This command will use SP1 Prove Network when implemented.");
-            println!("Local proving is not used by default.");
+            if !has_flag(args, "--yes") {
+                println!(
+                    "proof {proof_kind} requires --yes because it requests SP1 Prove Network proof and sends an Arbitrum Sepolia transaction."
+                );
+                println!("usage: drop-cli proof {proof_kind} <sale-id> --yes");
+                return Ok(());
+            }
+            submit_vdd_for_sale(sale_id).await?;
             Ok(())
         }
-        _ => bail!("usage: drop-cli proof vss|vdd <sale-id>"),
+        Some("vss") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            if !has_flag(args, "--yes") {
+                println!(
+                    "proof vss requires --yes because it requests SP1 Prove Network proof and sends a fulfill transaction."
+                );
+                println!("usage: drop-cli proof vss <sale-id> --yes");
+                return Ok(());
+            }
+            fulfill_first_purchase_for_sale(sale_id).await?;
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli proof vss|vdd <sale-id> --yes"),
     }
 }
 
 async fn cmd_settle(args: &[String]) -> Result<()> {
     let sale_id = require_arg(args, "sale-id")?;
-    println!("settle is planned but not implemented yet for {sale_id}.");
-    println!("This command will send an Arbitrum Sepolia transaction when implemented.");
+    if !has_flag(args, "--yes") {
+        println!("settle requires --yes because it sends an Arbitrum Sepolia transaction.");
+        println!("usage: drop-cli settle <sale-id> --yes");
+        return Ok(());
+    }
+    settle_first_purchase_for_sale(sale_id).await?;
     Ok(())
 }
 
 async fn cmd_recover_test(args: &[String]) -> Result<()> {
     let sale_id = require_arg(args, "sale-id")?;
-    println!("recover-test is planned but not implemented yet for {sale_id}.");
-    println!("This command is for development verification only.");
+    recover_first_purchase_for_sale(sale_id).await?;
     Ok(())
 }
 
@@ -760,7 +855,7 @@ async fn cmd_phase(args: &[String]) -> Result<()> {
             let onchain_sale_id = sale_list(sale_id).await?;
             sale_submit_key_commitment(&onchain_sale_id).await?;
             println!("phasePublishSaleId: {onchain_sale_id}");
-            println!("next: drop-cli phase complete-test-flow {onchain_sale_id} --yes");
+            println!("next: drop-cli proof vdd {onchain_sale_id} --yes");
             Ok(())
         }
         Some("complete-test-flow") => {
@@ -777,22 +872,34 @@ async fn cmd_phase(args: &[String]) -> Result<()> {
         Some("respond") => phase_respond(&args[1..]).await,
         Some("fulfill") => {
             let thread_id = require_arg(&args[1..], "thread-id")?;
-            phase_fulfill(thread_id)
+            phase_fulfill(thread_id).await
         }
         Some("settle") => {
             let id = require_arg(&args[1..], "thread-id|sale-id")?;
             if load_thread_state(state_dir(&load_config()?)?, id).is_ok() {
-                phase_settle(id)
+                phase_settle(id).await
             } else {
-                println!("phase settle is planned but not implemented yet for sale {id}");
-                println!("next: drop-cli status {id}");
-                Ok(())
+                settle_first_purchase_for_sale(id).await
             }
         }
-        Some("prove") | Some("verify") => {
+        Some("prove") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            if !has_flag(args, "--yes") {
+                println!("phase prove requires --yes because it requests SP1 Prove Network proof and sends transactions.");
+                println!("usage: drop-cli phase prove <sale-id> --yes");
+                return Ok(());
+            }
+            submit_vdd_for_sale(sale_id).await
+        }
+        Some("verify") => {
             let phase = args[0].as_str();
             let sale_id = require_arg(&args[1..], "sale-id")?;
-            println!("phase {phase} is planned but not implemented yet for {sale_id}");
+            println!("phase {phase} for {sale_id}");
+            if has_confirmed_tx(&load_sale_state(state_dir(&load_config()?)?, sale_id)?, "settle") {
+                println!("status: complete");
+            } else {
+                println!("status: not complete");
+            }
             println!("next: drop-cli status {sale_id}");
             Ok(())
         }
@@ -967,11 +1074,32 @@ fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
     let mut purchases = Vec::new();
     for state in states {
         let settle_tx_hash = confirmed_tx_hash(state, "settle");
+        for context in &state.purchases {
+            purchases.push(PurchaseView {
+                purchase_tx_hash: context.purchase_tx_hash.clone(),
+                sale_id: state.sale_id.clone(),
+                channel_address: state.channel_address.clone(),
+                buyer: context.buyer.clone(),
+                needs_vss: None,
+                status: context.status.clone(),
+                settle_tx_hash: context
+                    .settle_tx_hash
+                    .clone()
+                    .or_else(|| settle_tx_hash.clone()),
+            });
+        }
         for tx in state
             .transactions
             .iter()
             .filter(|tx| tx.kind == "purchase" && tx.tx_hash.is_some())
         {
+            let tx_hash = tx.tx_hash.clone().unwrap_or_default();
+            if purchases
+                .iter()
+                .any(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(&tx_hash))
+            {
+                continue;
+            }
             let status = if settle_tx_hash.is_some() {
                 "settled"
             } else if has_confirmed_tx(state, "fulfill") {
@@ -980,7 +1108,7 @@ fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
                 "paid"
             };
             purchases.push(PurchaseView {
-                purchase_tx_hash: tx.tx_hash.clone().unwrap_or_default(),
+                purchase_tx_hash: tx_hash,
                 sale_id: state.sale_id.clone(),
                 channel_address: state.channel_address.clone(),
                 buyer: None,
@@ -1244,7 +1372,7 @@ fn upsert_thread_for_purchases(
     Ok(thread)
 }
 
-fn phase_fulfill(thread_id: &str) -> Result<()> {
+async fn phase_fulfill(thread_id: &str) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let mut thread = load_thread_state(&state_dir, thread_id)?;
@@ -1270,18 +1398,22 @@ fn phase_fulfill(thread_id: &str) -> Result<()> {
         return Ok(());
     }
 
-    thread.status = ThreadStatus::Blocked;
-    thread.last_error = Some(
-        "native batch VSS fulfill is not implemented yet; prototype full-flow remains available through phase complete-test-flow".to_string(),
-    );
-    thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+    thread.status = ThreadStatus::Fulfilling;
+    thread.last_error = None;
+    thread.next_actions = vec![format!("drop-cli phase settle {}", thread.thread_id)];
+    thread.updated_at = unix_timestamp_string();
+    save_thread_state(&state_dir, &thread)?;
+    fulfill_first_purchase_for_sale(&thread.sale_id).await?;
+    let state = load_sale_state(&state_dir, &thread.sale_id)?;
+    thread.fulfill_tx_hash = confirmed_tx_hash(&state, "fulfill");
+    thread.status = ThreadStatus::Fulfilled;
     thread.updated_at = unix_timestamp_string();
     save_thread_state(&state_dir, &thread)?;
     print_thread(&thread);
     Ok(())
 }
 
-fn phase_settle(thread_id: &str) -> Result<()> {
+async fn phase_settle(thread_id: &str) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let mut thread = load_thread_state(&state_dir, thread_id)?;
@@ -1296,16 +1428,205 @@ fn phase_settle(thread_id: &str) -> Result<()> {
         return Ok(());
     }
 
-    thread.status = ThreadStatus::Blocked;
-    thread.last_error = Some(
-        "native thread settle requires purchase exchange info persistence and is not implemented yet"
-            .to_string(),
-    );
-    thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+    thread.status = ThreadStatus::Settling;
+    thread.last_error = None;
+    thread.next_actions = vec![format!("drop-cli phase verify {}", thread.sale_id)];
+    thread.updated_at = unix_timestamp_string();
+    save_thread_state(&state_dir, &thread)?;
+    settle_first_purchase_for_sale(&thread.sale_id).await?;
+    let state = load_sale_state(&state_dir, &thread.sale_id)?;
+    if let Some(settle_tx) = confirmed_tx_hash(&state, "settle") {
+        thread.settle_tx_hashes.push(settle_tx);
+    }
+    for purchase in &mut thread.purchases {
+        if let Some(context) = state.purchases.iter().find(|context| {
+            context
+                .purchase_tx_hash
+                .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
+        }) {
+            purchase.status = context.status.clone();
+            purchase.settle_tx_hash = context.settle_tx_hash.clone();
+        }
+    }
+    thread.status = ThreadStatus::Completed;
     thread.updated_at = unix_timestamp_string();
     save_thread_state(&state_dir, &thread)?;
     print_thread(&thread);
     Ok(())
+}
+
+async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut state = load_sale_state(&state_dir, sale_id)?;
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+    let walrus = drop_script_walrus_client(&config);
+
+    let vdd_tx = drop_script::stage_1_6_submit_vdd_proof(&walrus, &listing, &seller_ctx).await?;
+    if vdd_tx != H256::zero() {
+        state.transactions.push(tx_record(
+            "submit_vdd_proof",
+            Some(format!("{vdd_tx:?}")),
+            TxStatus::Confirmed,
+            None,
+        ));
+        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx).await?;
+    }
+    state.next_actions = vec![format!("drop-cli purchase list --sale {}", state.sale_id)];
+    save_sale_state(&state_dir, &state)?;
+    println!("vddTx: {vdd_tx:?}");
+    println!("next: drop-cli purchase list --sale {}", state.sale_id);
+    Ok(())
+}
+
+async fn fulfill_first_purchase_for_sale(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut state = load_sale_state(&state_dir, sale_id)?;
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+    let walrus = drop_script_walrus_client(&config);
+    let purchase_context = first_purchase_context(&state)?.clone();
+    let purchase = purchase_state_from_context(&purchase_context)?;
+
+    let fulfill_tx =
+        drop_script::stage_3_fulfill(&walrus, &listing, &purchase, &seller_ctx).await?;
+    state.transactions.push(tx_record(
+        "fulfill",
+        Some(format!("{fulfill_tx:?}")),
+        TxStatus::Confirmed,
+        None,
+    ));
+    if let Some(context) = state.purchases.iter_mut().find(|context| {
+        context
+            .purchase_tx_hash
+            .eq_ignore_ascii_case(&purchase_context.purchase_tx_hash)
+    }) {
+        context.fulfill_tx_hash = Some(format!("{fulfill_tx:?}"));
+        context.status = "fulfilled".to_string();
+    }
+    state.next_actions = vec![format!("drop-cli settle {} --yes", state.sale_id)];
+    save_sale_state(&state_dir, &state)?;
+    println!("fulfillTx: {fulfill_tx:?}");
+    println!("next: drop-cli settle {} --yes", state.sale_id);
+    Ok(())
+}
+
+async fn settle_first_purchase_for_sale(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut state = load_sale_state(&state_dir, sale_id)?;
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+    let purchase_context = first_purchase_context(&state)?.clone();
+    let purchase_tx: H256 = purchase_context.purchase_tx_hash.parse()?;
+
+    drop_script::wait_for_oracle_signal(
+        listing.channel_address,
+        listing.encrypted_blob_id,
+        seller_ctx.signer.clone(),
+    )
+    .await?;
+
+    let (buyer_address, exchange_info) = drop_script::get_purchase_info_from_event(
+        seller_ctx.signer.provider(),
+        purchase_tx,
+        listing.channel_address,
+        listing.unique_sale_id,
+    )
+    .await?;
+    let settle_tx = drop_script::stage_5_settle(
+        &seller_ctx,
+        listing.channel_address,
+        buyer_address,
+        exchange_info,
+        listing.onchain_data_version,
+        listing.encrypted_blob_id,
+    )
+    .await?;
+    state.transactions.push(tx_record(
+        "settle",
+        Some(format!("{settle_tx:?}")),
+        TxStatus::Confirmed,
+        None,
+    ));
+    if let Some(context) = state.purchases.iter_mut().find(|context| {
+        context
+            .purchase_tx_hash
+            .eq_ignore_ascii_case(&purchase_context.purchase_tx_hash)
+    }) {
+        context.buyer = Some(format!("{buyer_address:?}"));
+        context.settle_tx_hash = Some(format!("{settle_tx:?}"));
+        context.status = "settled".to_string();
+    }
+    state.next_actions = vec![format!("drop-cli phase verify {}", state.sale_id)];
+    save_sale_state(&state_dir, &state)?;
+    println!("settleTx: {settle_tx:?}");
+    println!("next: drop-cli phase verify {}", state.sale_id);
+    Ok(())
+}
+
+async fn recover_first_purchase_for_sale(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state = load_sale_state(state_dir(&config)?, sale_id)?;
+    let listing = drop_script_listing_from_state(&state)?;
+    let buyer_ctx = drop_script_buyer_context(&config).await?;
+    let walrus = drop_script_walrus_client(&config);
+    let purchase_context = first_purchase_context(&state)?;
+    let secret_sharing_key = parse_optional_hex32(
+        purchase_context.secret_sharing_key.as_deref(),
+        "purchase secret_sharing_key",
+    )?;
+    let fulfill_tx_string = purchase_context
+        .fulfill_tx_hash
+        .clone()
+        .or_else(|| confirmed_tx_hash(&state, "fulfill"))
+        .ok_or_else(|| anyhow!("state missing fulfill tx hash"))?;
+    let fulfill_tx: H256 = fulfill_tx_string.parse()?;
+    drop_script::stage_4_recovery(
+        &walrus,
+        &buyer_ctx,
+        listing.channel_address,
+        fulfill_tx,
+        listing.walrus_blob_id,
+        secret_sharing_key,
+        listing.original_len,
+    )
+    .await?;
+    println!("recoverTest: complete");
+    Ok(())
+}
+
+fn first_purchase_context(state: &SaleState) -> Result<&PurchaseContextRecord> {
+    state.purchases.first().ok_or_else(|| {
+        anyhow!(
+            "state has no purchase context; run complete-test-flow or import buyer purchase context before VSS fulfill/settle"
+        )
+    })
+}
+
+fn purchase_state_from_context(context: &PurchaseContextRecord) -> Result<drop_script::PurchaseState> {
+    let secret_sharing_key =
+        parse_optional_hex32(context.secret_sharing_key.as_deref(), "secret_sharing_key")?;
+    let ephemeral_pubkey =
+        parse_optional_hex_bytes(context.ephemeral_pubkey.as_deref(), "ephemeral_pubkey")?;
+    Ok(drop_script::PurchaseState {
+        secret_sharing_key,
+        transaction_hash: context.purchase_tx_hash.parse()?,
+        ephemeral_pubkey,
+    })
+}
+
+fn parse_optional_hex32(value: Option<&str>, name: &str) -> Result<[u8; 32]> {
+    let value = value.ok_or_else(|| anyhow!("{name} is missing"))?;
+    parse_hex32_state(value)
+}
+
+fn parse_optional_hex_bytes(value: Option<&str>, name: &str) -> Result<Vec<u8>> {
+    let value = value.ok_or_else(|| anyhow!("{name} is missing"))?;
+    let clean = value.strip_prefix("0x").unwrap_or(value);
+    Ok(hex::decode(clean)?)
 }
 
 fn print_thread(thread: &ThreadState) {
@@ -1362,7 +1683,7 @@ fn print_thread(thread: &ThreadState) {
 async fn complete_test_flow(sale_id: &str) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
-    let state = load_sale_state(&state_dir, sale_id)?;
+    let mut state = load_sale_state(&state_dir, sale_id)?;
     if state.channel_address.is_none()
         || state.walrus_blob_id.is_none()
         || state.data_version.is_none()
@@ -1372,28 +1693,137 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
         bail!("sale state is not ready; run drop-cli phase publish <sale-id> --yes first");
     }
 
-    println!("running prototype complete test flow through drop-script implementation...");
+    println!("running prototype complete test flow through drop-script library...");
     println!("This sends buyer purchase, requests sale-bound VSS/VDD proofs, fulfills, triggers oracle, waits, and settles.");
-    let mut command = Command::new("cargo");
-    command
-        .arg("run")
-        .arg("-p")
-        .arg("drop-script")
-        .arg("--bin")
-        .arg("resume_drop_cli_sale")
-        .arg("--")
-        .arg(sale_id)
-        .env("DROP_CLI_STATE_DIR", state_dir)
-        .env(
-            "DROP_SCRIPT_INPUT_ASSET",
-            state.input_asset_path.unwrap_or_default(),
-        )
-        .env("ORACLE_MODE", "centralized");
 
-    let status = command.status()?;
-    if !status.success() {
-        bail!("complete test flow failed with status: {status}");
+    if let Some(input_asset_path) = state.input_asset_path.as_deref() {
+        env::set_var("DROP_SCRIPT_INPUT_ASSET", input_asset_path);
     }
+
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+    let buyer_ctx = drop_script_buyer_context(&config).await?;
+    let walrus = drop_script_walrus_client(&config);
+
+    let vdd_tx = drop_script::stage_1_6_submit_vdd_proof(&walrus, &listing, &seller_ctx).await?;
+    if vdd_tx != H256::zero() {
+        state.transactions.push(tx_record(
+            "submit_vdd_proof",
+            Some(format!("{vdd_tx:?}")),
+            TxStatus::Confirmed,
+            None,
+        ));
+        save_sale_state(&state_dir, &state)?;
+        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx).await?;
+    }
+    drop_script::wait_for_oracle_signal(
+        listing.channel_address,
+        listing.encrypted_blob_id,
+        seller_ctx.signer.clone(),
+    )
+    .await?;
+
+    let seller_vss_pubkey = drop_script::seller_public_key_bytes(&seller_ctx.owner_sk_bytes)?;
+    let purchase = drop_script::stage_2_purchase(
+        &buyer_ctx,
+        listing.unique_sale_id,
+        listing.onchain_data_version,
+        listing.channel_address,
+        listing.original_asset_id,
+        &seller_vss_pubkey,
+    )
+    .await?;
+    let purchase_tx = format!("{:?}", purchase.transaction_hash);
+    state.transactions.push(tx_record(
+        "purchase",
+        Some(purchase_tx.clone()),
+        TxStatus::Confirmed,
+        None,
+    ));
+    upsert_purchase_context(
+        &mut state,
+        PurchaseContextRecord {
+            purchase_tx_hash: purchase_tx.clone(),
+            buyer: None,
+            secret_sharing_key: Some(format!("0x{}", hex::encode(purchase.secret_sharing_key))),
+            ephemeral_pubkey: Some(format!("0x{}", hex::encode(&purchase.ephemeral_pubkey))),
+            status: "paid".to_string(),
+            fulfill_tx_hash: None,
+            settle_tx_hash: None,
+        },
+    );
+    save_sale_state(&state_dir, &state)?;
+
+    let fulfill_tx = drop_script::stage_3_fulfill(&walrus, &listing, &purchase, &seller_ctx).await?;
+    state.transactions.push(tx_record(
+        "fulfill",
+        Some(format!("{fulfill_tx:?}")),
+        TxStatus::Confirmed,
+        None,
+    ));
+    if let Some(context) = state
+        .purchases
+        .iter_mut()
+        .find(|context| context.purchase_tx_hash.eq_ignore_ascii_case(&purchase_tx))
+    {
+        context.fulfill_tx_hash = Some(format!("{fulfill_tx:?}"));
+        context.status = "fulfilled".to_string();
+    }
+    save_sale_state(&state_dir, &state)?;
+
+    drop_script::wait_for_oracle_signal(
+        listing.channel_address,
+        listing.encrypted_blob_id,
+        seller_ctx.signer.clone(),
+    )
+    .await?;
+
+    let provider = seller_ctx.signer.provider();
+    let (buyer_address, exchange_info) = drop_script::get_purchase_info_from_event(
+        provider,
+        purchase.transaction_hash,
+        listing.channel_address,
+        listing.unique_sale_id,
+    )
+    .await?;
+    let settle_tx = drop_script::stage_5_settle(
+        &seller_ctx,
+        listing.channel_address,
+        buyer_address,
+        exchange_info,
+        listing.onchain_data_version,
+        listing.encrypted_blob_id,
+    )
+    .await?;
+    state.transactions.push(tx_record(
+        "settle",
+        Some(format!("{settle_tx:?}")),
+        TxStatus::Confirmed,
+        None,
+    ));
+    if let Some(context) = state
+        .purchases
+        .iter_mut()
+        .find(|context| context.purchase_tx_hash.eq_ignore_ascii_case(&purchase_tx))
+    {
+        context.buyer = Some(format!("{buyer_address:?}"));
+        context.settle_tx_hash = Some(format!("{settle_tx:?}"));
+        context.status = "settled".to_string();
+    }
+    save_sale_state(&state_dir, &state)?;
+
+    drop_script::stage_4_recovery(
+        &walrus,
+        &buyer_ctx,
+        listing.channel_address,
+        fulfill_tx,
+        listing.walrus_blob_id.clone(),
+        purchase.secret_sharing_key,
+        listing.original_len,
+    )
+    .await?;
+    state.next_actions = vec![format!("drop-cli phase verify {}", state.sale_id)];
+    save_sale_state(&state_dir, &state)?;
     println!("complete test flow finished");
     Ok(())
 }
@@ -1535,6 +1965,107 @@ fn tx_record(
     }
 }
 
+async fn drop_script_seller_context(config: &DropCliConfig) -> Result<drop_script::SellerContext> {
+    let rpc_url = config
+        .rpc_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("ARBITRUM_SEPOLIA_RPC_URL is missing"))?;
+    let key = config
+        .seller_private_key
+        .as_deref()
+        .ok_or_else(|| anyhow!("SELLER_KEY is missing"))?;
+    let provider = Provider::<Http>::try_from(rpc_url)?;
+    let wallet = key.parse::<LocalWallet>()?.with_chain_id(config.chain_id);
+    Ok(drop_script::SellerContext {
+        signer: Arc::new(SignerMiddleware::new(provider, wallet)),
+        owner_sk_bytes: config.require_owner_secret_key()?,
+        asset_encryption_key: config.require_asset_encryption_key()?,
+    })
+}
+
+async fn drop_script_buyer_context(config: &DropCliConfig) -> Result<drop_script::BuyerContext> {
+    let rpc_url = config
+        .rpc_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("ARBITRUM_SEPOLIA_RPC_URL is missing"))?;
+    let key = config
+        .buyer_private_key
+        .as_deref()
+        .ok_or_else(|| anyhow!("BUYER_KEY is missing"))?;
+    let provider = Provider::<Http>::try_from(rpc_url)?;
+    let wallet = key.parse::<LocalWallet>()?.with_chain_id(config.chain_id);
+    Ok(drop_script::BuyerContext {
+        signer: Arc::new(SignerMiddleware::new(provider, wallet)),
+    })
+}
+
+fn drop_script_walrus_client(config: &DropCliConfig) -> WalrusClient {
+    let publisher_url = config
+        .walrus_publisher_url
+        .clone()
+        .unwrap_or_else(|| "http://localhost:31415".to_string());
+    let aggregator_url = config
+        .walrus_aggregator_url
+        .clone()
+        .unwrap_or_else(|| publisher_url.clone());
+    WalrusClient::new(WalrusConfig {
+        aggregator_url,
+        publisher_url,
+        api_key: String::new(),
+        blockberry_base: String::new(),
+        send_object_to: None,
+    })
+}
+
+fn drop_script_listing_from_state(state: &SaleState) -> Result<drop_script::ListingState> {
+    Ok(drop_script::ListingState {
+        unique_sale_id: parse_hex32_state(&state.sale_id)?,
+        onchain_data_version: parse_hex32_state(
+            state
+                .data_version
+                .as_deref()
+                .ok_or_else(|| anyhow!("state missing data_version"))?,
+        )?,
+        walrus_blob_id: state
+            .walrus_blob_id
+            .clone()
+            .ok_or_else(|| anyhow!("state missing walrus_blob_id"))?,
+        channel_address: parse_address(
+            state
+                .channel_address
+                .as_deref()
+                .ok_or_else(|| anyhow!("state missing channel_address"))?,
+        )?,
+        original_asset_id: parse_hex32_state(
+            state
+                .original_asset_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("state missing original_asset_id"))?,
+        )?,
+        encrypted_blob_id: parse_hex32_state(
+            state
+                .encrypted_blob_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("state missing encrypted_blob_id"))?,
+        )?,
+        original_len: state
+            .original_len
+            .ok_or_else(|| anyhow!("state missing original_len"))?,
+    })
+}
+
+fn upsert_purchase_context(state: &mut SaleState, context: PurchaseContextRecord) {
+    if let Some(existing) = state.purchases.iter_mut().find(|existing| {
+        existing
+            .purchase_tx_hash
+            .eq_ignore_ascii_case(&context.purchase_tx_hash)
+    }) {
+        *existing = context;
+    } else {
+        state.purchases.push(context);
+    }
+}
+
 fn unix_timestamp_string() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1616,7 +2147,7 @@ fn infer_next_action(state: &SaleState) -> String {
     if state.encrypted_blob_id.is_none() {
         return format!("next: drop-cli asset upload {}", state.sale_id);
     }
-    format!("next: drop-cli phase prove {}", state.sale_id)
+    format!("next: drop-cli phase prove {} --yes", state.sale_id)
 }
 
 fn has_confirmed_tx(state: &SaleState, kind: &str) -> bool {
