@@ -1700,3 +1700,54 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 - 每次部署后必须立刻读链验证 Hub 的 `implementation`、`oracleWrapper`、`vssVerifier`、`vddVerifier`，以及 OracleProxy 的 `controller`、`centralizedOracleSigner`、`defaultMode`。
 - `check-env.sh` 的 contracts 检查需要显式加载包含 RPC 的 env；否则会给出假的 no-code 结果。
 - 重任务必须串行执行。本轮曾错误并行启动 `forge test`、`cargo check -p drop-cli`、`cargo check -p drop-script`，后续不能重复。
+
+### 2026-07-01 后续全功能计划
+
+当前 `drop-cli` 已具备单 sale / 单 purchase 的原生 prototype 主流程，但距离产品级全功能还差以下工作。
+
+必须完成：
+
+- Batch VSS：
+  - 将 thread 从“第一笔 purchase”升级为真正的 purchase batch。
+  - 为同一 channel/sale 下多个 `needsVSS=true` 的 purchase 生成一次 batch VSS proof。
+  - 调用 channel `shareDataKey(proof, publicValues, audiences, encryptedDataKeys)` 一次性标记多个 buyer 为 privy。
+  - 对 batch 内每笔 purchase 执行 fulfill/settle；已 privy buyer 走 no-vss 单笔 thread。
+  - 保存每笔 purchase 的 buyer、exchangeInfo、vssKeyCommitment、encryptedDataKey、fulfill tx、settle tx、错误状态，支持 partial success。
+- 长期运行产品级 daemon：
+  - 配置文件支持 channel refresh interval、batch window、max batch size、auto_respond、auto_fulfill、auto_settle、spend limits。
+  - daemon 长期运行时必须持久化锁，防止多实例同时处理同一 purchase。
+  - 交易发送必须串行 nonce 管理，检测 pending/replaced/reverted，避免 nonce 死锁。
+  - 默认不自动请求 Prove Network，不自动发 seller 交易；需要显式配置。
+  - 周期性 health warning：RPC、Walrus publisher、Oracle Worker、subgraph、seller balance、SP1 requester readiness。
+- 状态存储：
+  - 当前 JSON store 可继续作为 prototype，但产品级要迁移到 SQLite。
+  - 增加 schema version 和 migration。
+  - 给 channel/sale/purchase/thread/tx/warning 建索引。
+- Buyer purchase context：
+  - 合约 `purchase` 不保存 ECIES ephemeral pubkey；首次 VSS fulfill 必须依赖 buyer 前端/链下订单元数据。
+  - CLI 需要 `purchase import-context` 或 SDK API，接收 buyer 前端传来的 fulfill 所需元数据。
+  - 没有 purchase context 时，CLI 必须清楚提示无法为首次 buyer 做 VSS fulfill。
+- TUI：
+  - 当前 `drop-cli tui` 只是只读 dashboard。
+  - 产品级 TUI 需要 channel -> sale -> purchase -> thread 分层视图、选择 purchase、创建 batch、触发 fulfill/settle、显示 warnings。
+- Subgraph 集成：
+  - `purchase list` 需要能从 subgraph/链上事件发现 purchase，而不是只读取本地 state。
+  - subgraph 不可用时 fallback 到 RPC log scan。
+- 密钥管理：
+  - 当前仍读取明文 `.env`。
+  - 产品级需要 keystore/keyring/external signer 支持、secret redaction、禁止把 secret 写入 `/tmp` 生成文件。
+- 测试：
+  - 单元测试覆盖 config/state/thread/batch policy。
+  - mock RPC/worker 测 daemon one-shot。
+  - Arbitrum Sepolia full-flow 只在明确批准后运行。
+
+执行顺序：
+
+1. 先实现 purchase context import 和 exchangeInfo 持久化。
+2. 实现 batch policy 和 batch thread 状态机。
+3. 实现 batch VSS proof + `shareDataKey`。
+4. 实现每笔 purchase 的 fulfill/settle partial success。
+5. 将 JSON store 迁移到 SQLite。
+6. 实现 daemon run loop、锁、nonce/pending tx 管理。
+7. 实现 TUI 交互层。
+8. 最后跑全流程和回归测试。
