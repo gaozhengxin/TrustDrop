@@ -23,12 +23,14 @@ interface Env {
   MIN_CONFIRMATIONS?: string;
   CHAIN_ID?: string;
   BLOCKBERRY_WALRUS_BASE_URL?: string;
+  WALRUS_AGGREGATOR_BASE_URL?: string;
 }
 
 type FulfillRequest = {
   chainId: number;
   txHash: Hex;
   requestLogIndex?: number;
+  walrusEndEpoch?: number;
 };
 
 type WalrusAvailability = {
@@ -173,7 +175,11 @@ async function fulfill(request: Request, env: Env) {
     throw httpError("REQUEST_NOT_CENTRALIZED", 400);
   }
 
-  const availability = await checkWalrusAvailabilityByCipher(env, requested.cCipher);
+  const availability = await checkWalrusAvailabilityByCipher(
+    env,
+    requested.cCipher,
+    body.walrusEndEpoch,
+  );
   const contractStatus = contractOracleStatus(availability);
   const report = encodeAbiParameters(
     [
@@ -263,8 +269,44 @@ function extractOracleRequest(logs: Log[], oracleProxy: Hex, requestLogIndex?: n
   return matches[0];
 }
 
-async function checkWalrusAvailabilityByCipher(env: Env, cCipher: Hex) {
-  return checkWalrusBlobAvailability(env, hexToBase64Url(cCipher));
+async function checkWalrusAvailabilityByCipher(
+  env: Env,
+  cCipher: Hex,
+  trustedEndEpoch?: number,
+) {
+  const blobId = hexToBase64Url(cCipher);
+  if (trustedEndEpoch !== undefined) {
+    const aggregatorAvailability = await checkWalrusAggregatorAvailability(env, blobId);
+    if (aggregatorAvailability.status === 0) {
+      return walrusAvailability(blobId, 0, trustedEndEpoch, aggregatorAvailability.upstreamStatus);
+    }
+  }
+  return checkWalrusBlobAvailability(env, blobId);
+}
+
+async function checkWalrusAggregatorAvailability(
+  env: Env,
+  blobId: string,
+): Promise<WalrusAvailability> {
+  const baseUrl =
+    env.WALRUS_AGGREGATOR_BASE_URL ?? "https://aggregator.walrus-mainnet.walrus.space";
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/blobs/${blobId}`, {
+    method: "HEAD",
+  });
+  if (!response.ok) {
+    return walrusAvailability(blobId, 1, null, response.status);
+  }
+  return {
+    blobId,
+    found: true,
+    expired: false,
+    status: 0,
+    statusName: "active",
+    endEpoch: null,
+    endTime: 0,
+    expiresAt: null,
+    upstreamStatus: response.status,
+  };
 }
 
 async function checkWalrusBlobAvailability(
@@ -350,10 +392,17 @@ async function parseFulfillRequest(request: Request): Promise<FulfillRequest> {
   ) {
     throw httpError("INVALID_REQUEST_LOG_INDEX", 400);
   }
+  if (
+    body.walrusEndEpoch !== undefined &&
+    (!Number.isInteger(body.walrusEndEpoch) || body.walrusEndEpoch <= 0)
+  ) {
+    throw httpError("INVALID_WALRUS_END_EPOCH", 400);
+  }
   return {
     chainId: body.chainId,
     txHash: body.txHash,
     requestLogIndex: body.requestLogIndex,
+    walrusEndEpoch: body.walrusEndEpoch,
   };
 }
 

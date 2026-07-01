@@ -20,9 +20,9 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use storage::{StorageNetwork, WalrusClient, WalrusConfig};
+use storage::{WalrusClient, WalrusConfig};
 
 const DEFAULT_ENV_FILE: &str = "drop-script/.env";
 const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
@@ -315,6 +315,7 @@ async fn asset_upload(sale_id: &str) -> Result<()> {
     let mut state = load_sale_state(&state_dir, sale_id)?;
     if let Some(blob_id) = &state.walrus_blob_id {
         println!("walrusBlobId already recorded: {blob_id}");
+        wait_for_active_walrus_blob(&config, blob_id).await?;
         println!("next: drop-cli oracle check {sale_id}");
         return Ok(());
     }
@@ -342,30 +343,68 @@ async fn asset_upload(sale_id: &str) -> Result<()> {
 
     println!("Uploading encrypted asset to Walrus. This consumes Walrus storage.");
     let epochs = env::var("DROP_CLI_WALRUS_EPOCHS").unwrap_or_else(|_| "4".to_string());
-    let blob_id = walrus
-        .upload_blob(encrypted_payload.into(), Some(&epochs))
+    let upload = walrus
+        .upload_blob_response(encrypted_payload.into(), Some(&epochs))
         .await
-        .map_err(|error| anyhow!("walrus upload failed: {}", error))?
-        .0;
+        .map_err(|error| anyhow!("walrus upload failed: {}", error))?;
+    let blob_id = upload.blob_id().0;
+    let end_epoch = upload.end_epoch();
     state.walrus_blob_id = Some(blob_id.clone());
+    state.walrus_end_epoch = Some(end_epoch);
     state.next_actions = vec![format!("drop-cli oracle check {sale_id}")];
     save_sale_state(&state_dir, &state)?;
     println!("walrusBlobId: {blob_id}");
+    println!("walrusEndEpoch: {end_epoch}");
 
-    let worker = oracle_worker(&config)?;
-    let status = worker.blob_status_by_blob_id(&blob_id).await?;
-    println!("oracleBlobStatus: {}", status.status_name);
-    println!("endEpoch: {:?}", status.end_epoch);
-    if status.status != 0 || status.expired || !status.found {
-        bail!(
-            "uploaded Walrus blob is not active according to Oracle Worker: status={}, expired={}, found={}",
-            status.status_name,
-            status.expired,
-            status.found
-        );
-    }
+    wait_for_active_walrus_blob(&config, &blob_id).await?;
     println!("next: drop-cli phase publish {sale_id}");
     Ok(())
+}
+
+async fn wait_for_active_walrus_blob(config: &DropCliConfig, blob_id: &str) -> Result<()> {
+    let aggregator_url = config
+        .walrus_aggregator_url
+        .clone()
+        .or_else(|| config.walrus_publisher_url.clone())
+        .unwrap_or_else(|| "http://localhost:31415".to_string());
+    let status_url = format!(
+        "{}/v1/blobs/{}",
+        aggregator_url.trim_end_matches('/'),
+        blob_id
+    );
+    let http = reqwest::Client::new();
+    let attempts = env::var("DROP_CLI_WALRUS_STATUS_ATTEMPTS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(24);
+    let delay_secs = env::var("DROP_CLI_WALRUS_STATUS_DELAY_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10);
+
+    let mut last_status = None;
+    for attempt in 1..=attempts {
+        let status = http.head(&status_url).send().await?.status();
+        println!(
+            "walrusAggregatorStatusAttempt: {attempt}/{attempts} httpStatus={}",
+            status.as_u16()
+        );
+        if status.is_success() {
+            return Ok(());
+        }
+        last_status = Some(status.as_u16());
+        if attempt < attempts {
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+        }
+    }
+
+    let status =
+        last_status.ok_or_else(|| anyhow!("Walrus aggregator did not return a result"))?;
+    bail!(
+        "uploaded Walrus blob is not retrievable from configured aggregator after {} attempts: httpStatus={}",
+        attempts,
+        status
+    );
 }
 
 async fn channel_create(sale_id: Option<&str>) -> Result<()> {
@@ -1471,7 +1510,8 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
             TxStatus::Confirmed,
             None,
         ));
-        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx).await?;
+        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx, listing.walrus_end_epoch)
+            .await?;
     }
     state.next_actions = vec![format!("drop-cli purchase list --sale {}", state.sale_id)];
     save_sale_state(&state_dir, &state)?;
@@ -1714,7 +1754,8 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
             None,
         ));
         save_sale_state(&state_dir, &state)?;
-        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx).await?;
+        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx, listing.walrus_end_epoch)
+            .await?;
     }
     drop_script::wait_for_oracle_signal(
         listing.channel_address,
@@ -2030,6 +2071,7 @@ fn drop_script_listing_from_state(state: &SaleState) -> Result<drop_script::List
             .walrus_blob_id
             .clone()
             .ok_or_else(|| anyhow!("state missing walrus_blob_id"))?,
+        walrus_end_epoch: state.walrus_end_epoch,
         channel_address: parse_address(
             state
                 .channel_address

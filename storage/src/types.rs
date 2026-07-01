@@ -90,4 +90,11 @@ impl WalrusUploadResponse {
             Self::AlreadyCertified(a) => a.blob_id.clone(),
         }
     }
+
+    pub fn end_epoch(&self) -> u64 {
+        match self {
+            Self::NewlyCreated(n) => n.end_epoch,
+            Self::AlreadyCertified(a) => a.end_epoch,
+        }
+    }
 }

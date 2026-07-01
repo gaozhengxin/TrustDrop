@@ -38,6 +38,58 @@ impl WalrusClient {
     async fn configure(&mut self, cfg: WalrusConfig) {
         self.cfg = cfg;
     }
+
+    pub async fn upload_blob_response(
+        &self,
+        data: Bytes,
+        extra: Option<&str>,
+    ) -> Result<WalrusUploadResponse, StorageError> {
+        let epoch: u32 = extra.and_then(|s| s.parse::<u32>().ok()).unwrap_or(4);
+
+        let mut url = format!(
+            "{}/v1/blobs?epochs={}",
+            self.cfg.publisher_url.trim_end_matches('/'),
+            epoch
+        );
+        if let Some(addr) = &self.cfg.send_object_to {
+            if !addr.is_empty() {
+                url.push_str(&format!("&send_object_to={}", addr));
+            }
+        }
+
+        let resp = self.http
+            .put(&url)
+            .header("Content-Type", "application/octet-stream")
+            .header("Transfer-Encoding", "chunked")
+            .body(data)
+            .send().await
+            .map_err(|e|
+                StorageError::Other(
+                    format!(
+                        "Upload failed!\nURL: {}\nMethod: PUT\nError: {}\nSource: {:?}",
+                        url,
+                        e,
+                        e
+                    )
+                )
+            )?;
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let _body = resp.text().await.unwrap_or_default();
+            return Err(StorageError::UnexpectedStatus(code));
+        }
+
+        let v = resp
+            .json::<serde_json::Value>().await
+            .map_err(|e| {
+                StorageError::Other(format!("failed to parse upload response json: {}", e))
+            })?;
+
+        WalrusUploadResponse::from_json(v).map_err(|e|
+            StorageError::Other(format!("upload response format error: {}", e))
+        )
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,54 +114,7 @@ impl StorageNetwork for WalrusClient {
     /// extra may contain an epoch number as plain string (e.g. "8").
     /// Default epoch = 4.
     async fn upload_blob(&self, data: Bytes, extra: Option<&str>) -> Result<BlobId, StorageError> {
-        let epoch: u32 = extra.and_then(|s| s.parse::<u32>().ok()).unwrap_or(4);
-
-        let mut url = format!(
-            "{}/v1/blobs?epochs={}",
-            self.cfg.publisher_url.trim_end_matches('/'),
-            epoch
-        );
-        if let Some(addr) = &self.cfg.send_object_to {
-            if !addr.is_empty() {
-                url.push_str(&format!("&send_object_to={}", addr));
-            }
-        }
-
-        let resp = self.http
-            .put(&url)
-            .header("Content-Type", "application/octet-stream")
-            .header("Transfer-Encoding", "chunked")
-            //.header("Content-Length", data.len())
-            .body(data)
-            .send().await
-            .map_err(|e|
-                StorageError::Other(
-                    format!(
-                        "Upload failed!\nURL: {}\nMethod: PUT\nError: {}\nSource: {:?}",
-                        url,
-                        e,
-                        e
-                    )
-                )
-            )?;
-
-        if !resp.status().is_success() {
-            let code = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(StorageError::UnexpectedStatus(code));
-        }
-
-        let v = resp
-            .json::<serde_json::Value>().await
-            .map_err(|e| {
-                StorageError::Other(format!("failed to parse upload response json: {}", e))
-            })?;
-
-        let parsed = WalrusUploadResponse::from_json(v).map_err(|e|
-            StorageError::Other(format!("upload response format error: {}", e))
-        )?;
-
-        Ok(parsed.blob_id())
+        Ok(self.upload_blob_response(data, extra).await?.blob_id())
     }
 
     /// get_status MUST call Blockberry metadata API (not aggregator).

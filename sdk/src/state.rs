@@ -64,6 +64,8 @@ pub struct SaleState {
     pub encrypted_blob_id: Option<String>,
     pub encrypted_asset_path: Option<String>,
     pub walrus_blob_id: Option<String>,
+    #[serde(default)]
+    pub walrus_end_epoch: Option<u64>,
     pub data_commitment: Option<String>,
     pub data_version: Option<String>,
     pub stages: Vec<StageRecord>,
@@ -85,6 +87,7 @@ impl SaleState {
             encrypted_blob_id: None,
             encrypted_asset_path: None,
             walrus_blob_id: None,
+            walrus_end_epoch: None,
             data_commitment: None,
             data_version: None,
             stages: Vec::new(),

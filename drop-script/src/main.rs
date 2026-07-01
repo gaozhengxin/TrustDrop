@@ -155,6 +155,7 @@ pub struct ListingState {
     pub unique_sale_id: [u8; 32],
     pub onchain_data_version: [u8; 32],
     pub walrus_blob_id: String,
+    pub walrus_end_epoch: Option<u64>,
     pub channel_address: Address,
     pub original_asset_id: [u8; 32],
     pub encrypted_blob_id: [u8; 32],
@@ -651,6 +652,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
         unique_sale_id,
         onchain_data_version: onchain_data_version.into(),
         walrus_blob_id,
+        walrus_end_epoch: None,
         channel_address: channel_addr,
         original_asset_id,
         encrypted_blob_id,
@@ -972,7 +974,10 @@ pub async fn stage_3_fulfill(
 ///
 /// This is intentionally opt-in. If ORACLE_MODE is unset, the script keeps the
 /// old behavior and only waits for oracleSuccessUntil.
-pub async fn trigger_centralized_oracle_worker_if_enabled(fulfill_tx_hash: H256) -> Result<()> {
+pub async fn trigger_centralized_oracle_worker_if_enabled(
+    fulfill_tx_hash: H256,
+    walrus_end_epoch: Option<u64>,
+) -> Result<()> {
     let mode = configured_oracle_mode();
     if mode != "centralized" {
         println!(
@@ -1014,6 +1019,7 @@ pub async fn trigger_centralized_oracle_worker_if_enabled(fulfill_tx_hash: H256)
         .json(&serde_json::json!({
             "chainId": ARBITRUM_SEPOLIA_CHAIN_ID,
             "txHash": fulfill_tx_hash_hex,
+            "walrusEndEpoch": walrus_end_epoch,
         }))
         .send()
         .await?;
@@ -1498,7 +1504,7 @@ async fn main() -> Result<()> {
     // 1.6. VDD 与 buyer 无关，提前提交并触发 Oracle。
     let vdd_tx_hash = stage_1_6_submit_vdd_proof(&walrus_client, &listing, &seller_ctx).await?;
     if vdd_tx_hash != H256::zero() {
-        trigger_centralized_oracle_worker_if_enabled(vdd_tx_hash).await?;
+        trigger_centralized_oracle_worker_if_enabled(vdd_tx_hash, listing.walrus_end_epoch).await?;
     }
     wait_for_oracle_signal(
         listing.channel_address,
