@@ -864,10 +864,10 @@ thread 和 purchase 的状态同步规则：
 - `drop-cli keys check` 已新增，只输出 seller address、owner public key、asset key commitment，不输出私钥。
 - `maenad_v1` nonce domain 已替换为 `trustdrop_asset_v1`，并同步 `drop-cli`、`drop-script` 和 VDD walrus_rslhve host scripts。
 
-仍未完成：
+仍未完成（历史记录，2026-07-01 batch VSS 更新后下列前两项已完成）：
 
-- 原生 `drop-cli phase fulfill <thread-id>` 和 `phase settle <thread-id>` 仍未替代 `drop-script` bridge。
-- 原生 batch VSS proof 还没有在 CLI 中生成和提交；当前只是完成 `needsVss` 分类和 thread 组织。
+- 已完成更新：原生 `drop-cli phase fulfill <thread-id>` 和 `phase settle <thread-id>` 已替代单 purchase bridge 路径，支持 thread 内多 purchase。
+- 已完成更新：原生 batch VSS proof 已能在 CLI thread fulfill 中生成并提交 `shareDataKey`。
 - buyer purchase 的跨进程元数据仍缺失。现有 `drop-script` bridge 依赖内存中的 `purchase.secret_sharing_key` 和 `purchase.ephemeral_pubkey`；如果 purchase 来自独立 buyer 前端，CLI 必须从链上事件或链下订单元数据拿到解封装所需材料。
 - SQLite/TUI/daemon 尚未实现。
 - 密钥管理仍未达到完整产品级 keystore。当前已经禁止静默默认 key，但还没有加密 keystore、外部 signer、硬件钱包、密钥轮换和 profile 权限模型。
@@ -1258,7 +1258,7 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
   - `purchase list/show` 先基于本地 state 中已记录的 purchase tx，不主动扫全链 purchase event。
   - `phase respond` 可基于本地 purchase tx 自动创建或复用 thread，并输出 thread id。
   - 对已经 settled 的 purchase，thread 会直接显示 `Completed`，并展示 fulfill/settle tx。
-  - native batch VSS fulfill / native thread settle 尚未替代 `complete-test-flow` bridge；未完成路径会标记 `Blocked`，不伪造链上交易。
+  - 2026-07-01 更新：native batch VSS fulfill / native thread settle 已接入手动 phase；仍未接入 daemon 自动策略。
 - 已用上次 full-flow run dir 验证：
   - `drop-cli db inspect`
   - `drop-cli sale list`
@@ -1284,8 +1284,8 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
 - `proof vss <sale-id> --yes` 已对 state 中第一笔 purchase context 执行 VSS fulfill。
 - `settle <sale-id> --yes` 已对 state 中第一笔 purchase 执行 settle。
 - `recover-test <sale-id>` 已基于 purchase context 和 fulfill tx 执行恢复测试。
-- `phase fulfill <thread-id>` 已调用 sale 级 fulfill，但当前只覆盖 thread 中第一笔 purchase；batch VSS 还未产品化。
-- `phase settle <thread-id>` 已调用 sale 级 settle，但当前只覆盖 thread 中第一笔 purchase；多 purchase partial success 还未产品化。
+- `phase fulfill <thread-id>` 已支持 thread 级 batch VSS：对 `needsVSS=true` 的 purchase 生成一次 batch proof 并调用 `shareDataKey`。
+- `phase settle <thread-id>` 已支持 thread 内 purchase 串行 settle；daemon partial success / retry UI 还未产品化。
 - `tx resume` 不是真 resume，只提示 status。
 - `purchase list/show` 只读取本地 state 已记录的 purchase，不主动扫链上 event 或 subgraph。
 - `channel sync/watch` 在设计中存在，但代码未实现。
@@ -1671,7 +1671,8 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 - 未完成：daemon 自动刷新 channel、划分 batch、自动 fulfill / settle。
 - 未完成：内置轻量级数据库替代 fixture 文件。
 - 未完成：产品级密钥管理，包括加密 keystore、外部 signer、key rotation 和最小权限 profile。
-- 未完成：原生 batch VSS 证明调度。当前逻辑具备判断基础，但还不是完整订阅频道批处理产品。
+- 已完成：原生 batch VSS 证明和 `shareDataKey` 调度。`phase respond` 可以把多个 `needsVSS=true` 的 purchase 组成 thread，`phase fulfill <thread-id>` 会生成一次 batch VSS proof 并调用 channel `shareDataKey`，`phase settle <thread-id>` 会逐笔 settle。
+- 未完成：daemon 自动 batch 策略、长期运行锁、nonce/pending tx 管理，以及更细粒度的 partial success / retry UI。
 
 因此，当前不能把 `drop-cli` 描述为“产品级全部开发完成”；只能描述为“prototype full-flow 可用，核心合约/脚本/Worker 配套已对齐”。
 
@@ -1708,11 +1709,11 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 必须完成：
 
 - Batch VSS：
-  - 将 thread 从“第一笔 purchase”升级为真正的 purchase batch。
-  - 为同一 channel/sale 下多个 `needsVSS=true` 的 purchase 生成一次 batch VSS proof。
-  - 调用 channel `shareDataKey(proof, publicValues, audiences, encryptedDataKeys)` 一次性标记多个 buyer 为 privy。
-  - 对 batch 内每笔 purchase 执行 fulfill/settle；已 privy buyer 走 no-vss 单笔 thread。
-  - 保存每笔 purchase 的 buyer、exchangeInfo、vssKeyCommitment、encryptedDataKey、fulfill tx、settle tx、错误状态，支持 partial success。
+  - 已完成：将 thread 从“第一笔 purchase”升级为 purchase batch。
+  - 已完成：为同一 channel/sale 下多个 `needsVSS=true` 的 purchase 生成一次 batch VSS proof。
+  - 已完成：调用 channel `shareDataKey(proof, publicValues, audiences, encryptedDataKeys)` 一次性标记多个 buyer 为 privy。
+  - 已完成：对 batch 内每笔 purchase 逐笔 settle；已 privy buyer 走 no-vss 单笔 thread。
+  - 未完成：更细粒度的 partial success / retry UI，以及 daemon 自动 batch 策略。
 - 长期运行产品级 daemon：
   - 配置文件支持 channel refresh interval、batch window、max batch size、auto_respond、auto_fulfill、auto_settle、spend limits。
   - daemon 长期运行时必须持久化锁，防止多实例同时处理同一 purchase。
@@ -1744,9 +1745,9 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 执行顺序：
 
 1. 先实现 purchase context import 和 exchangeInfo 持久化。
-2. 实现 batch policy 和 batch thread 状态机。
-3. 实现 batch VSS proof + `shareDataKey`。
-4. 实现每笔 purchase 的 fulfill/settle partial success。
+2. 已完成：实现 batch thread 状态机的手动路径。
+3. 已完成：实现 batch VSS proof + `shareDataKey`。
+4. 未完成：实现每笔 purchase 的 daemon partial success / retry 策略。
 5. 将 JSON store 迁移到 SQLite。
 6. 实现 daemon run loop、锁、nonce/pending tx 管理。
 7. 实现 TUI 交互层。

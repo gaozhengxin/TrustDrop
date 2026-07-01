@@ -169,6 +169,14 @@ pub struct PurchaseState {
     pub ephemeral_pubkey: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BatchVssShare {
+    pub buyer: Address,
+    pub purchase_tx_hash: H256,
+    pub secret_sharing_key: [u8; 32],
+    pub ephemeral_pubkey: Vec<u8>,
+}
+
 pub fn seller_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
     let sk = SecretKey::from_slice(sk_bytes)
         .map_err(|e| anyhow!("Invalid seller VSS secret key: {}", e))?;
@@ -255,6 +263,32 @@ fn validate_vss_public_values(
         decoded.nonce.first() == Some(&expected_nonce),
         "VSS public nonce mismatch"
     );
+    Ok(())
+}
+
+fn validate_vss_public_values_batch(
+    public_values: &Bytes,
+    expected_cipher_blocks: &[[u8; 32]],
+    expected_key_commitments: &[[u8; 32]],
+    expected_nonces: &[[u8; 12]],
+) -> Result<()> {
+    let decoded = drop_lib::common::decode_public_outputs_with_cipher(public_values.as_ref())
+        .map_err(|e| anyhow!("Failed to decode VSS public values: {}", e))?;
+    ensure!(
+        decoded.length as usize == expected_cipher_blocks.len(),
+        "VSS public length mismatch: {}, expected {}",
+        decoded.length,
+        expected_cipher_blocks.len()
+    );
+    ensure!(
+        decoded.cipher_block == expected_cipher_blocks,
+        "VSS public encrypted data keys mismatch"
+    );
+    ensure!(
+        decoded.h_k_commitment == expected_key_commitments,
+        "VSS public key commitments mismatch"
+    );
+    ensure!(decoded.nonce == expected_nonces, "VSS public nonce mismatch");
     Ok(())
 }
 
@@ -970,6 +1004,131 @@ pub async fn stage_3_fulfill(
     Ok(receipt.transaction_hash)
 }
 
+pub async fn stage_3_share_data_key_batch(
+    listing: &ListingState,
+    shares: &[BatchVssShare],
+    ctx: &SellerContext,
+) -> Result<H256> {
+    println!(">>> [STAGE 3B] BATCH VSS SHARE...");
+    ensure!(!shares.is_empty(), "batch VSS requires at least one purchase");
+
+    let channel_contract =
+        channel_abi::ExchangeChannelContract::new(listing.channel_address, ctx.signer.clone());
+
+    let mut audiences = Vec::with_capacity(shares.len());
+    let mut secret_keys = Vec::with_capacity(shares.len());
+    let mut encrypted_data_keys = Vec::with_capacity(shares.len());
+    let mut vss_key_commitments = Vec::with_capacity(shares.len());
+    let mut wrapped_asset_keys = Vec::with_capacity(shares.len());
+    let nonce = [0u8; 12];
+
+    for share in shares {
+        let (buyer, exchange_info) = get_purchase_info_from_event(
+            ctx.signer.provider(),
+            share.purchase_tx_hash,
+            listing.channel_address,
+            listing.unique_sale_id,
+        )
+        .await?;
+        ensure!(
+            buyer == share.buyer,
+            "purchase buyer mismatch for {}: event={:?}, expected={:?}",
+            share.purchase_tx_hash,
+            buyer,
+            share.buyer
+        );
+        if channel_contract.is_privy(buyer).call().await? {
+            println!("  - buyer already privy, skipping: {:?}", buyer);
+            continue;
+        }
+
+        let audience_idx = channel_contract.audience_index(buyer).call().await?;
+        let (_stored_vss_commitment, encrypted_vss_key) =
+            channel_contract.audience_list(audience_idx).call().await?;
+        let secret_sharing_key = ecies::decrypt(
+            &ctx.owner_sk_bytes,
+            &encrypted_vss_key,
+            &share.ephemeral_pubkey,
+        )?;
+        ensure!(
+            secret_sharing_key == share.secret_sharing_key,
+            "Decrypted VSS key does not match buyer purchase context for {:?}",
+            buyer
+        );
+
+        let wrapped_asset_key_vec = chacha8_encrypt(
+            &ctx.asset_encryption_key.to_vec(),
+            &secret_sharing_key,
+            &nonce,
+            0,
+        )?;
+        let wrapped_asset_key: [u8; 32] = wrapped_asset_key_vec
+            .clone()
+            .try_into()
+            .map_err(|_| anyhow!("wrapped asset key must be exactly 32 bytes"))?;
+
+        audiences.push(buyer);
+        secret_keys.push(secret_sharing_key);
+        encrypted_data_keys.push(wrapped_asset_key.into());
+        vss_key_commitments.push(exchange_info.vss_key_commitment);
+        wrapped_asset_keys.push(wrapped_asset_key);
+    }
+
+    ensure!(
+        !audiences.is_empty(),
+        "all purchases are already privy; no batch VSS transaction needed"
+    );
+
+    let data_key_commit = data_key_commitment(&ctx.asset_encryption_key);
+    let binding_hash = ethers::utils::keccak256(ethers::abi::encode(&[
+        ethers::abi::Token::FixedBytes(data_key_commit.to_vec()),
+        ethers::abi::Token::Array(
+            vss_key_commitments
+                .iter()
+                .map(|key| ethers::abi::Token::FixedBytes(key.to_vec()))
+                .collect(),
+        ),
+        ethers::abi::Token::Array(
+            wrapped_asset_keys
+                .iter()
+                .map(|key| ethers::abi::Token::FixedBytes(key.to_vec()))
+                .collect(),
+        ),
+    ]));
+
+    let vss_verifier_addr = configured_vss_verifier_address()?;
+    println!("  - Using VSS Verifier at: {}", vss_verifier_addr);
+    println!("  - batch size: {}", audiences.len());
+
+    let (proof, public_values, vk) =
+        generate_vss_proof_batch(secret_keys, ctx.asset_encryption_key).await?;
+    let nonces = vec![nonce; audiences.len()];
+    validate_vss_public_values_batch(
+        &public_values,
+        &wrapped_asset_keys,
+        &vss_key_commitments,
+        &nonces,
+    )?;
+    simulate_vss_verify(
+        ctx.signer.provider(),
+        vss_verifier_addr,
+        vk,
+        binding_hash,
+        public_values.clone(),
+        proof.clone(),
+    )
+    .await?;
+
+    println!(">>> All simulations passed. Submitting shareDataKey transaction...");
+    let receipt = channel_contract
+        .share_data_key(proof, public_values, audiences, encrypted_data_keys)
+        .send()
+        .await?
+        .await?
+        .ok_or(anyhow!("shareDataKey receipt missing"))?;
+    Ok(receipt.transaction_hash)
+}
+
 /// Trigger the centralized oracle Worker after fulfill emits OracleRequested.
 ///
 /// This is intentionally opt-in. If ORACLE_MODE is unset, the script keeps the
@@ -1186,16 +1345,36 @@ pub async fn generate_vdd_proof(
 /// ## 输出
 /// - `(Bytes, Bytes)`: ZK 证明和公开值。
 pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes, String)> {
+    generate_vss_proof_batch(vec![v_k], d_k).await
+}
+
+pub async fn generate_vss_proof_batch(
+    v_keys: Vec<[u8; 32]>,
+    d_k: [u8; 32],
+) -> Result<(Bytes, Bytes, String)> {
+    ensure!(!v_keys.is_empty(), "VSS batch must contain at least one key");
+    ensure!(v_keys.len() <= u8::MAX as usize, "VSS batch too large");
     println!(">>> [VSS PROOF] zkVM Inputs:");
     println!("  - d_k (asset_encryption_key): 0x{}", hex::encode(d_k));
-    println!("  - v_k (secret_sharing_key): 0x{}", hex::encode(v_k));
-    println!("  - nonce: 0x{}", hex::encode(vec![0u8; 12]));
+    println!("  - key_count: {}", v_keys.len());
+    for (index, v_k) in v_keys.iter().enumerate() {
+        println!(
+            "  - v_k[{}] (secret_sharing_key): 0x{}",
+            index,
+            hex::encode(v_k)
+        );
+    }
+    println!("  - nonce[*]: 0x{}", hex::encode(vec![0u8; 12]));
 
     let mut stdin = SP1Stdin::new();
-    stdin.write(&1u8); // length
+    stdin.write(&(v_keys.len() as u8)); // length
     stdin.write(&d_k.to_vec()); // message, matches guest read::<Vec<u8>>()
-    stdin.write(&v_k); // watcher's key, matches guest read::<[u8; 32]>()
-    stdin.write(&[0u8; 12]); // nonce, matches guest read::<[u8; 12]>()
+    for v_k in &v_keys {
+        stdin.write(v_k); // watcher's key, matches guest read::<[u8; 32]>()
+    }
+    for _ in &v_keys {
+        stdin.write(&[0u8; 12]); // nonce, matches guest read::<[u8; 12]>()
+    }
 
     env::set_var("NETWORK_PRIVATE_KEY", env::var("SP1_PRIVATE_KEY").unwrap());
     let client = ProverClient::builder()

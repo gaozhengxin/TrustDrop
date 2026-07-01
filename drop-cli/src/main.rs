@@ -1442,9 +1442,19 @@ async fn phase_fulfill(thread_id: &str) -> Result<()> {
     thread.next_actions = vec![format!("drop-cli phase settle {}", thread.thread_id)];
     thread.updated_at = unix_timestamp_string();
     save_thread_state(&state_dir, &thread)?;
-    fulfill_first_purchase_for_sale(&thread.sale_id).await?;
+    fulfill_thread_purchases(&thread).await?;
     let state = load_sale_state(&state_dir, &thread.sale_id)?;
-    thread.fulfill_tx_hash = confirmed_tx_hash(&state, "fulfill");
+    thread.fulfill_tx_hash = confirmed_tx_hash(&state, "batch_vss_share")
+        .or_else(|| confirmed_tx_hash(&state, "fulfill"));
+    for purchase in &mut thread.purchases {
+        if let Some(context) = state.purchases.iter().find(|context| {
+            context
+                .purchase_tx_hash
+                .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
+        }) {
+            purchase.status = context.status.clone();
+        }
+    }
     thread.status = ThreadStatus::Fulfilled;
     thread.updated_at = unix_timestamp_string();
     save_thread_state(&state_dir, &thread)?;
@@ -1472,11 +1482,8 @@ async fn phase_settle(thread_id: &str) -> Result<()> {
     thread.next_actions = vec![format!("drop-cli phase verify {}", thread.sale_id)];
     thread.updated_at = unix_timestamp_string();
     save_thread_state(&state_dir, &thread)?;
-    settle_first_purchase_for_sale(&thread.sale_id).await?;
+    settle_thread_purchases(&thread).await?;
     let state = load_sale_state(&state_dir, &thread.sale_id)?;
-    if let Some(settle_tx) = confirmed_tx_hash(&state, "settle") {
-        thread.settle_tx_hashes.push(settle_tx);
-    }
     for purchase in &mut thread.purchases {
         if let Some(context) = state.purchases.iter().find(|context| {
             context
@@ -1485,6 +1492,15 @@ async fn phase_settle(thread_id: &str) -> Result<()> {
         }) {
             purchase.status = context.status.clone();
             purchase.settle_tx_hash = context.settle_tx_hash.clone();
+            if let Some(settle_tx) = &context.settle_tx_hash {
+                if !thread
+                    .settle_tx_hashes
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(settle_tx))
+                {
+                    thread.settle_tx_hashes.push(settle_tx.clone());
+                }
+            }
         }
     }
     thread.status = ThreadStatus::Completed;
@@ -1517,6 +1533,86 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
     save_sale_state(&state_dir, &state)?;
     println!("vddTx: {vdd_tx:?}");
     println!("next: drop-cli purchase list --sale {}", state.sale_id);
+    Ok(())
+}
+
+async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut state = load_sale_state(&state_dir, &thread.sale_id)?;
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+
+    let mut batch_shares = Vec::new();
+    for thread_purchase in thread
+        .purchases
+        .iter()
+        .filter(|purchase| purchase.needs_vss)
+    {
+        let context = purchase_context_by_tx(&state, &thread_purchase.purchase_tx_hash)?.clone();
+        let buyer = thread_purchase
+            .buyer
+            .as_deref()
+            .or(context.buyer.as_deref())
+            .ok_or_else(|| {
+                anyhow!(
+                    "purchase {} missing buyer; run drop-cli purchase show or phase respond again",
+                    thread_purchase.purchase_tx_hash
+                )
+            })?;
+        batch_shares.push(drop_script::BatchVssShare {
+            buyer: parse_address(buyer)?,
+            purchase_tx_hash: context.purchase_tx_hash.parse()?,
+            secret_sharing_key: parse_optional_hex32(
+                context.secret_sharing_key.as_deref(),
+                "secret_sharing_key",
+            )?,
+            ephemeral_pubkey: parse_optional_hex_bytes(
+                context.ephemeral_pubkey.as_deref(),
+                "ephemeral_pubkey",
+            )?,
+        });
+    }
+
+    if !batch_shares.is_empty() {
+        let share_tx =
+            drop_script::stage_3_share_data_key_batch(&listing, &batch_shares, &seller_ctx).await?;
+        let share_tx_string = format!("{share_tx:?}");
+        state.transactions.push(tx_record(
+            "batch_vss_share",
+            Some(share_tx_string.clone()),
+            TxStatus::Confirmed,
+            None,
+        ));
+        for share in &batch_shares {
+            if let Some(context) = state.purchases.iter_mut().find(|context| {
+                context
+                    .purchase_tx_hash
+                    .eq_ignore_ascii_case(&format!("{:?}", share.purchase_tx_hash))
+            }) {
+                context.buyer = Some(format!("{:?}", share.buyer));
+                context.fulfill_tx_hash = Some(share_tx_string.clone());
+                context.status = "fulfilled".to_string();
+            }
+        }
+    }
+
+    for thread_purchase in thread
+        .purchases
+        .iter()
+        .filter(|purchase| !purchase.needs_vss)
+    {
+        if let Some(context) = state.purchases.iter_mut().find(|context| {
+            context
+                .purchase_tx_hash
+                .eq_ignore_ascii_case(&thread_purchase.purchase_tx_hash)
+        }) {
+            context.status = "fulfilled".to_string();
+        }
+    }
+
+    state.next_actions = vec![format!("drop-cli phase settle {}", thread.thread_id)];
+    save_sale_state(&state_dir, &state)?;
     Ok(())
 }
 
@@ -1553,13 +1649,40 @@ async fn fulfill_first_purchase_for_sale(sale_id: &str) -> Result<()> {
     Ok(())
 }
 
+async fn settle_thread_purchases(thread: &ThreadState) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let purchase_txs: Vec<String> = thread
+        .purchases
+        .iter()
+        .filter(|purchase| {
+            purchase.status != "settled" && purchase.settle_tx_hash.as_deref().is_none()
+        })
+        .map(|purchase| purchase.purchase_tx_hash.clone())
+        .collect();
+    for purchase_tx in purchase_txs {
+        settle_purchase_for_sale(&thread.sale_id, &purchase_tx).await?;
+    }
+    let mut state = load_sale_state(&state_dir, &thread.sale_id)?;
+    state.next_actions = vec![format!("drop-cli phase verify {}", thread.sale_id)];
+    save_sale_state(&state_dir, &state)?;
+    Ok(())
+}
+
 async fn settle_first_purchase_for_sale(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state = load_sale_state(state_dir(&config)?, sale_id)?;
+    let purchase_context = first_purchase_context(&state)?.clone();
+    settle_purchase_for_sale(sale_id, &purchase_context.purchase_tx_hash).await
+}
+
+async fn settle_purchase_for_sale(sale_id: &str, purchase_tx_hash: &str) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let mut state = load_sale_state(&state_dir, sale_id)?;
     let listing = drop_script_listing_from_state(&state)?;
     let seller_ctx = drop_script_seller_context(&config).await?;
-    let purchase_context = first_purchase_context(&state)?.clone();
+    let purchase_context = purchase_context_by_tx(&state, purchase_tx_hash)?.clone();
     let purchase_tx: H256 = purchase_context.purchase_tx_hash.parse()?;
 
     drop_script::wait_for_oracle_signal(
@@ -1644,6 +1767,22 @@ fn first_purchase_context(state: &SaleState) -> Result<&PurchaseContextRecord> {
             "state has no purchase context; run complete-test-flow or import buyer purchase context before VSS fulfill/settle"
         )
     })
+}
+
+fn purchase_context_by_tx<'a>(
+    state: &'a SaleState,
+    purchase_tx_hash: &str,
+) -> Result<&'a PurchaseContextRecord> {
+    state
+        .purchases
+        .iter()
+        .find(|context| context.purchase_tx_hash.eq_ignore_ascii_case(purchase_tx_hash))
+        .ok_or_else(|| {
+            anyhow!(
+                "state has no purchase context for {}; import buyer purchase context before VSS fulfill/settle",
+                purchase_tx_hash
+            )
+        })
 }
 
 fn purchase_state_from_context(context: &PurchaseContextRecord) -> Result<drop_script::PurchaseState> {
