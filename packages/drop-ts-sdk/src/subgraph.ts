@@ -34,7 +34,6 @@ export type MarketplacePurchase = {
   initTime: string;
   deadline: string;
   vssKeyCommitment: `0x${string}`;
-  ephemeralPubkey: `0x${string}`;
   txHash: `0x${string}`;
   timestamp: string;
 };
@@ -112,7 +111,7 @@ export class TrustDropSubgraph {
     }>(
       `query BuyerActivity($buyer: Bytes!) {
         purchases(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
-          id channel saleId dataCommitment buyer price saleDigest initTime deadline vssKeyCommitment ephemeralPubkey txHash timestamp
+          id channel saleId dataCommitment buyer price saleDigest initTime deadline vssKeyCommitment txHash timestamp
         }
         settlements(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
           id channel buyer saleId dataCommitment txHash timestamp

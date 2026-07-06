@@ -17,7 +17,7 @@ export type BuyerThread = {
   updatedAt: number;
 };
 
-const DB_NAME = "trusted-file-marketplace";
+const DB_NAME = "fair-file-marketplace";
 const STORE = "buyer_threads";
 
 function openDb(): Promise<IDBDatabase> {
@@ -50,4 +50,3 @@ export async function upsertLocalThread(thread: BuyerThread): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
 }
-

@@ -13,9 +13,11 @@ import { arbitrumSepolia } from "viem/chains";
 import { DEFAULT_RPC_URL } from "./config";
 import type { MarketplaceSale } from "./subgraph";
 
+type Hex = `0x${string}`;
+
 const channelAbi = parseAbi([
   "function ownerPublicKey() view returns ((bytes data))",
-  "function purchase(bytes32 saleId, bytes32 dataVersion, uint256 price, uint256 deadline, bytes dataCommitment, bytes32 vssKeyCommitment, bytes32 encryptedVssKey, bytes ephemeralPubkey) payable",
+  "function purchase(bytes32 saleId, bytes32 dataVersion, uint256 price, uint256 deadline, bytes dataCommitment, bytes32 vssKeyCommitment, bytes encryptedVssKey) payable",
 ]);
 
 export type PreparedPurchase = {
@@ -24,7 +26,6 @@ export type PreparedPurchase = {
   secretSharingKey: `0x${string}`;
   vssKeyCommitment: `0x${string}`;
   encryptedVssKey: `0x${string}`;
-  ephemeralPubkey: `0x${string}`;
 };
 
 export function salePriceEth(sale: MarketplaceSale): string {
@@ -45,7 +46,7 @@ export async function preparePurchase(
   const signature = await walletClient.signMessage({
     account: buyer,
     message: [
-      "Trusted File Marketplace buyer key",
+      "Fair File Marketplace buyer key",
       `chain:${arbitrumSepolia.id}`,
       `channel:${sale.channel.toLowerCase()}`,
       `sale:${sale.saleId.toLowerCase()}`,
@@ -53,7 +54,7 @@ export async function preparePurchase(
       `commitment:${sale.dataCommitment.toLowerCase()}`,
     ].join("\n"),
   });
-  const secretBytes = sha256(concatBytes(hexToBytes(signature), utf8ToBytes(sale.saleId)));
+  const secretBytes = sha256(concatBytes(hexToBytes(normalizeHex(signature, "wallet signature")), utf8ToBytes(sale.saleId)));
   const commitment = blake3(secretBytes);
 
   const publicClient = createPublicClient({
@@ -65,16 +66,18 @@ export async function preparePurchase(
     abi: channelAbi,
     functionName: "ownerPublicKey",
   })) as { data: `0x${string}` } | [`0x${string}`];
-  const ownerPublicKeyHex = Array.isArray(ownerPublicKey) ? ownerPublicKey[0] : ownerPublicKey.data;
-  const encrypted = eciesEncrypt(ownerPublicKeyHex, secretBytes);
+  const ownerPublicKeyHex = normalizeHex(
+    Array.isArray(ownerPublicKey) ? ownerPublicKey[0] : ownerPublicKey.data,
+    "seller owner public key",
+  );
+  const encryptedVssKey = eciesEncryptPackage(ownerPublicKeyHex, secretBytes);
 
   return {
     sale,
     deadline: BigInt(Math.floor(Date.now() / 1000) + 8 * 24 * 60 * 60),
     secretSharingKey: bytesToHex(secretBytes),
     vssKeyCommitment: bytesToHex(commitment),
-    encryptedVssKey: bytesToHex(encrypted.ciphertext),
-    ephemeralPubkey: bytesToHex(encrypted.ephemeralPubkey),
+    encryptedVssKey: bytesToHex(encryptedVssKey),
   };
 }
 
@@ -92,7 +95,6 @@ export async function submitPurchase(prepared: PreparedPurchase, walletClient: W
       prepared.sale.dataCommitment,
       prepared.vssKeyCommitment,
       prepared.encryptedVssKey,
-      prepared.ephemeralPubkey,
     ],
     value: BigInt(prepared.sale.price),
     account: walletClient.account,
@@ -100,16 +102,28 @@ export async function submitPurchase(prepared: PreparedPurchase, walletClient: W
   });
 }
 
-function eciesEncrypt(recipientPubkey: `0x${string}`, secret: Uint8Array): { ciphertext: Uint8Array; ephemeralPubkey: Uint8Array } {
+function eciesEncryptPackage(recipientPubkey: Hex, secret: Uint8Array): Uint8Array {
+  const version = 1;
+  const recipientPubkeyBytes = hexToBytes(recipientPubkey);
+  if (recipientPubkeyBytes.length !== 33 && recipientPubkeyBytes.length !== 65) {
+    throw new Error(`Invalid seller owner public key length: ${recipientPubkeyBytes.length} bytes`);
+  }
   const ephemeralSecret = secp256k1.utils.randomSecretKey();
-  const shared = secp256k1.getSharedSecret(ephemeralSecret, hexToBytes(recipientPubkey), false);
+  const shared = secp256k1.getSharedSecret(ephemeralSecret, recipientPubkeyBytes, false);
   const mask = sha256(shared.slice(1, 33));
   const ciphertext = new Uint8Array(32);
   for (let i = 0; i < 32; i++) ciphertext[i] = secret[i] ^ mask[i];
-  return {
-    ciphertext,
-    ephemeralPubkey: secp256k1.getPublicKey(ephemeralSecret, true),
-  };
+  return concatBytes(new Uint8Array([version]), secp256k1.getPublicKey(ephemeralSecret, true), ciphertext);
+}
+
+function normalizeHex(value: string, label: string): Hex {
+  let hex = value.trim().toLowerCase();
+  if (hex.startsWith("0x")) hex = hex.slice(2);
+  if (!/^[0-9a-f]*$/.test(hex)) {
+    throw new Error(`${label} is not hex`);
+  }
+  if (hex.length % 2 === 1) hex = `0${hex}`;
+  return `0x${hex}`;
 }
 
 function bytesToHex(bytes: Uint8Array): `0x${string}` {

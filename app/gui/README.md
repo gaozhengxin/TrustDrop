@@ -1,4 +1,4 @@
-# Trusted File Marketplace
+# Fair File Marketplace
 
 Buyer-facing TrustDrop file mall web app.
 

@@ -110,8 +110,8 @@ function renderShell(content: string): string {
   return `
     <header class="topbar">
       <button class="brand" data-route="home" type="button">
-        <span class="brand-mark">TF</span>
-        <span>Trusted File Marketplace</span>
+        <span class="brand-mark">FF</span>
+        <span>Fair File Marketplace</span>
       </button>
       <nav class="nav">
         ${navButton("home", "Home")}
@@ -134,7 +134,7 @@ function renderHome(): string {
   return renderShell(`
     <section class="toolbar">
       <div>
-        <h1>Trusted file transactions</h1>
+        <h1>Fair file transactions</h1>
         <p>Browse seller listings with on-chain purchase, fulfillment, and recovery records.</p>
       </div>
       ${searchBox()}
@@ -429,7 +429,7 @@ function shortAddress(value: string): string {
 
 function initials(title: string): string {
   const clean = title.trim();
-  if (!clean) return "TF";
+  if (!clean) return "FF";
   const parts = clean.split(/\s+/).slice(0, 2);
   return parts.map((part) => part[0]).join("").toUpperCase();
 }
