@@ -90,7 +90,7 @@ contract NegativePathTest is BaseTest {
             block.timestamp + 10 days,
             wrongCommitment,
             Types.Hash.wrap(bytes32(uint256(0x123))),
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
     }
 
@@ -106,7 +106,7 @@ contract NegativePathTest is BaseTest {
             block.timestamp + 30 minutes,
             cidData,
             Types.Hash.wrap(bytes32(uint256(0x123))),
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
     }
 
@@ -122,7 +122,7 @@ contract NegativePathTest is BaseTest {
             block.timestamp + 31 days,
             cidData,
             Types.Hash.wrap(bytes32(uint256(0x123))),
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
     }
 

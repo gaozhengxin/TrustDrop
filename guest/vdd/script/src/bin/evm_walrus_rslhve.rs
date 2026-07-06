@@ -130,11 +130,35 @@ async fn main() {
     }
 
     println!("Starting proof generation with {:?}...", args.system);
-    let proof = match args.system {
-        ProofSystem::Plonk => client.prove(&pk, stdin).compressed().plonk().await,
-        ProofSystem::Groth16 => client.prove(&pk, stdin).compressed().groth16().await,
-    }
-    .expect("failed to generate proof");
+    let proof_result = match args.system {
+        ProofSystem::Plonk => {
+            client
+                .prove(&pk, stdin)
+                .cycle_limit(1_000_000_000)
+                .gas_limit(1_000_000_000)
+                .skip_simulation(true)
+                .compressed()
+                .plonk()
+                .await
+        }
+        ProofSystem::Groth16 => {
+            client
+                .prove(&pk, stdin)
+                .cycle_limit(1_000_000_000)
+                .gas_limit(1_000_000_000)
+                .skip_simulation(true)
+                .compressed()
+                .groth16()
+                .await
+        }
+    };
+    let proof = match proof_result {
+        Ok(proof) => proof,
+        Err(error) => {
+            eprintln!("failed to generate proof: {error:?}");
+            std::process::exit(1);
+        }
+    };
 
     if proof.public_values.as_slice()
         != [&c_origin_bytes[..], &c_key_bytes[..], &c_cipher_bytes[..]]

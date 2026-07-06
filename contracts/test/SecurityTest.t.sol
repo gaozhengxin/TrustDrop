@@ -73,7 +73,7 @@ contract SecurityTest is BaseTest {
             block.timestamp + 10 days,
             cid.data,
             vssKeyCommitment,
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
 
         // 3. 模拟 Oracle 响应：假设存储已经验证成功 (Status 2)

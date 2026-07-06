@@ -1,15 +1,9 @@
-[package]
-name = "maenad"
-version = "0.1.0"
-edition = "2024"
-
 [workspace]
 members = [
     "drop-lib",
     "guest/*/script",
     "guest/*/program",
     "sdk",
-    "app/gui/src-tauri",
     "storage",
     "walrus-core",
     "drop-script",
@@ -18,11 +12,3 @@ members = [
 
 [workspace.dependencies]
 alloy-sol-types = "1.0"
-
-[dependencies]
-drop-sdk = { path = "sdk" }
-maenad_gui = { path = "app/gui/src-tauri" }
-
-[[bin]]
-name = "maenad_gui"
-path = "app/gui/src-tauri/src/main.rs"

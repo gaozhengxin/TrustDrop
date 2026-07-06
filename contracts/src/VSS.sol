@@ -11,7 +11,7 @@ contract VSS is Pausable {
 
     struct AudienceInfo {
         Types.Hash vssKeyCommitment;
-        Types.Cipher32 encryptedVssKey;
+        bytes encryptedVssKey;
     }
 
     // --- 常量 ---
@@ -59,7 +59,7 @@ contract VSS is Pausable {
     function _addAudience(
         address user,
         Types.Hash vssKeyCommitment,
-        Types.Cipher32 encryptedVssKey
+        bytes memory encryptedVssKey
     ) internal {
         require(!isRegistered[user], "Audience exists");
 
@@ -81,7 +81,7 @@ contract VSS is Pausable {
 
     function join(
         Types.Hash vssKeyCommitment,
-        Types.Cipher32 encryptedVssKey
+        bytes calldata encryptedVssKey
     ) external virtual whenNotPaused {
         _addAudience(msg.sender, vssKeyCommitment, encryptedVssKey);
     }

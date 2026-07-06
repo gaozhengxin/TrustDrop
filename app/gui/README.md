@@ -1,7 +1,12 @@
-# Tauri + Vanilla TS
+# Trusted File Marketplace
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Typescript.
+Buyer-facing TrustDrop file mall web app.
 
-## Recommended IDE Setup
+This app is a pure Vite/TypeScript web app. It does not use Tauri.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Commands
+
+```sh
+pnpm --dir app/gui dev
+pnpm --dir app/gui build
+```

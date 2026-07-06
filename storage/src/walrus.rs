@@ -76,8 +76,10 @@ impl WalrusClient {
 
         if !resp.status().is_success() {
             let code = resp.status().as_u16();
-            let _body = resp.text().await.unwrap_or_default();
-            return Err(StorageError::UnexpectedStatus(code));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StorageError::Other(format!(
+                "unexpected status code {code}; body: {body}"
+            )));
         }
 
         let v = resp

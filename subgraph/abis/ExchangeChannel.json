@@ -170,8 +170,8 @@
       },
       {
         "name": "encryptedVssKey",
-        "type": "bytes32",
-        "internalType": "Types.Cipher32"
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "view"
@@ -597,8 +597,8 @@
       },
       {
         "name": "encryptedVssKey",
-        "type": "bytes32",
-        "internalType": "Types.Cipher32"
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -913,8 +913,8 @@
       },
       {
         "name": "encryptedVssKey",
-        "type": "bytes32",
-        "internalType": "Types.Cipher32"
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],

@@ -72,7 +72,7 @@ contract ProxyIsolationTest is BaseTest {
         // --- 1. 买家在 Channel A 中注册 ---
         vm.prank(buyer);
         Types.Hash vssKeyA = Types.Hash.wrap(bytes32(uint256(0x777)));
-        channelA.join(vssKeyA, Types.Cipher32.wrap(0));
+        channelA.join(vssKeyA, hex"010203");
 
         // 验证 A 的注册状态
         assertTrue(

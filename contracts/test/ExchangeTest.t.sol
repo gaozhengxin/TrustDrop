@@ -39,7 +39,7 @@ contract ExchangeTest is BaseTest {
             deadline,
             cid.data,
             vssKey,
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
 
         // 构造一个与合约内部存储完全一致的 ExchangeInfo
@@ -105,7 +105,7 @@ contract ExchangeTest is BaseTest {
             deadline,
             cid.data,
             vssKey,
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
 
         ExchangeInfo memory info = ExchangeInfo({

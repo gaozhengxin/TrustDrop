@@ -28,6 +28,7 @@
 - [0007 中心化 Oracle Worker 与 CRE 兼容合约](./iterations/0007-centralized-oracle-worker.md)
 - [0008 Drop SDK 拆分与全流程集成测试](./iterations/0008-drop-sdk-full-flow-integration.md)
 - [0009 drop-cli](./iterations/0009-drop-cli.md)
+- [0010 File Mall Web App](./iterations/0010-file-mall-web-app.md)
 
 ## 项目推进标准流程
 

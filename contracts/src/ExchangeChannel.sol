@@ -185,7 +185,7 @@ contract ExchangeChannelImplementation is ExchangeChannelStorage {
         uint256 deadline,
         bytes calldata dataCommitment,
         Types.Hash vssKeyCommitment,
-        Types.Cipher32 encryptedVssKey
+        bytes calldata encryptedVssKey
     ) external payable {
         require(dataVersion == saleVersions[saleId], "Wrong data version");
         require(

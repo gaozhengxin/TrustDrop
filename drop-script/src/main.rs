@@ -25,7 +25,7 @@ use drop_sdk::chacha8::{chacha8_decrypt, chacha8_encrypt};
 use drop_lib::rslh_ve::{
     create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT, SYMBOL_SIZE,
 };
-use drop_sdk::walrus::{compute_rs_id, upload_data_idempotent};
+use drop_sdk::walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch};
 use sha2::{Digest, Sha256};
 use sp1_sdk::{
     network::NetworkMode, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
@@ -66,7 +66,7 @@ pub const RECOVERED_ASSET_NAME: &str =
 pub const ARBITRUM_SEPOLIA_RPC: &str = "https://sepolia-rollup.arbitrum.io/rpc";
 pub const WALRUS_LOCAL_ENDPOINT: &str = "http://localhost:31415";
 
-pub const HUB_ADDRESS: &str = "0x2e506eF3F3cE222F276ddA64Df239CEF92683a78";
+pub const HUB_ADDRESS: &str = "0x907337991b4cE4D9a6e70865e40Dc013df13a0D7";
 pub const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
 pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600;
 pub const ORACLE_TIMEOUT_SECS: u64 = 30 * 60;
@@ -166,7 +166,6 @@ pub struct ListingState {
 pub struct PurchaseState {
     pub secret_sharing_key: [u8; 32],
     pub transaction_hash: H256,
-    pub ephemeral_pubkey: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +173,6 @@ pub struct BatchVssShare {
     pub buyer: Address,
     pub purchase_tx_hash: H256,
     pub secret_sharing_key: [u8; 32],
-    pub ephemeral_pubkey: Vec<u8>,
 }
 
 pub fn seller_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
@@ -651,8 +649,12 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
     println!("  - original_len: {}", original_len);
     println!("  - padded_len: {}", padded_len);
 
-    let walrus_blob_id = upload_data_idempotent(walrus, encrypted_asset_data).await?;
+    let (walrus_blob_id, walrus_end_epoch) =
+        upload_data_idempotent_with_end_epoch(walrus, encrypted_asset_data).await?;
     println!("  - walrus_blob_id: {}", walrus_blob_id);
+    if let Some(end_epoch) = walrus_end_epoch {
+        println!("  - walrus_end_epoch: {}", end_epoch);
+    }
 
     let channel_addr = get_or_create_channel(
         ctx.signer.clone(),
@@ -686,7 +688,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
         unique_sale_id,
         onchain_data_version: onchain_data_version.into(),
         walrus_blob_id,
-        walrus_end_epoch: None,
+        walrus_end_epoch,
         channel_address: channel_addr,
         original_asset_id,
         encrypted_blob_id,
@@ -820,8 +822,7 @@ pub async fn stage_2_purchase(
 ) -> Result<PurchaseState> {
     println!(">>> [STAGE 2] PURCHASE...");
     let secret_sharing_key = key_derive(&[0xbb; 32], &original_asset_id).map_err(|e| anyhow!(e))?;
-    let (encrypted_vss_key, ephemeral_pubkey) =
-        ecies::encrypt(seller_vss_pub, &secret_sharing_key)?;
+    let encrypted_vss_key = ecies::encrypt_package(seller_vss_pub, &secret_sharing_key)?;
 
     let arg_deadline = U256::from(
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + LIVING_WINDOW_SECS + 86400,
@@ -850,7 +851,6 @@ pub async fn stage_2_purchase(
         transaction_hash: tx
             .ok_or(anyhow!("purchase receipt missing"))?
             .transaction_hash,
-        ephemeral_pubkey,
     })
 }
 
@@ -891,16 +891,17 @@ pub async fn stage_3_fulfill(
     .await?;
 
     let audience_idx = channel_contract.audience_index(buyer).call().await?;
-    let (_stored_vss_commitment, encrypted_vss_key) =
+    let (stored_vss_commitment, encrypted_vss_key) =
         channel_contract.audience_list(audience_idx).call().await?;
-    let secret_sharing_key = ecies::decrypt(
-        &ctx.owner_sk_bytes,
-        &encrypted_vss_key,
-        &purchase.ephemeral_pubkey,
-    )?;
+    let secret_sharing_key = ecies::decrypt_package(&ctx.owner_sk_bytes, &encrypted_vss_key)?;
+    let decrypted_vss_commitment: [u8; 32] = *blake3::hash(&secret_sharing_key).as_bytes();
     ensure!(
-        secret_sharing_key == purchase.secret_sharing_key,
-        "Decrypted VSS key does not match buyer purchase context"
+        decrypted_vss_commitment == stored_vss_commitment,
+        "Decrypted VSS key does not match stored buyer commitment"
+    );
+    ensure!(
+        decrypted_vss_commitment == exchange_info.vss_key_commitment,
+        "Decrypted VSS key does not match purchase exchange commitment"
     );
     let wrapped_asset_key_vec = chacha8_encrypt(
         &ctx.asset_encryption_key.to_vec(),
@@ -1043,16 +1044,18 @@ pub async fn stage_3_share_data_key_batch(
         }
 
         let audience_idx = channel_contract.audience_index(buyer).call().await?;
-        let (_stored_vss_commitment, encrypted_vss_key) =
+        let (stored_vss_commitment, encrypted_vss_key) =
             channel_contract.audience_list(audience_idx).call().await?;
-        let secret_sharing_key = ecies::decrypt(
-            &ctx.owner_sk_bytes,
-            &encrypted_vss_key,
-            &share.ephemeral_pubkey,
-        )?;
+        let secret_sharing_key = ecies::decrypt_package(&ctx.owner_sk_bytes, &encrypted_vss_key)?;
+        let decrypted_vss_commitment: [u8; 32] = *blake3::hash(&secret_sharing_key).as_bytes();
         ensure!(
-            secret_sharing_key == share.secret_sharing_key,
-            "Decrypted VSS key does not match buyer purchase context for {:?}",
+            decrypted_vss_commitment == stored_vss_commitment,
+            "Decrypted VSS key does not match stored buyer commitment for {:?}",
+            buyer
+        );
+        ensure!(
+            decrypted_vss_commitment == exchange_info.vss_key_commitment,
+            "Decrypted VSS key does not match purchase exchange commitment for {:?}",
             buyer
         );
 
@@ -1169,17 +1172,20 @@ pub async fn trigger_centralized_oracle_worker_if_enabled(
 
     println!(">>> [ORACLE] Triggering centralized Worker report...");
     let fulfill_tx_hash_hex = format!("{:#x}", fulfill_tx_hash);
+    let mut request_body = serde_json::json!({
+        "chainId": ARBITRUM_SEPOLIA_CHAIN_ID,
+        "txHash": fulfill_tx_hash_hex,
+    });
+    if let Some(end_epoch) = walrus_end_epoch {
+        request_body["walrusEndEpoch"] = serde_json::json!(end_epoch);
+    }
     let response = client
         .post(format!(
             "{}/oracle/fulfill",
             worker_url.trim_end_matches('/')
         ))
         .bearer_auth(&worker_token)
-        .json(&serde_json::json!({
-            "chainId": ARBITRUM_SEPOLIA_CHAIN_ID,
-            "txHash": fulfill_tx_hash_hex,
-            "walrusEndEpoch": walrus_end_epoch,
-        }))
+        .json(&request_body)
         .send()
         .await?;
     let response_status = response.status();
@@ -1302,7 +1308,7 @@ pub async fn generate_vdd_proof(
     }
 
     // 3. === 设置并运行 Prover ===
-    env::set_var("NETWORK_PRIVATE_KEY", env::var("SP1_PRIVATE_KEY").unwrap());
+    env::set_var("NETWORK_PRIVATE_KEY", required_env("SP1_PRIVATE_KEY")?);
     let client = ProverClient::builder()
         .network_for(NetworkMode::Mainnet)
         .build()
@@ -1310,7 +1316,14 @@ pub async fn generate_vdd_proof(
     let pk = client.setup(VDD_ELF).await?;
     let vk_string = pk.verifying_key().bytes32().to_string();
     println!(">>> Submitting VDD proof generation request to network...");
-    let proof = client.prove(&pk, stdin).compressed().groth16().await?;
+    let proof = client
+        .prove(&pk, stdin)
+        .cycle_limit(1_000_000_000)
+        .gas_limit(1_000_000_000)
+        .skip_simulation(true)
+        .compressed()
+        .groth16()
+        .await?;
     println!(">>> VDD proof generated by network.");
 
     let public_values = proof.public_values.to_vec().into();
@@ -1376,7 +1389,7 @@ pub async fn generate_vss_proof_batch(
         stdin.write(&[0u8; 12]); // nonce, matches guest read::<[u8; 12]>()
     }
 
-    env::set_var("NETWORK_PRIVATE_KEY", env::var("SP1_PRIVATE_KEY").unwrap());
+    env::set_var("NETWORK_PRIVATE_KEY", required_env("SP1_PRIVATE_KEY")?);
     let client = ProverClient::builder()
         .network_for(NetworkMode::Mainnet)
         .build()

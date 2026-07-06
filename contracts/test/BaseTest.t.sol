@@ -75,7 +75,7 @@ contract BaseTest is Test {
             deadline,
             data,
             vssKey,
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
 
         // 返回精确的结构体，避免手动构造时参数错位

@@ -17,6 +17,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
+if [ -z "${PROTOC:-}" ] && [ -x /tmp/protoc-25.3/bin/protoc ]; then
+  export PROTOC=/tmp/protoc-25.3/bin/protoc
+fi
+
 TRUSTDROP_ENV="${TRUSTDROP_ENV:-drop-script/.env}"
 DROP_CLI_ENV="${DROP_CLI_ENV:-$TRUSTDROP_ENV}"
 RUN_DIR="${DROP_CLI_TEST_RUN_DIR:-/tmp/drop-cli-e2e-$(date +%Y%m%d-%H%M%S)}"
@@ -103,7 +107,11 @@ address_from_key() {
 }
 
 drop_cli() {
-  DROP_CLI_ENV="$DROP_CLI_ENV" target/debug/drop-cli "$@"
+  if command -v nice >/dev/null 2>&1; then
+    DROP_CLI_ENV="$DROP_CLI_ENV" nice -n "${DROP_CLI_NICE:-10}" target/debug/drop-cli "$@"
+  else
+    DROP_CLI_ENV="$DROP_CLI_ENV" target/debug/drop-cli "$@"
+  fi
 }
 
 extract_last_value() {
@@ -121,7 +129,7 @@ ensure_drop_cli_env_file() {
     printf 'DROP_CLI_STATE_DIR=%s\n' "$DROP_CLI_STATE_DIR"
     printf 'ORACLE_MODE=centralized\n'
     printf 'TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1\n'
-  } >> "$test_env"
+  } > "$test_env"
   DROP_CLI_ENV="$test_env"
   export DROP_CLI_ENV DROP_CLI_STATE_DIR ORACLE_MODE
 }
@@ -133,15 +141,8 @@ ensure_asset_file() {
     return
   fi
 
-  ASSET_FILE="$RUN_DIR/drop-cli-e2e-asset.txt"
-  {
-    printf 'TrustDrop drop-cli e2e asset\n'
-    printf 'created_at=%s\n' "$(date -Is)"
-    printf 'seller_address=%s\n' "$SELLER_ADDRESS"
-    printf 'buyer_address=%s\n' "$BUYER_ADDRESS"
-    printf 'chain=arbitrum-sepolia\n'
-    printf 'oracle=centralized-worker\n'
-  } > "$ASSET_FILE"
+  ASSET_FILE="$RUN_DIR/drop-cli-e2e-asset.bin"
+  dd if=/dev/zero of="$ASSET_FILE" bs=1024 count=64 status=none
 }
 
 print_settings() {

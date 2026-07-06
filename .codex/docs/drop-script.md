@@ -36,7 +36,7 @@
 | `RECOVERED_ASSET_NAME` | `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4` | 买家恢复后的输出文件 |
 | `ARBITRUM_SEPOLIA_CHAIN_ID` | `421614` | 交易链 ID |
 | `WALRUS_LOCAL_ENDPOINT` | `http://localhost:31415` | Walrus publisher/aggregator fallback |
-| `HUB_ADDRESS` | `0x2e506eF3F3cE222F276ddA64Df239CEF92683a78` | ExchangeHub fallback |
+| `HUB_ADDRESS` | `0x4845b28ae7e3e558A445a1A03ACD07d7c55976d1` | ExchangeHub fallback |
 | `VSS_VERIFIER_ADDRESS` | `0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2` | VSS verifier fallback |
 | `VDD_VERIFIER_ADDRESS` | `0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071` | VDD verifier fallback |
 

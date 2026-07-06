@@ -2,6 +2,10 @@ type ExchangeChannel @entity(immutable: false) {
   id: Bytes!
   owner: Bytes!
   channel: Bytes!
+  saleCount: BigInt!
+  purchaseCount: BigInt!
+  settlementCount: BigInt!
+  refundCount: BigInt!
   createdAtBlock: BigInt!
   createdAtTimestamp: BigInt!
   createdTx: Bytes!
@@ -15,11 +19,33 @@ type Sale @entity(immutable: false) {
   price: BigInt!
   version: Bytes!
   info: String!
+  title: String!
+  description: String!
+  fileName: String!
+  fileSize: BigInt!
+  contentType: String!
+  tags: [String!]!
+  normalizedTags: [String!]!
+  purchaseCount: BigInt!
+  settlementCount: BigInt!
+  refundCount: BigInt!
+  lastPurchasedAt: BigInt
+  lastSettledAt: BigInt
+  lastRefundedAt: BigInt
   status: String!
   listedAtBlock: BigInt!
   listedAtTimestamp: BigInt!
   updatedAtBlock: BigInt!
   updatedAtTimestamp: BigInt!
+}
+
+type Tag @entity(immutable: false) {
+  id: String!
+  name: String!
+  normalizedName: String!
+  saleCount: BigInt!
+  purchaseCount: BigInt!
+  settlementCount: BigInt!
 }
 
 type Purchase @entity(immutable: true) {

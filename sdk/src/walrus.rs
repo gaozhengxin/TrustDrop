@@ -1,6 +1,7 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use drop_lib::walrus_address::compute_blob_id_default;
 use storage::{BlobId, BlobStatus, StorageNetwork, WalrusClient};
+use tokio::time::{sleep, timeout, Duration};
 
 pub fn compute_rs_id(data: &[u8]) -> Result<[u8; 32]> {
     let id_raw = compute_blob_id_default(data).map_err(|e| anyhow!(e))?;
@@ -10,13 +11,50 @@ pub fn compute_rs_id(data: &[u8]) -> Result<[u8; 32]> {
 }
 
 pub async fn upload_data_idempotent(walrus: &WalrusClient, data: Vec<u8>) -> Result<String> {
+    Ok(upload_data_idempotent_with_end_epoch(walrus, data).await?.0)
+}
+
+pub async fn upload_data_idempotent_with_end_epoch(
+    walrus: &WalrusClient,
+    data: Vec<u8>,
+) -> Result<(String, Option<u64>)> {
     let target_id = compute_rs_id(&data)?;
     let blob_id_hex = hex::encode(target_id);
-    if let Ok(BlobStatus::Info { .. }) = walrus.get_status(&BlobId(blob_id_hex.clone())).await {
-        return Ok(blob_id_hex);
+    if let Ok(BlobStatus::Info { end_epoch, .. }) =
+        walrus.get_status(&BlobId(blob_id_hex.clone())).await
+    {
+        return Ok((blob_id_hex, Some(end_epoch)));
     }
-    let uploaded = walrus.upload_blob(data.into(), Some("4")).await?;
-    Ok(uploaded.0)
+
+    let mut last_error = None::<String>;
+    for attempt in 1..=3 {
+        match timeout(
+            Duration::from_secs(120),
+            walrus.upload_blob_response(data.clone().into(), Some("4")),
+        )
+        .await
+        {
+            Ok(Ok(uploaded)) => return Ok((uploaded.blob_id().0, Some(uploaded.end_epoch()))),
+            Ok(Err(error)) => {
+                last_error = Some(error.to_string());
+                eprintln!("walrus upload attempt {attempt}/3 failed: {error}");
+            }
+            Err(_) => {
+                let error = "walrus upload attempt timed out after 120 seconds".to_string();
+                eprintln!("walrus upload attempt {attempt}/3 failed: {error}");
+                last_error = Some(error);
+            }
+        }
+
+        if attempt < 3 {
+            sleep(Duration::from_secs(10 * attempt)).await;
+        }
+    }
+
+    Err(anyhow!(
+        "walrus upload failed after retries: {}",
+        last_error.unwrap_or_else(|| "unknown error".to_string())
+    ))
 }
 
 #[cfg(test)]

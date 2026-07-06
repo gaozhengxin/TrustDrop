@@ -31,14 +31,14 @@ contract BitmapTest is BaseTest {
         for (uint256 i = 0; i < 255; i++) {
             address dummy = address(uint160(1000 + i));
             vm.prank(dummy);
-            channel.join(Types.Hash.wrap(bytes32(i)), Types.Cipher32.wrap(0));
+            channel.join(Types.Hash.wrap(bytes32(i)), hex"010203");
         }
 
         // 加入第 256 个用户 (Index 255)
         vm.prank(user255);
         channel.join(
             Types.Hash.wrap(bytes32(uint256(255))),
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
         assertEq(
             channel.audienceIndex(user255),
@@ -50,7 +50,7 @@ contract BitmapTest is BaseTest {
         vm.prank(user256);
         channel.join(
             Types.Hash.wrap(bytes32(uint256(256))),
-            Types.Cipher32.wrap(0)
+            hex"010203"
         );
         assertEq(
             channel.audienceIndex(user256),
@@ -102,7 +102,7 @@ contract BitmapTest is BaseTest {
         for (uint256 i = 0; i <= 256; i++) {
             address user = address(uint160(2000 + i));
             vm.prank(user);
-            channel.join(Types.Hash.wrap(bytes32(i)), Types.Cipher32.wrap(0));
+            channel.join(Types.Hash.wrap(bytes32(i)), hex"010203");
         }
 
         address user256 = address(uint160(2000 + 256));
@@ -122,12 +122,12 @@ contract BitmapTest is BaseTest {
         vm.prank(userA);
         channel.join(
             Types.Hash.wrap(bytes32(uint256(0xaaa))),
-            Types.Cipher32.wrap(bytes32(uint256(0x111)))
+            hex"0111"
         );
         vm.prank(userB);
         channel.join(
             Types.Hash.wrap(bytes32(uint256(0xbbb))),
-            Types.Cipher32.wrap(bytes32(uint256(0x222)))
+            hex"0222"
         );
 
         assertEq(channel.audienceCount(), 2, "audience count mismatch");

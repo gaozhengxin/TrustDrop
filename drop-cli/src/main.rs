@@ -10,7 +10,7 @@ use drop_sdk::{
         load_thread_state, save_sale_state, save_thread_state, thread_state_dir, SaleState,
         PurchaseContextRecord, ThreadPurchase, ThreadState, ThreadStatus, TxRecord, TxStatus,
     },
-    walrus::compute_rs_id,
+    walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch},
 };
 use ethers::abi::RawLog;
 use ethers::prelude::*;
@@ -342,13 +342,8 @@ async fn asset_upload(sale_id: &str) -> Result<()> {
     });
 
     println!("Uploading encrypted asset to Walrus. This consumes Walrus storage.");
-    let epochs = env::var("DROP_CLI_WALRUS_EPOCHS").unwrap_or_else(|_| "4".to_string());
-    let upload = walrus
-        .upload_blob_response(encrypted_payload.into(), Some(&epochs))
-        .await
-        .map_err(|error| anyhow!("walrus upload failed: {}", error))?;
-    let blob_id = upload.blob_id().0;
-    let end_epoch = upload.end_epoch();
+    let (blob_id, end_epoch) = upload_data_idempotent_with_end_epoch(&walrus, encrypted_payload).await?;
+    let end_epoch = end_epoch.ok_or_else(|| anyhow!("Walrus upload did not return end epoch"))?;
     state.walrus_blob_id = Some(blob_id.clone());
     state.walrus_end_epoch = Some(end_epoch);
     state.next_actions = vec![format!("drop-cli oracle check {sale_id}")];
@@ -1567,10 +1562,6 @@ async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
                 context.secret_sharing_key.as_deref(),
                 "secret_sharing_key",
             )?,
-            ephemeral_pubkey: parse_optional_hex_bytes(
-                context.ephemeral_pubkey.as_deref(),
-                "ephemeral_pubkey",
-            )?,
         });
     }
 
@@ -1788,24 +1779,15 @@ fn purchase_context_by_tx<'a>(
 fn purchase_state_from_context(context: &PurchaseContextRecord) -> Result<drop_script::PurchaseState> {
     let secret_sharing_key =
         parse_optional_hex32(context.secret_sharing_key.as_deref(), "secret_sharing_key")?;
-    let ephemeral_pubkey =
-        parse_optional_hex_bytes(context.ephemeral_pubkey.as_deref(), "ephemeral_pubkey")?;
     Ok(drop_script::PurchaseState {
         secret_sharing_key,
         transaction_hash: context.purchase_tx_hash.parse()?,
-        ephemeral_pubkey,
     })
 }
 
 fn parse_optional_hex32(value: Option<&str>, name: &str) -> Result<[u8; 32]> {
     let value = value.ok_or_else(|| anyhow!("{name} is missing"))?;
     parse_hex32_state(value)
-}
-
-fn parse_optional_hex_bytes(value: Option<&str>, name: &str) -> Result<Vec<u8>> {
-    let value = value.ok_or_else(|| anyhow!("{name} is missing"))?;
-    let clean = value.strip_prefix("0x").unwrap_or(value);
-    Ok(hex::decode(clean)?)
 }
 
 fn print_thread(thread: &ThreadState) {
@@ -1926,7 +1908,6 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
             purchase_tx_hash: purchase_tx.clone(),
             buyer: None,
             secret_sharing_key: Some(format!("0x{}", hex::encode(purchase.secret_sharing_key))),
-            ephemeral_pubkey: Some(format!("0x{}", hex::encode(&purchase.ephemeral_pubkey))),
             status: "paid".to_string(),
             fulfill_tx_hash: None,
             settle_tx_hash: None,

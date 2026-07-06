@@ -105,7 +105,6 @@ pub struct PurchaseContextRecord {
     pub purchase_tx_hash: String,
     pub buyer: Option<String>,
     pub secret_sharing_key: Option<String>,
-    pub ephemeral_pubkey: Option<String>,
     pub status: String,
     pub fulfill_tx_hash: Option<String>,
     pub settle_tx_hash: Option<String>,
