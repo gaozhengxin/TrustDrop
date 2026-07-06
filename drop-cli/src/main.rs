@@ -7,8 +7,9 @@ use drop_sdk::{
     oracle::OracleWorkerClient,
     state::{
         default_state_dir, load_all_sale_states, load_all_thread_states, load_sale_state,
-        load_thread_state, save_sale_state, save_thread_state, thread_state_dir, SaleState,
-        PurchaseContextRecord, ThreadPurchase, ThreadState, ThreadStatus, TxRecord, TxStatus,
+        load_thread_state, save_sale_state, save_thread_state, thread_state_dir,
+        PurchaseContextRecord, SaleState, ThreadPurchase, ThreadState, ThreadStatus, TxRecord,
+        TxStatus,
     },
     walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch},
 };
@@ -85,6 +86,7 @@ Usage:
   drop-cli oracle check <sale-id|--blob-id <id>|--c-cipher <0x...>>
   drop-cli asset prepare <file>
   drop-cli asset upload <sale-id>
+  drop-cli asset ensure <sale-id>
   drop-cli channel list|show <channel>|create
   drop-cli sale list [--channel <channel>] | show <sale-id>
   drop-cli sale list <sale-id> --yes
@@ -305,7 +307,11 @@ async fn cmd_asset(args: &[String]) -> Result<()> {
             let sale_id = require_arg(&args[1..], "sale-id")?;
             asset_upload(sale_id).await
         }
-        _ => bail!("usage: drop-cli asset prepare <file> | asset upload <sale-id>"),
+        Some("ensure") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            asset_upload(sale_id).await
+        }
+        _ => bail!("usage: drop-cli asset prepare <file> | asset upload|ensure <sale-id>"),
     }
 }
 
@@ -313,47 +319,86 @@ async fn asset_upload(sale_id: &str) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let mut state = load_sale_state(&state_dir, sale_id)?;
-    if let Some(blob_id) = &state.walrus_blob_id {
-        println!("walrusBlobId already recorded: {blob_id}");
-        wait_for_active_walrus_blob(&config, blob_id).await?;
-        println!("next: drop-cli oracle check {sale_id}");
-        return Ok(());
+    ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
+    println!("next: drop-cli phase publish {sale_id}");
+    Ok(())
+}
+
+async fn ensure_walrus_asset_available(
+    config: &DropCliConfig,
+    state_dir: &Path,
+    state: &mut SaleState,
+) -> Result<()> {
+    if let Some(blob_id) = state.walrus_blob_id.as_deref() {
+        println!("walrusBlobId recorded: {blob_id}");
+        if walrus_blob_is_usable(config, blob_id).await? {
+            wait_for_active_walrus_blob(config, blob_id).await?;
+            return Ok(());
+        }
+        println!("walrusBlobId is unavailable or expired; attempting to re-upload local encrypted asset.");
     }
 
     let encrypted_asset_path = state
         .encrypted_asset_path
         .as_deref()
-        .ok_or_else(|| anyhow!("state missing encrypted_asset_path; run drop-cli asset prepare"))?;
-    let encrypted_payload = fs::read(encrypted_asset_path)?;
-    let publisher_url = config
-        .walrus_publisher_url
-        .clone()
-        .unwrap_or_else(|| "http://localhost:31415".to_string());
-    let aggregator_url = config
-        .walrus_aggregator_url
-        .clone()
-        .unwrap_or_else(|| publisher_url.clone());
-    let walrus = WalrusClient::new(WalrusConfig {
-        aggregator_url,
-        publisher_url,
-        api_key: String::new(),
-        blockberry_base: String::new(),
-        send_object_to: None,
-    });
+        .ok_or_else(|| anyhow!("state missing encrypted_asset_path; run drop-cli asset prepare on the seller machine before fulfilling"))?;
+    let encrypted_payload = fs::read(encrypted_asset_path).map_err(|error| {
+        anyhow!(
+            "failed to read encrypted asset at {}: {}",
+            encrypted_asset_path,
+            error
+        )
+    })?;
+    let walrus = drop_script_walrus_client(config);
 
     println!("Uploading encrypted asset to Walrus. This consumes Walrus storage.");
-    let (blob_id, end_epoch) = upload_data_idempotent_with_end_epoch(&walrus, encrypted_payload).await?;
+    let (blob_id, end_epoch) =
+        upload_data_idempotent_with_end_epoch(&walrus, encrypted_payload).await?;
     let end_epoch = end_epoch.ok_or_else(|| anyhow!("Walrus upload did not return end epoch"))?;
     state.walrus_blob_id = Some(blob_id.clone());
     state.walrus_end_epoch = Some(end_epoch);
-    state.next_actions = vec![format!("drop-cli oracle check {sale_id}")];
-    save_sale_state(&state_dir, &state)?;
+    state.next_actions = vec![format!("drop-cli oracle check {}", state.sale_id)];
+    save_sale_state(state_dir, state)?;
     println!("walrusBlobId: {blob_id}");
     println!("walrusEndEpoch: {end_epoch}");
 
-    wait_for_active_walrus_blob(&config, &blob_id).await?;
-    println!("next: drop-cli phase publish {sale_id}");
-    Ok(())
+    wait_for_active_walrus_blob(config, &blob_id).await
+}
+
+async fn walrus_blob_is_usable(config: &DropCliConfig, blob_id: &str) -> Result<bool> {
+    if !walrus_blob_is_retrievable(config, blob_id).await? {
+        return Ok(false);
+    }
+
+    match oracle_worker(config) {
+        Ok(worker) => match worker.blob_status_by_blob_id(blob_id).await {
+            Ok(status) => Ok(status.found && !status.expired && status.status == 0),
+            Err(error) => {
+                println!("WARN oracle worker blob status check failed: {error}");
+                Ok(true)
+            }
+        },
+        Err(_) => Ok(true),
+    }
+}
+
+async fn walrus_blob_is_retrievable(config: &DropCliConfig, blob_id: &str) -> Result<bool> {
+    let aggregator_url = config
+        .walrus_aggregator_url
+        .clone()
+        .or_else(|| config.walrus_publisher_url.clone())
+        .unwrap_or_else(|| "http://localhost:31415".to_string());
+    let status_url = format!(
+        "{}/v1/blobs/{}",
+        aggregator_url.trim_end_matches('/'),
+        blob_id
+    );
+    let status = reqwest::Client::new()
+        .head(&status_url)
+        .send()
+        .await?
+        .status();
+    Ok(status.is_success())
 }
 
 async fn wait_for_active_walrus_blob(config: &DropCliConfig, blob_id: &str) -> Result<()> {
@@ -393,8 +438,7 @@ async fn wait_for_active_walrus_blob(config: &DropCliConfig, blob_id: &str) -> R
         }
     }
 
-    let status =
-        last_status.ok_or_else(|| anyhow!("Walrus aggregator did not return a result"))?;
+    let status = last_status.ok_or_else(|| anyhow!("Walrus aggregator did not return a result"))?;
     bail!(
         "uploaded Walrus blob is not retrievable from configured aggregator after {} attempts: httpStatus={}",
         attempts,
@@ -749,10 +793,19 @@ fn cmd_tui(args: &[String]) -> Result<()> {
     println!();
     for state in &sales {
         println!("sale: {}", state.sale_id);
-        println!("  channel: {}", state.channel_address.as_deref().unwrap_or("-"));
-        println!("  walrus: {}", state.walrus_blob_id.as_deref().unwrap_or("-"));
+        println!(
+            "  channel: {}",
+            state.channel_address.as_deref().unwrap_or("-")
+        );
+        println!(
+            "  walrus: {}",
+            state.walrus_blob_id.as_deref().unwrap_or("-")
+        );
         println!("  purchases: {}", state.purchases.len());
-        println!("  next: {}", infer_next_action(state).trim_start_matches("next: "));
+        println!(
+            "  next: {}",
+            infer_next_action(state).trim_start_matches("next: ")
+        );
     }
     if !threads.is_empty() {
         println!();
@@ -799,7 +852,10 @@ async fn daemon_run_once() -> Result<()> {
         if purchase.status == "paid" {
             println!("paidPurchase: {}", purchase.purchase_tx_hash);
             println!("  saleId: {}", purchase.sale_id);
-            println!("  next: drop-cli phase respond {}", purchase.purchase_tx_hash);
+            println!(
+                "  next: drop-cli phase respond {}",
+                purchase.purchase_tx_hash
+            );
         }
     }
     println!("daemon: complete");
@@ -1432,6 +1488,8 @@ async fn phase_fulfill(thread_id: &str) -> Result<()> {
         return Ok(());
     }
 
+    ensure_sale_data_available_for_fulfill(&thread.sale_id).await?;
+
     thread.status = ThreadStatus::Fulfilling;
     thread.last_error = None;
     thread.next_actions = vec![format!("drop-cli phase settle {}", thread.thread_id)];
@@ -1509,6 +1567,7 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let mut state = load_sale_state(&state_dir, sale_id)?;
+    ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
     let listing = drop_script_listing_from_state(&state)?;
     let seller_ctx = drop_script_seller_context(&config).await?;
     let walrus = drop_script_walrus_client(&config);
@@ -1529,6 +1588,86 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
     println!("vddTx: {vdd_tx:?}");
     println!("next: drop-cli purchase list --sale {}", state.sale_id);
     Ok(())
+}
+
+async fn ensure_sale_data_available_for_fulfill(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut state = load_sale_state(&state_dir, sale_id)?;
+    ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
+
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+    let walrus = drop_script_walrus_client(&config);
+
+    let vdd_tx = drop_script::stage_1_6_submit_vdd_proof(&walrus, &listing, &seller_ctx).await?;
+    if vdd_tx != H256::zero() {
+        state.transactions.push(tx_record(
+            "submit_vdd_proof",
+            Some(format!("{vdd_tx:?}")),
+            TxStatus::Confirmed,
+            None,
+        ));
+        save_sale_state(&state_dir, &state)?;
+    }
+
+    ensure_oracle_signal_for_listing(&mut state, &state_dir, &listing, &seller_ctx, vdd_tx).await?;
+    Ok(())
+}
+
+async fn ensure_oracle_signal_for_listing(
+    state: &mut SaleState,
+    state_dir: &Path,
+    listing: &drop_script::ListingState,
+    seller_ctx: &drop_script::SellerContext,
+    source_tx: H256,
+) -> Result<()> {
+    let channel_contract = channel_abi::ExchangeChannelContract::new(
+        listing.channel_address,
+        seller_ctx.signer.clone(),
+    );
+    let c_cipher: Bytes = listing.encrypted_blob_id.to_vec().into();
+    let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs());
+    let success_until = channel_contract
+        .oracle_success_until(c_cipher.clone())
+        .call()
+        .await?;
+    if success_until > now {
+        println!("oracleSuccessUntil already active: {success_until}");
+        return Ok(());
+    }
+
+    let oracle_source_tx = if source_tx != H256::zero() {
+        source_tx
+    } else {
+        println!("triggering oracle for current Walrus blob before fulfill...");
+        let receipt = channel_contract
+            .trigger_oracle(c_cipher)
+            .send()
+            .await?
+            .await?
+            .ok_or_else(|| anyhow!("triggerOracle receipt missing"))?;
+        state.transactions.push(tx_record(
+            "trigger_oracle",
+            Some(format!("{:?}", receipt.transaction_hash)),
+            TxStatus::Confirmed,
+            None,
+        ));
+        save_sale_state(state_dir, state)?;
+        receipt.transaction_hash
+    };
+
+    drop_script::trigger_centralized_oracle_worker_if_enabled(
+        oracle_source_tx,
+        listing.walrus_end_epoch,
+    )
+    .await?;
+    drop_script::wait_for_oracle_signal(
+        listing.channel_address,
+        listing.encrypted_blob_id,
+        seller_ctx.signer.clone(),
+    )
+    .await
 }
 
 async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
@@ -1608,6 +1747,8 @@ async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
 }
 
 async fn fulfill_first_purchase_for_sale(sale_id: &str) -> Result<()> {
+    ensure_sale_data_available_for_fulfill(sale_id).await?;
+
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let mut state = load_sale_state(&state_dir, sale_id)?;
@@ -1776,7 +1917,9 @@ fn purchase_context_by_tx<'a>(
         })
 }
 
-fn purchase_state_from_context(context: &PurchaseContextRecord) -> Result<drop_script::PurchaseState> {
+fn purchase_state_from_context(
+    context: &PurchaseContextRecord,
+) -> Result<drop_script::PurchaseState> {
     let secret_sharing_key =
         parse_optional_hex32(context.secret_sharing_key.as_deref(), "secret_sharing_key")?;
     Ok(drop_script::PurchaseState {
@@ -1857,6 +2000,8 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
     println!("running prototype complete test flow through drop-script library...");
     println!("This sends buyer purchase, requests sale-bound VSS/VDD proofs, fulfills, triggers oracle, waits, and settles.");
 
+    ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
+
     if let Some(input_asset_path) = state.input_asset_path.as_deref() {
         env::set_var("DROP_SCRIPT_INPUT_ASSET", input_asset_path);
     }
@@ -1915,7 +2060,8 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
     );
     save_sale_state(&state_dir, &state)?;
 
-    let fulfill_tx = drop_script::stage_3_fulfill(&walrus, &listing, &purchase, &seller_ctx).await?;
+    let fulfill_tx =
+        drop_script::stage_3_fulfill(&walrus, &listing, &purchase, &seller_ctx).await?;
     state.transactions.push(tx_record(
         "fulfill",
         Some(format!("{fulfill_tx:?}")),
