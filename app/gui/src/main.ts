@@ -14,6 +14,7 @@ import {
   type MarketplaceSale,
   type MarketplaceSettlement,
 } from "../../../packages/drop-ts-sdk/src";
+import { filterBuyerActivityForContentEngine, filterBuyerThreadsForContentEngine, filterSalesForContentEngine } from "./content-engine/engine";
 
 type Route = "home" | "browse" | "records" | "detail";
 
@@ -60,9 +61,11 @@ async function refreshMarketplace(): Promise<void> {
   state.loading = true;
   render();
   try {
-    state.sales = await subgraph.listSales();
-    state.selectedSaleId = state.selectedSaleId || state.sales[0]?.id || "";
-    state.localThreads = await listLocalThreads();
+    state.sales = filterSalesForContentEngine(await subgraph.listSales());
+    if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
+      state.selectedSaleId = state.sales[0]?.id || "";
+    }
+    state.localThreads = filterBuyerThreadsForContentEngine(await listLocalThreads(), state.sales);
     if (state.wallet) await refreshBuyerActivity();
     state.message = "";
   } catch (error) {
@@ -75,9 +78,10 @@ async function refreshMarketplace(): Promise<void> {
 async function refreshBuyerActivity(): Promise<void> {
   if (!state.wallet) return;
   const activity = await subgraph.listBuyerActivity(state.wallet.account);
-  state.purchases = activity.purchases;
-  state.settlements = activity.settlements;
-  state.refunds = activity.refunds;
+  const filtered = filterBuyerActivityForContentEngine(activity, state.sales);
+  state.purchases = filtered.purchases;
+  state.settlements = filtered.settlements;
+  state.refunds = filtered.refunds;
 }
 
 function byScore(sale: MarketplaceSale): number {
@@ -405,7 +409,7 @@ async function handlePurchase(): Promise<void> {
       updatedAt: Date.now(),
     });
     await refreshBuyerActivity();
-    state.localThreads = await listLocalThreads();
+    state.localThreads = filterBuyerThreadsForContentEngine(await listLocalThreads(), state.sales);
     state.message = `Purchase submitted ${shortAddress(txHash)}.`;
   } catch (error) {
     state.message = errorMessage(error);

@@ -1,0 +1,21 @@
+{
+  "id": "0",
+  "name": "Fair File Marketplace genesis content boundary",
+  "version": 1,
+  "updatedAt": "2026-07-07T00:00:00Z",
+  "source": {
+    "type": "local",
+    "network": "arbitrum-sepolia"
+  },
+  "filters": {
+    "minimumListedBlock": "285001853",
+    "boundarySaleId": "0x554112a50818f08f7ae9bd3b49e20fed03955ff60e8739fe4bc0d24d718ce640",
+    "boundaryListTx": "0xb09d4ff724df7cadc5c49e88da54c5b89ce965a5a3e1759e79ff3e64ef071f47"
+  },
+  "recommendation": {
+    "mode": "default-local-score"
+  },
+  "moderation": {
+    "mode": "minimum-listed-block"
+  }
+}

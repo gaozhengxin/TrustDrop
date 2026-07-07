@@ -18,7 +18,9 @@ export type MarketplaceSale = {
   purchaseCount: string;
   settlementCount: string;
   refundCount: string;
+  listedAtBlock: string;
   listedAtTimestamp: string;
+  updatedAtBlock: string;
   updatedAtTimestamp: string;
   status: string;
 };
@@ -35,6 +37,7 @@ export type MarketplacePurchase = {
   deadline: string;
   vssKeyCommitment: `0x${string}`;
   txHash: `0x${string}`;
+  blockNumber: string;
   timestamp: string;
 };
 
@@ -45,6 +48,7 @@ export type MarketplaceSettlement = {
   saleId: `0x${string}`;
   dataCommitment: `0x${string}`;
   txHash: `0x${string}`;
+  blockNumber: string;
   timestamp: string;
 };
 
@@ -56,6 +60,7 @@ export type MarketplaceRefund = {
   dataCommitment: `0x${string}`;
   amount: string;
   txHash: `0x${string}`;
+  blockNumber: string;
   timestamp: string;
 };
 
@@ -91,7 +96,7 @@ export class TrustDropSubgraph {
       `query Sales($first: Int!) {
         sales(first: $first, orderBy: listedAtTimestamp, orderDirection: desc, where: { status: "LISTED" }) {
           id channel saleId dataCommitment price version info title description fileName fileSize contentType
-          tags normalizedTags purchaseCount settlementCount refundCount listedAtTimestamp updatedAtTimestamp status
+          tags normalizedTags purchaseCount settlementCount refundCount listedAtBlock listedAtTimestamp updatedAtBlock updatedAtTimestamp status
         }
       }`,
       { first },
@@ -111,13 +116,13 @@ export class TrustDropSubgraph {
     }>(
       `query BuyerActivity($buyer: Bytes!) {
         purchases(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
-          id channel saleId dataCommitment buyer price saleDigest initTime deadline vssKeyCommitment txHash timestamp
+          id channel saleId dataCommitment buyer price saleDigest initTime deadline vssKeyCommitment txHash blockNumber timestamp
         }
         settlements(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
-          id channel buyer saleId dataCommitment txHash timestamp
+          id channel buyer saleId dataCommitment txHash blockNumber timestamp
         }
         refunds(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
-          id channel buyer saleId dataCommitment amount txHash timestamp
+          id channel buyer saleId dataCommitment amount txHash blockNumber timestamp
         }
       }`,
       { buyer: buyer.toLowerCase() },
