@@ -59,10 +59,30 @@ cargo test -p drop-lib
 
 ## Walrus
 
-参考 `storage/README.md`：
+本项目使用 Walrus mainnet publisher，工作目录：
 
 ```sh
-walrus daemon --sub-wallets-dir ~/.sui/sui_config --n-clients 1
+/home/justin/walrus
+```
+
+启动：
+
+```sh
+/home/justin/walrus/start.sh
+```
+
+当前脚本使用官方 mainnet `client_config.yaml`、主 Sui wallet `/home/justin/.sui/sui_config/client.yaml`，并保留已资助的 sub-wallet pool `/home/justin/.sui/sui_config`。默认 `WALRUS_N_CLIENTS=1`，避免 8 client 初始化在本地开发环境中卡住。
+
+如需显式提高并发：
+
+```sh
+WALRUS_N_CLIENTS=8 /home/justin/walrus/start.sh
+```
+
+健康检查：
+
+```sh
+curl -sS http://127.0.0.1:31415/v1/api >/tmp/walrus-api-check.html && wc -c /tmp/walrus-api-check.html
 ```
 
 上传：

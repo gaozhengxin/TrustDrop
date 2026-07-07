@@ -51,7 +51,7 @@ Safety rules:
 Manual gates that remain user-owned:
 
 - Confirm Arbitrum Sepolia chain id `421614`.
-- Confirm Walrus publisher is mainnet and `/home/justin/walrus/start.sh` is running.
+- Confirm Walrus publisher is mainnet and `/home/justin/walrus/start.sh` is running. For setup or diagnosis, use the `walrus-publisher-setup` skill first.
 - Confirm Walrus/Sui balance or storage quota.
 - Confirm seller, buyer, and SP1 keys in `drop-script/.env` are allowed for the test.
 - Confirm SP1 Prove Network key has balance and PROVE allowance.
