@@ -1,36 +1,51 @@
 import {
+  buyerAssetStatus,
+  checkWalrusAggregator,
   connectWallet,
+  fileKind,
+  getStoredWalrusAggregatorUrl,
+  recoverPurchasedAsset,
   listLocalThreads,
   preparePurchase,
   saleDisplayTitle,
   salePriceEth,
+  setStoredWalrusAggregatorUrl,
   submitPurchase,
   TrustDropSubgraph,
   upsertLocalThread,
+  WALRUS_AGGREGATOR_PRESETS,
   type BrowserWallet,
   type BuyerThread,
+  type BuyerKeyMode,
+  type DataKeyShare,
   type MarketplacePurchase,
   type MarketplaceRefund,
   type MarketplaceSale,
   type MarketplaceSettlement,
 } from "../../../packages/drop-ts-sdk/src";
-import { filterBuyerActivityForContentEngine, filterBuyerThreadsForContentEngine, filterSalesForContentEngine } from "./content-engine/engine";
+import { filterSalesForContentEngine } from "./content-engine/engine";
 
-type Route = "home" | "browse" | "records" | "detail";
+type Route = "home" | "browse" | "records" | "settings" | "detail";
 
 type UiState = {
   route: Route;
   query: string;
   tag: string;
   selectedSaleId: string;
+  allSales: MarketplaceSale[];
   sales: MarketplaceSale[];
   purchases: MarketplacePurchase[];
   settlements: MarketplaceSettlement[];
   refunds: MarketplaceRefund[];
+  dataKeyShares: DataKeyShare[];
   localThreads: BuyerThread[];
   wallet: BrowserWallet | null;
   loading: boolean;
   purchaseBusy: boolean;
+  downloadBusy: string;
+  keyMode: BuyerKeyMode;
+  aggregatorUrl: string;
+  aggregatorStatus: string;
   message: string;
 };
 
@@ -41,14 +56,20 @@ const state: UiState = {
   query: "",
   tag: "all",
   selectedSaleId: "",
+  allSales: [],
   sales: [],
   purchases: [],
   settlements: [],
   refunds: [],
+  dataKeyShares: [],
   localThreads: [],
   wallet: null,
   loading: true,
   purchaseBusy: false,
+  downloadBusy: "",
+  keyMode: "wallet_derived",
+  aggregatorUrl: getStoredWalrusAggregatorUrl(),
+  aggregatorStatus: "",
   message: "",
 };
 
@@ -61,11 +82,12 @@ async function refreshMarketplace(): Promise<void> {
   state.loading = true;
   render();
   try {
-    state.sales = filterSalesForContentEngine(await subgraph.listSales());
+    state.allSales = await subgraph.listSales();
+    state.sales = filterSalesForContentEngine(state.allSales);
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
       state.selectedSaleId = state.sales[0]?.id || "";
     }
-    state.localThreads = filterBuyerThreadsForContentEngine(await listLocalThreads(), state.sales);
+    state.localThreads = await listLocalThreads();
     if (state.wallet) await refreshBuyerActivity();
     state.message = "";
   } catch (error) {
@@ -78,10 +100,10 @@ async function refreshMarketplace(): Promise<void> {
 async function refreshBuyerActivity(): Promise<void> {
   if (!state.wallet) return;
   const activity = await subgraph.listBuyerActivity(state.wallet.account);
-  const filtered = filterBuyerActivityForContentEngine(activity, state.sales);
-  state.purchases = filtered.purchases;
-  state.settlements = filtered.settlements;
-  state.refunds = filtered.refunds;
+  state.purchases = activity.purchases;
+  state.settlements = activity.settlements;
+  state.refunds = activity.refunds;
+  state.dataKeyShares = activity.dataKeyShares;
 }
 
 function byScore(sale: MarketplaceSale): number {
@@ -121,6 +143,7 @@ function renderShell(content: string): string {
         ${navButton("home", "Home")}
         ${navButton("browse", "Browse")}
         ${navButton("records", "Records")}
+        ${navButton("settings", "Settings")}
       </nav>
       <button class="wallet" id="wallet-button" type="button">${state.wallet ? shortAddress(state.wallet.account) : "Connect wallet"}</button>
     </header>
@@ -186,13 +209,43 @@ function renderRecords(): string {
   return renderShell(`
     <section class="toolbar compact">
       <div>
-        <h1>Records</h1>
+        <h1>Assets</h1>
         <p>${state.wallet ? `${state.purchases.length} purchase events indexed for ${shortAddress(state.wallet.account)}.` : "Wallet-scoped purchase history."}</p>
       </div>
       <button class="text-button" id="refresh-button" type="button">Refresh</button>
     </section>
     ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ""}
     <section class="record-list">${state.loading ? loadingRows() : merged}</section>
+  `);
+}
+
+function renderSettings(): string {
+  return renderShell(`
+    <section class="toolbar compact">
+      <div>
+        <h1>Settings</h1>
+        <p>Walrus Mainnet aggregator for buyer downloads.</p>
+      </div>
+      <button class="text-button" id="check-aggregator-button" type="button">Check</button>
+    </section>
+    ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ""}
+    <section class="settings-panel">
+      <label class="field">
+        <span>Preset aggregator</span>
+        <select id="aggregator-preset">
+          <option value="">Custom</option>
+          ${WALRUS_AGGREGATOR_PRESETS.map(
+            (preset) => `<option value="${escapeAttr(preset.url)}" ${preset.url === state.aggregatorUrl ? "selected" : ""}>${escapeHtml(preset.name)}</option>`,
+          ).join("")}
+        </select>
+      </label>
+      <label class="field">
+        <span>Aggregator URL</span>
+        <input id="aggregator-url" type="url" value="${escapeAttr(state.aggregatorUrl)}" />
+      </label>
+      <button class="primary" id="save-settings-button" type="button">Save</button>
+      <p class="settings-status">${escapeHtml(state.aggregatorStatus || "Not checked")}</p>
+    </section>
   `);
 }
 
@@ -221,6 +274,13 @@ function renderDetail(sale: MarketplaceSale): string {
               <strong>${purchaseStatusText()}</strong>
               <p>${state.message ? escapeHtml(state.message) : `Listed ${formatTimestamp(sale.listedAtTimestamp)}.`}</p>
             </div>
+            <label class="key-mode">
+              <span>Key</span>
+              <select id="key-mode-select">
+                <option value="wallet_derived" ${state.keyMode === "wallet_derived" ? "selected" : ""}>Wallet derived</option>
+                <option value="manual_secret" ${state.keyMode === "manual_secret" ? "selected" : ""}>Manual secret</option>
+              </select>
+            </label>
             <button class="primary" id="purchase-button" type="button" ${state.purchaseBusy ? "disabled" : ""}>
               ${state.purchaseBusy ? "Submitting" : state.wallet ? "Purchase" : "Connect wallet"}
             </button>
@@ -277,19 +337,24 @@ function assetRows(items: MarketplaceSale[]): string {
 
 function buyerRecordRows(): string {
   if (state.purchases.length === 0 && state.localThreads.length === 0) return empty("No purchase records.");
-  const settlementKeys = new Set(state.settlements.map((item) => `${item.channel}:${item.saleId}:${item.buyer}`.toLowerCase()));
   const refundKeys = new Set(state.refunds.map((item) => `${item.channel}:${item.saleId}:${item.buyer}`.toLowerCase()));
   const indexedRows = state.purchases.map((purchase) => {
-    const sale = state.sales.find((item) => item.channel.toLowerCase() === purchase.channel.toLowerCase() && item.saleId.toLowerCase() === purchase.saleId.toLowerCase());
+    const sale = findSaleForPurchase(purchase);
     const key = `${purchase.channel}:${purchase.saleId}:${purchase.buyer}`.toLowerCase();
-    const status = settlementKeys.has(key) ? "Settled" : refundKeys.has(key) ? "Refunded" : "Waiting for seller";
+    const status = refundKeys.has(key) ? "refunded" : buyerAssetStatus(purchase, state.settlements, state.dataKeyShares);
+    const title = sale ? saleDisplayTitle(sale) : shortAddress(purchase.saleId);
+    const canDownload = sale && state.wallet && status === "ready_to_download";
     return `
       <article class="record">
-        <div>
-          <h2>${escapeHtml(sale ? saleDisplayTitle(sale) : shortAddress(purchase.saleId))}</h2>
+        <span class="file-badge kind-${sale ? fileKind(sale.contentType, sale.fileName) : "binary"}">${escapeHtml(fileKindLabel(sale))}</span>
+        <div class="record-main">
+          <h2>${escapeHtml(title)}</h2>
           <p>${shortAddress(purchase.txHash)} · ${formatTimestamp(purchase.timestamp)}</p>
         </div>
-        <span class="status">${status}</span>
+        <span class="status">${statusText(status)}</span>
+        <button class="text-button" data-download="${escapeAttr(purchase.txHash)}" type="button" ${canDownload && state.downloadBusy !== purchase.txHash ? "" : "disabled"}>
+          ${state.downloadBusy === purchase.txHash ? "Working" : "Download"}
+        </button>
       </article>
     `;
   });
@@ -300,7 +365,7 @@ function buyerRecordRows(): string {
           <h2>${escapeHtml(thread.title)}</h2>
           <p>${shortAddress(thread.txHash)} · local</p>
         </div>
-        <span class="status">${thread.status.split("_").join(" ")}</span>
+        <span class="status">${statusText(thread.status)}</span>
       </article>
     `,
   );
@@ -315,6 +380,8 @@ function render(): void {
     root.innerHTML = renderBrowse();
   } else if (state.route === "records") {
     root.innerHTML = renderRecords();
+  } else if (state.route === "settings") {
+    root.innerHTML = renderSettings();
   } else if (state.route === "detail") {
     const sale = selectedSale();
     root.innerHTML = sale ? renderDetail(sale) : renderShell(empty("No listing selected."));
@@ -372,6 +439,27 @@ function bindEvents(root: HTMLElement): void {
   root.querySelector<HTMLButtonElement>("#purchase-button")?.addEventListener("click", () => {
     void handlePurchase();
   });
+  root.querySelector<HTMLSelectElement>("#key-mode-select")?.addEventListener("change", (event) => {
+    state.keyMode = (event.target as HTMLSelectElement).value as BuyerKeyMode;
+  });
+  root.querySelector<HTMLSelectElement>("#aggregator-preset")?.addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    if (!value) return;
+    state.aggregatorUrl = value;
+    const input = root.querySelector<HTMLInputElement>("#aggregator-url");
+    if (input) input.value = value;
+  });
+  root.querySelector<HTMLButtonElement>("#save-settings-button")?.addEventListener("click", () => {
+    void saveSettings(root);
+  });
+  root.querySelector<HTMLButtonElement>("#check-aggregator-button")?.addEventListener("click", () => {
+    void checkAggregator(root);
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-download]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void handleDownload(button.dataset.download as `0x${string}`);
+    });
+  });
 }
 
 async function connect(): Promise<void> {
@@ -406,10 +494,11 @@ async function handlePurchase(): Promise<void> {
       title: saleDisplayTitle(sale),
       txHash,
       status: "purchase_seen",
+      keyMode: state.keyMode,
       updatedAt: Date.now(),
     });
     await refreshBuyerActivity();
-    state.localThreads = filterBuyerThreadsForContentEngine(await listLocalThreads(), state.sales);
+    state.localThreads = await listLocalThreads();
     state.message = `Purchase submitted ${shortAddress(txHash)}.`;
   } catch (error) {
     state.message = errorMessage(error);
@@ -419,10 +508,117 @@ async function handlePurchase(): Promise<void> {
   }
 }
 
+async function handleDownload(txHash: `0x${string}`): Promise<void> {
+  const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
+  if (!purchase || !state.wallet) return;
+  const sale = findSaleForPurchase(purchase);
+  if (!sale) {
+    state.message = "Sale metadata is missing for this purchase.";
+    render();
+    return;
+  }
+  const thread = state.localThreads.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
+  const manualSecret = thread?.keyMode === "manual_secret" ? prompt("Recovery secret hex") : undefined;
+  state.downloadBusy = txHash;
+  state.message = "";
+  render();
+  try {
+    const result = await recoverPurchasedAsset({
+      sale,
+      purchase,
+      settlements: state.settlements,
+      dataKeyShares: state.dataKeyShares,
+      buyer: state.wallet.account,
+      walletClient: state.wallet.client,
+      aggregatorUrl: state.aggregatorUrl,
+      manualSecret: manualSecret ? (manualSecret as `0x${string}`) : undefined,
+    });
+    triggerBrowserDownload(result.bytes, result.fileName, result.contentType);
+    state.message = `Download ready: ${result.fileName}`;
+  } catch (error) {
+    state.message = errorMessage(error);
+    await upsertDownloadError(txHash, state.message);
+  } finally {
+    state.downloadBusy = "";
+    state.localThreads = await listLocalThreads();
+    render();
+  }
+}
+
+async function saveSettings(root: HTMLElement): Promise<void> {
+  try {
+    const input = root.querySelector<HTMLInputElement>("#aggregator-url");
+    state.aggregatorUrl = setStoredWalrusAggregatorUrl(input?.value ?? state.aggregatorUrl);
+    state.aggregatorStatus = "Saved";
+    state.message = "";
+  } catch (error) {
+    state.message = errorMessage(error);
+  }
+  render();
+}
+
+async function checkAggregator(root: HTMLElement): Promise<void> {
+  try {
+    const input = root.querySelector<HTMLInputElement>("#aggregator-url");
+    const url = input?.value ?? state.aggregatorUrl;
+    await checkWalrusAggregator(url);
+    state.aggregatorUrl = setStoredWalrusAggregatorUrl(url);
+    state.aggregatorStatus = "Available";
+    state.message = "";
+  } catch (error) {
+    state.aggregatorStatus = "Unavailable";
+    state.message = `${errorMessage(error)}. Switch aggregator in Settings.`;
+  }
+  render();
+}
+
+async function upsertDownloadError(txHash: `0x${string}`, message: string): Promise<void> {
+  const existing = state.localThreads.find((thread) => thread.txHash.toLowerCase() === txHash.toLowerCase());
+  if (!existing) return;
+  await upsertLocalThread({
+    ...existing,
+    lastError: message,
+    lastErrorAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
 function purchaseStatusText(): string {
   if (!state.wallet) return "Wallet required";
   if (state.purchaseBusy) return "Submitting purchase";
   return "Ready";
+}
+
+function findSaleForPurchase(purchase: MarketplacePurchase): MarketplaceSale | undefined {
+  return state.allSales.find((item) => item.channel.toLowerCase() === purchase.channel.toLowerCase() && item.saleId.toLowerCase() === purchase.saleId.toLowerCase());
+}
+
+function statusText(status: string): string {
+  return status.split("_").join(" ");
+}
+
+function fileKindLabel(sale?: MarketplaceSale): string {
+  if (!sale) return "BIN";
+  const kind = fileKind(sale.contentType, sale.fileName);
+  if (kind === "image") return "IMG";
+  if (kind === "video") return "VID";
+  if (kind === "audio") return "AUD";
+  if (kind === "program") return "APP";
+  if (kind === "text") return "TXT";
+  if (kind === "data") return "DAT";
+  return "BIN";
+}
+
+function triggerBrowserDownload(bytes: Uint8Array, fileName: string, contentType: string): void {
+  const blob = new Blob([bytes], { type: contentType || "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName || "trustdrop-asset.bin";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function empty(message: string): string {

@@ -1,10 +1,14 @@
 export type BuyerThreadStatus =
   | "purchase_seen"
+  | "purchase_indexed"
   | "waiting_fulfill"
+  | "fulfilled"
   | "ready_to_download"
   | "settled"
   | "refunded"
   | "blocked";
+
+export type BuyerKeyMode = "wallet_derived" | "manual_secret";
 
 export type BuyerThread = {
   id: string;
@@ -14,6 +18,9 @@ export type BuyerThread = {
   title: string;
   txHash: `0x${string}`;
   status: BuyerThreadStatus;
+  keyMode?: BuyerKeyMode;
+  lastError?: string;
+  lastErrorAt?: number;
   updatedAt: number;
 };
 

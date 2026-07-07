@@ -64,6 +64,16 @@ export type MarketplaceRefund = {
   timestamp: string;
 };
 
+export type DataKeyShare = {
+  id: string;
+  channel: `0x${string}`;
+  audiences: `0x${string}`[];
+  encryptedDataKeys: `0x${string}`[];
+  txHash: `0x${string}`;
+  blockNumber: string;
+  timestamp: string;
+};
+
 type GraphqlResponse<T> = {
   data?: T;
   errors?: Array<{ message: string }>;
@@ -108,11 +118,13 @@ export class TrustDropSubgraph {
     purchases: MarketplacePurchase[];
     settlements: MarketplaceSettlement[];
     refunds: MarketplaceRefund[];
+    dataKeyShares: DataKeyShare[];
   }> {
     const result = await this.query<{
       purchases: MarketplacePurchase[];
       settlements: MarketplaceSettlement[];
       refunds: MarketplaceRefund[];
+      dataKeyShares: DataKeyShare[];
     }>(
       `query BuyerActivity($buyer: Bytes!) {
         purchases(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
@@ -124,9 +136,17 @@ export class TrustDropSubgraph {
         refunds(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
           id channel buyer saleId dataCommitment amount txHash blockNumber timestamp
         }
+        dataKeyShares(first: 100, orderBy: timestamp, orderDirection: desc) {
+          id channel audiences encryptedDataKeys txHash blockNumber timestamp
+        }
       }`,
       { buyer: buyer.toLowerCase() },
     );
-    return result;
+    return {
+      ...result,
+      dataKeyShares: result.dataKeyShares.filter((share) =>
+        share.audiences.some((audience) => audience.toLowerCase() === buyer.toLowerCase()),
+      ),
+    };
   }
 }

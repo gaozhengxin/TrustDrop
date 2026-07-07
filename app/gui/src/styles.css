@@ -23,7 +23,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -405,8 +406,85 @@ p {
 
 .record {
   align-items: center;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+}
+
+.record-main {
+  min-width: 0;
+}
+
+.record-main h2,
+.record-main p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kind-text {
+  background: #4d5f7a;
+}
+
+.kind-image {
+  background: #496c52;
+}
+
+.kind-video {
+  background: #744f61;
+}
+
+.kind-audio {
+  background: #6d623f;
+}
+
+.kind-program {
+  background: #514f5f;
+}
+
+.kind-data {
+  background: #3f6470;
+}
+
+.kind-binary {
+  background: #545454;
+}
+
+.settings-panel {
+  background: #ffffff;
+  border: 1px solid #deded8;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  max-width: 720px;
+  padding: 16px;
+}
+
+.field,
+.key-mode {
+  display: grid;
+  gap: 7px;
+}
+
+.field span,
+.key-mode span {
+  color: #626259;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.field input,
+.field select,
+.key-mode select {
+  border: 1px solid #c7c7be;
+  border-radius: 8px;
+  min-height: 42px;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.settings-status {
+  overflow-wrap: anywhere;
 }
 
 .empty {
@@ -462,9 +540,18 @@ p {
     grid-template-columns: 1fr;
   }
 
-  .purchase-panel,
-  .record {
+  .purchase-panel {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .record {
+    align-items: stretch;
+    grid-template-columns: 44px 1fr;
+  }
+
+  .record .status,
+  .record .text-button {
+    grid-column: 2;
   }
 }

@@ -29,6 +29,7 @@
 - [0008 Drop SDK 拆分与全流程集成测试](./iterations/0008-drop-sdk-full-flow-integration.md)
 - [0009 drop-cli](./iterations/0009-drop-cli.md)
 - [0010 File Mall Web App](./iterations/0010-file-mall-web-app.md)
+- [0011 FFM Buyer 下载与恢复闭环](./iterations/0011-ffm-buyer-download-recovery.md)
 
 ## 项目推进标准流程
 
