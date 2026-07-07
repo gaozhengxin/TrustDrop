@@ -1924,17 +1924,61 @@ async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
     let listing = drop_script_listing_from_state(&state)?;
     let seller_ctx = drop_script_seller_context(&config).await?;
 
+    for thread_purchase in &thread.purchases {
+        let existing = state
+            .purchases
+            .iter()
+            .find(|context| {
+                context
+                    .purchase_tx_hash
+                    .eq_ignore_ascii_case(&thread_purchase.purchase_tx_hash)
+            })
+            .cloned();
+        upsert_purchase_context(
+            &mut state,
+            PurchaseContextRecord {
+                purchase_tx_hash: thread_purchase.purchase_tx_hash.clone(),
+                buyer: thread_purchase
+                    .buyer
+                    .clone()
+                    .or_else(|| existing.as_ref().and_then(|context| context.buyer.clone())),
+                secret_sharing_key: existing
+                    .as_ref()
+                    .and_then(|context| context.secret_sharing_key.clone()),
+                status: existing
+                    .as_ref()
+                    .map(|context| context.status.clone())
+                    .unwrap_or_else(|| thread_purchase.status.clone()),
+                fulfill_tx_hash: existing
+                    .as_ref()
+                    .and_then(|context| context.fulfill_tx_hash.clone()),
+                settle_tx_hash: existing
+                    .as_ref()
+                    .and_then(|context| context.settle_tx_hash.clone()),
+            },
+        );
+    }
+
     let mut batch_shares = Vec::new();
     for thread_purchase in thread
         .purchases
         .iter()
         .filter(|purchase| purchase.needs_vss)
     {
-        let context = purchase_context_by_tx(&state, &thread_purchase.purchase_tx_hash)?.clone();
         let buyer = thread_purchase
             .buyer
             .as_deref()
-            .or(context.buyer.as_deref())
+            .or_else(|| {
+                state
+                    .purchases
+                    .iter()
+                    .find(|context| {
+                        context
+                            .purchase_tx_hash
+                            .eq_ignore_ascii_case(&thread_purchase.purchase_tx_hash)
+                    })
+                    .and_then(|context| context.buyer.as_deref())
+            })
             .ok_or_else(|| {
                 anyhow!(
                     "purchase {} missing buyer; run drop-cli purchase show or phase respond again",
@@ -1943,11 +1987,8 @@ async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
             })?;
         batch_shares.push(drop_script::BatchVssShare {
             buyer: parse_address(buyer)?,
-            purchase_tx_hash: context.purchase_tx_hash.parse()?,
-            secret_sharing_key: parse_optional_hex32(
-                context.secret_sharing_key.as_deref(),
-                "secret_sharing_key",
-            )?,
+            purchase_tx_hash: thread_purchase.purchase_tx_hash.parse()?,
+            secret_sharing_key: [0u8; 32],
         });
     }
 

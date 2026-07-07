@@ -98,6 +98,7 @@ export async function preparePurchase(
 
 export async function submitPurchase(prepared: PreparedPurchase, walletClient: WalletClient): Promise<`0x${string}`> {
   if (!walletClient.account) throw new Error("Wallet account is required");
+  const account = walletClient.account.address;
   const args = [
     prepared.sale.saleId,
     prepared.sale.version,
@@ -117,14 +118,14 @@ export async function submitPurchase(prepared: PreparedPurchase, walletClient: W
     functionName: "purchase",
     args,
     value: BigInt(prepared.sale.price),
-    account: walletClient.account.address,
+    account,
   });
   const latestBlock = await publicClient.getBlock();
   const baseFee = latestBlock.baseFeePerGas ?? 20_000_000n;
   const maxPriorityFeePerGas = 1_000_000n;
   const maxFeePerGas = baseFee * 2n + maxPriorityFeePerGas;
 
-  return walletClient.writeContract({
+  const request = {
     address: prepared.sale.channel,
     abi: channelAbi,
     functionName: "purchase",
@@ -135,7 +136,21 @@ export async function submitPurchase(prepared: PreparedPurchase, walletClient: W
     maxPriorityFeePerGas,
     account: walletClient.account,
     chain: arbitrumSepolia,
-  });
+  } as const;
+
+  try {
+    return await walletClient.writeContract(request);
+  } catch (error) {
+    if (!isNonceTooLowError(error)) throw error;
+    const nonce = await publicClient.getTransactionCount({
+      address: account,
+      blockTag: "pending",
+    });
+    return walletClient.writeContract({
+      ...request,
+      nonce,
+    });
+  }
 }
 
 function eciesEncryptPackage(recipientPubkey: Hex, secret: Uint8Array): Uint8Array {
@@ -169,4 +184,9 @@ function bytesFromHex(value: string, label: string): Uint8Array {
 
 function bytesToHex(bytes: Uint8Array): `0x${string}` {
   return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function isNonceTooLowError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("nonce too low");
 }
