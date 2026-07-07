@@ -16,6 +16,7 @@ use drop_sdk::{
 use ethers::abi::RawLog;
 use ethers::prelude::*;
 use k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
+use serde::Deserialize;
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 use std::{
@@ -28,6 +29,8 @@ use storage::{WalrusClient, WalrusConfig};
 
 const DEFAULT_ENV_FILE: &str = "drop-script/.env";
 const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
+const DEFAULT_SUBGRAPH_QUERY_URL: &str =
+    "https://api.studio.thegraph.com/query/1722405/test-arbitrum-store/v0.0.12";
 
 #[tokio::main]
 async fn main() {
@@ -778,15 +781,15 @@ async fn cmd_sale(args: &[String]) -> Result<()> {
 
 async fn cmd_purchase(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
-        Some("list") => list_purchases(args),
+        Some("list") => list_purchases(args).await,
         Some("show") => {
             let tx_hash = require_arg(&args[1..], "purchase-tx")?;
             let config = load_config()?;
-            let states = load_all_sale_states(state_dir(&config)?)?;
-            let purchase = collect_purchases(&states)
+            let purchases = discover_purchases(&config, &args[1..]).await?;
+            let purchase = purchases
                 .into_iter()
                 .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx_hash))
-                .ok_or_else(|| anyhow!("purchase not found in local state: {tx_hash}"))?;
+                .ok_or_else(|| anyhow!("purchase not found: {tx_hash}"))?;
             let purchase = enrich_purchase_or_assume_vss(&config, purchase).await;
             print_purchase(&purchase);
             println!("next: drop-cli phase respond {}", purchase.purchase_tx_hash);
@@ -1122,15 +1125,60 @@ fn list_sales(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn list_purchases(args: &[String]) -> Result<()> {
+async fn list_purchases(args: &[String]) -> Result<()> {
     let config = load_config()?;
-    let states = load_all_sale_states(state_dir(&config)?)?;
+    let purchases = discover_purchases(&config, args).await?;
+    let mut count = 0usize;
+    for purchase in &purchases {
+        count += 1;
+        println!("purchaseTx: {}", purchase.purchase_tx_hash);
+        println!("  saleId: {}", purchase.sale_id);
+        println!(
+            "  channel: {}",
+            purchase.channel_address.as_deref().unwrap_or("-")
+        );
+        println!("  status: {}", purchase.status);
+        println!(
+            "  next: drop-cli purchase show {}",
+            purchase.purchase_tx_hash
+        );
+    }
+    if count == 0 {
+        println!("No purchases found.");
+        println!("Check SUBGRAPH_QUERY_URL, seller key, channel filter, or sale filter.");
+    }
+    Ok(())
+}
+
+async fn discover_purchases(config: &DropCliConfig, args: &[String]) -> Result<Vec<PurchaseView>> {
+    let states = load_all_sale_states(state_dir(config)?)?;
+    let mut purchases = collect_purchases(&states);
     let channel_filter = flag_value(args, "--channel");
     let sale_filter = flag_value(args, "--sale");
     let status_filter = flag_value(args, "--status");
-    let purchases = collect_purchases(&states);
-    let mut count = 0usize;
-    for purchase in purchases.iter().filter(|purchase| {
+
+    match fetch_subgraph_purchases(config, channel_filter, sale_filter).await {
+        Ok(subgraph_purchases) => {
+            for purchase in subgraph_purchases {
+                if purchases.iter().any(|known| {
+                    known
+                        .purchase_tx_hash
+                        .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
+                }) {
+                    continue;
+                }
+                purchases.push(purchase);
+            }
+        }
+        Err(error) => {
+            if purchases.is_empty() {
+                return Err(error.context("failed to discover purchases from subgraph"));
+            }
+            println!("WARN failed to discover purchases from subgraph: {error}");
+        }
+    }
+
+    purchases.retain(|purchase| {
         channel_filter
             .map(|channel| {
                 purchase
@@ -1146,25 +1194,13 @@ fn list_purchases(args: &[String]) -> Result<()> {
             && status_filter
                 .map(|status| purchase.status.eq_ignore_ascii_case(status))
                 .unwrap_or(true)
-    }) {
-        count += 1;
-        println!("purchaseTx: {}", purchase.purchase_tx_hash);
-        println!("  saleId: {}", purchase.sale_id);
-        println!(
-            "  channel: {}",
-            purchase.channel_address.as_deref().unwrap_or("-")
-        );
-        println!("  status: {}", purchase.status);
-        println!(
-            "  next: drop-cli purchase show {}",
-            purchase.purchase_tx_hash
-        );
-    }
-    if count == 0 {
-        println!("No local purchases found.");
-        println!("Purchases are recorded after buyer purchase is observed by a flow.");
-    }
-    Ok(())
+    });
+    purchases.sort_by(|left, right| {
+        left.purchase_tx_hash
+            .to_ascii_lowercase()
+            .cmp(&right.purchase_tx_hash.to_ascii_lowercase())
+    });
+    Ok(purchases)
 }
 
 fn list_threads(args: &[String]) -> Result<()> {
@@ -1255,6 +1291,169 @@ fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
     }
     purchases.sort_by(|left, right| left.purchase_tx_hash.cmp(&right.purchase_tx_hash));
     purchases
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphqlResponse<T> {
+    data: Option<T>,
+    errors: Option<Vec<GraphqlError>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphqlError {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SellerChannelsData {
+    channels: Vec<SubgraphChannel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubgraphChannel {
+    channel: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PurchasesData {
+    purchases: Vec<SubgraphPurchase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubgraphPurchase {
+    channel: String,
+    sale_id: String,
+    buyer: String,
+    tx_hash: String,
+}
+
+async fn fetch_subgraph_purchases(
+    config: &DropCliConfig,
+    channel_filter: Option<&str>,
+    sale_filter: Option<&str>,
+) -> Result<Vec<PurchaseView>> {
+    let endpoint = config
+        .subgraph_query_url
+        .as_deref()
+        .unwrap_or(DEFAULT_SUBGRAPH_QUERY_URL);
+    let client = reqwest::Client::new();
+    let channels = match channel_filter {
+        Some(channel) => vec![normalize_graph_hex(channel, "channel")?],
+        None => seller_channels_from_subgraph(config, &client, endpoint).await?,
+    };
+    if channels.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut where_parts = vec![format!("channel_in: {}", graphql_string_array(&channels))];
+    if let Some(sale) = sale_filter {
+        where_parts.push(format!(
+            "saleId: \"{}\"",
+            normalize_graph_hex(sale, "sale id")?
+        ));
+    }
+    let query = format!(
+        r#"{{
+          purchases(first: 100, orderBy: timestamp, orderDirection: desc, where: {{ {} }}) {{
+            channel
+            saleId
+            buyer
+            txHash
+          }}
+        }}"#,
+        where_parts.join(", ")
+    );
+    let data: PurchasesData = post_graphql(&client, endpoint, &query).await?;
+    Ok(data
+        .purchases
+        .into_iter()
+        .map(|purchase| PurchaseView {
+            purchase_tx_hash: purchase.tx_hash,
+            sale_id: purchase.sale_id,
+            channel_address: Some(purchase.channel),
+            buyer: Some(purchase.buyer),
+            needs_vss: None,
+            status: "paid".to_string(),
+            settle_tx_hash: None,
+        })
+        .collect())
+}
+
+async fn seller_channels_from_subgraph(
+    config: &DropCliConfig,
+    client: &reqwest::Client,
+    endpoint: &str,
+) -> Result<Vec<String>> {
+    let seller = seller_address(config)?;
+    let query = format!(
+        r#"{{
+          channels: exchangeChannels(first: 100, where: {{ owner: "{}" }}) {{
+            channel
+          }}
+        }}"#,
+        format!("{seller:?}").to_ascii_lowercase()
+    );
+    let data: SellerChannelsData = post_graphql(client, endpoint, &query).await?;
+    Ok(data
+        .channels
+        .into_iter()
+        .map(|channel| channel.channel)
+        .collect())
+}
+
+async fn post_graphql<T: for<'de> Deserialize<'de>>(
+    client: &reqwest::Client,
+    endpoint: &str,
+    query: &str,
+) -> Result<T> {
+    let response = client
+        .post(endpoint)
+        .json(&json!({ "query": query }))
+        .send()
+        .await?
+        .error_for_status()?;
+    let payload: GraphqlResponse<T> = response.json().await?;
+    if let Some(errors) = payload.errors {
+        let message = errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; ");
+        bail!("subgraph query failed: {message}");
+    }
+    payload
+        .data
+        .ok_or_else(|| anyhow!("subgraph returned no data"))
+}
+
+fn seller_address(config: &DropCliConfig) -> Result<Address> {
+    let key = config
+        .seller_private_key
+        .as_deref()
+        .ok_or_else(|| anyhow!("SELLER_KEY is missing"))?;
+    Ok(key
+        .parse::<LocalWallet>()?
+        .with_chain_id(config.chain_id)
+        .address())
+}
+
+fn normalize_graph_hex(value: &str, label: &str) -> Result<String> {
+    let clean = value.trim();
+    let hex = clean.strip_prefix("0x").unwrap_or(clean);
+    if hex.is_empty() || hex.len() % 2 != 0 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        bail!("{label} must be an even-length hex string");
+    }
+    Ok(format!("0x{}", hex.to_ascii_lowercase()))
+}
+
+fn graphql_string_array(values: &[String]) -> String {
+    let items = values
+        .iter()
+        .map(|value| format!("\"{value}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{items}]")
 }
 
 async fn enrich_purchase_or_assume_vss(
@@ -1353,13 +1552,13 @@ async fn phase_respond(purchase_txs: &[String]) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let states = load_all_sale_states(&state_dir)?;
-    let purchases = collect_purchases(&states);
+    let purchases = discover_purchases(&config, &[]).await?;
     let mut selected = Vec::new();
     for tx in purchase_txs {
         let purchase = purchases
             .iter()
             .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx))
-            .ok_or_else(|| anyhow!("purchase not found in local state: {tx}"))?;
+            .ok_or_else(|| anyhow!("purchase not found: {tx}"))?;
         selected.push(enrich_purchase_or_assume_vss(&config, purchase.clone()).await);
     }
     let first = selected

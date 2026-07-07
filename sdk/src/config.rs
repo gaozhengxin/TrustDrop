@@ -8,6 +8,7 @@ pub struct DropCliConfig {
     pub seller_private_key: Option<String>,
     pub buyer_private_key: Option<String>,
     pub hub_address: Option<String>,
+    pub subgraph_query_url: Option<String>,
     pub oracle_worker_url: Option<String>,
     pub oracle_worker_token: Option<String>,
     pub walrus_publisher_url: Option<String>,
@@ -34,6 +35,7 @@ impl DropCliConfig {
             seller_private_key: first_value(&vars, &["SELLER_KEY", "PRIVATE_KEY"]),
             buyer_private_key: first_value(&vars, &["BUYER_KEY"]),
             hub_address: first_value(&vars, &["HUB_ADDRESS"]),
+            subgraph_query_url: first_value(&vars, &["SUBGRAPH_QUERY_URL"]),
             oracle_worker_url: first_value(&vars, &["ORACLE_WORKER_URL"]),
             oracle_worker_token: first_value(&vars, &["ORACLE_WORKER_TOKEN"]),
             walrus_publisher_url: first_value(
