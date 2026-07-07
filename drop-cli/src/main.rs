@@ -16,6 +16,7 @@ use drop_sdk::{
 use ethers::abi::RawLog;
 use ethers::prelude::*;
 use k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
+use serde_json::json;
 use sha3::{Digest, Keccak256};
 use std::{
     env, fs,
@@ -533,7 +534,7 @@ async fn sale_list(sale_id: &str) -> Result<String> {
         data: original_asset_id.to_vec().into(),
     };
     let price = U256::from(10u128.pow(16));
-    let info = "TrustDrop Asset v1".to_string();
+    let info = sale_metadata_json(&state)?;
 
     println!("sending listFile transaction...");
     let call = channel.list_file(commitment, price, info);
@@ -567,6 +568,50 @@ async fn sale_list(sale_id: &str) -> Result<String> {
     );
     println!("state updated");
     Ok(state.sale_id)
+}
+
+fn sale_metadata_json(state: &SaleState) -> Result<String> {
+    let input_path = state.input_asset_path.as_deref().unwrap_or("asset");
+    let file_name = Path::new(input_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(input_path);
+    let title = env::var("DROP_CLI_LIST_TITLE").unwrap_or_else(|_| file_name.to_string());
+    let description = env::var("DROP_CLI_LIST_DESCRIPTION").unwrap_or_default();
+    let content_type = env::var("DROP_CLI_LIST_CONTENT_TYPE")
+        .unwrap_or_else(|_| guess_content_type(file_name).to_string());
+    let tags = env::var("DROP_CLI_LIST_TAGS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "title": title,
+        "description": description,
+        "fileName": file_name,
+        "fileSize": state.original_len.unwrap_or(0),
+        "contentType": content_type,
+        "tags": tags,
+    })
+    .to_string())
+}
+
+fn guess_content_type(file_name: &str) -> &'static str {
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".mp4") {
+        "video/mp4"
+    } else if lower.ends_with(".pdf") {
+        "application/pdf"
+    } else if lower.ends_with(".txt") {
+        "text/plain"
+    } else if lower.ends_with(".zip") {
+        "application/zip"
+    } else {
+        "application/octet-stream"
+    }
 }
 
 async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {

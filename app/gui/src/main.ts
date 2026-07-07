@@ -347,9 +347,16 @@ function bindEvents(root: HTMLElement): void {
   });
 
   root.querySelector<HTMLInputElement>("#search-input")?.addEventListener("input", (event) => {
-    state.query = (event.target as HTMLInputElement).value;
+    const input = event.target as HTMLInputElement;
+    state.query = input.value;
     if (state.route === "home") state.route = "browse";
     render();
+    const nextInput = document.querySelector<HTMLInputElement>("#search-input");
+    if (nextInput) {
+      nextInput.focus();
+      const cursor = state.query.length;
+      nextInput.setSelectionRange(cursor, cursor);
+    }
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
