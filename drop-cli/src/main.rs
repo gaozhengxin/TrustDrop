@@ -1812,6 +1812,9 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
     let state_dir = state_dir(&config)?;
     let mut state = load_sale_state(&state_dir, sale_id)?;
     ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
+    if let Some(input_asset_path) = state.input_asset_path.as_deref() {
+        env::set_var("DROP_SCRIPT_INPUT_ASSET", input_asset_path);
+    }
     let listing = drop_script_listing_from_state(&state)?;
     let seller_ctx = drop_script_seller_context(&config).await?;
     let walrus = drop_script_walrus_client(&config);
