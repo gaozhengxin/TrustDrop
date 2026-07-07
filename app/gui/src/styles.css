@@ -19,6 +19,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
 }
 
 button,
@@ -112,6 +113,7 @@ button {
   margin: 0 auto;
   max-width: 1180px;
   padding: 28px;
+  width: 100%;
 }
 
 .toolbar {
@@ -297,7 +299,8 @@ p {
 .detail-grid {
   display: grid;
   gap: 30px;
-  grid-template-columns: minmax(220px, 360px) 1fr;
+  grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
+  min-width: 0;
 }
 
 .file-visual {
@@ -315,6 +318,7 @@ p {
 .detail-copy {
   display: grid;
   gap: 18px;
+  min-width: 0;
 }
 
 .tag-row {
@@ -347,6 +351,7 @@ p {
   background: #ffffff;
   border: 1px solid #deded8;
   border-radius: 8px;
+  min-width: 0;
   padding: 14px;
 }
 
@@ -358,6 +363,7 @@ p {
 .facts dd {
   font-weight: 700;
   margin: 2px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .purchase-panel {
@@ -365,9 +371,25 @@ p {
   display: flex;
   gap: 16px;
   justify-content: space-between;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.purchase-panel > div {
+  min-width: 0;
+}
+
+.purchase-panel p {
+  margin: 4px 0 0;
+  max-height: 7.5em;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .primary {
+  flex: 0 0 auto;
   background: #1f3a36;
   border-color: #1f3a36;
   color: #ffffff;

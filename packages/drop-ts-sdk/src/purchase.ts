@@ -16,9 +16,12 @@ import type { MarketplaceSale } from "./subgraph";
 type Hex = `0x${string}`;
 
 const channelAbi = parseAbi([
-  "function ownerPublicKey() view returns ((bytes data))",
+  "function ownerPublicKey() view returns (bytes data)",
+  "function isRegistered(address user) view returns (bool)",
   "function purchase(bytes32 saleId, bytes32 dataVersion, uint256 price, uint256 deadline, bytes dataCommitment, bytes32 vssKeyCommitment, bytes encryptedVssKey) payable",
 ]);
+
+const ZERO_HASH = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 export type PreparedPurchase = {
   sale: MarketplaceSale;
@@ -54,22 +57,34 @@ export async function preparePurchase(
       `commitment:${sale.dataCommitment.toLowerCase()}`,
     ].join("\n"),
   });
-  const secretBytes = sha256(concatBytes(hexToBytes(normalizeHex(signature, "wallet signature")), utf8ToBytes(sale.saleId)));
+  const secretBytes = sha256(concatBytes(bytesFromHex(signature, "wallet signature"), utf8ToBytes(sale.saleId)));
   const commitment = blake3(secretBytes);
-
   const publicClient = createPublicClient({
     chain: arbitrumSepolia,
     transport: http(DEFAULT_RPC_URL),
   });
+  const registered = (await publicClient.readContract({
+    address: sale.channel,
+    abi: channelAbi,
+    functionName: "isRegistered",
+    args: [buyer],
+  })) as boolean;
+  if (registered) {
+    return {
+      sale,
+      deadline: BigInt(Math.floor(Date.now() / 1000) + 8 * 24 * 60 * 60),
+      secretSharingKey: "0x",
+      vssKeyCommitment: ZERO_HASH,
+      encryptedVssKey: "0x",
+    };
+  }
+
   const ownerPublicKey = (await publicClient.readContract({
     address: sale.channel,
     abi: channelAbi,
     functionName: "ownerPublicKey",
-  })) as { data: `0x${string}` } | [`0x${string}`];
-  const ownerPublicKeyHex = normalizeHex(
-    Array.isArray(ownerPublicKey) ? ownerPublicKey[0] : ownerPublicKey.data,
-    "seller owner public key",
-  );
+  })) as `0x${string}`;
+  const ownerPublicKeyHex = normalizeHex(ownerPublicKey, "seller owner public key");
   const encryptedVssKey = eciesEncryptPackage(ownerPublicKeyHex, secretBytes);
 
   return {
@@ -83,20 +98,41 @@ export async function preparePurchase(
 
 export async function submitPurchase(prepared: PreparedPurchase, walletClient: WalletClient): Promise<`0x${string}`> {
   if (!walletClient.account) throw new Error("Wallet account is required");
+  const args = [
+    prepared.sale.saleId,
+    prepared.sale.version,
+    BigInt(prepared.sale.price),
+    prepared.deadline,
+    prepared.sale.dataCommitment,
+    prepared.vssKeyCommitment,
+    prepared.encryptedVssKey,
+  ] as const;
+  const publicClient = createPublicClient({
+    chain: arbitrumSepolia,
+    transport: http(DEFAULT_RPC_URL),
+  });
+  const estimatedGas = await publicClient.estimateContractGas({
+    address: prepared.sale.channel,
+    abi: channelAbi,
+    functionName: "purchase",
+    args,
+    value: BigInt(prepared.sale.price),
+    account: walletClient.account.address,
+  });
+  const latestBlock = await publicClient.getBlock();
+  const baseFee = latestBlock.baseFeePerGas ?? 20_000_000n;
+  const maxPriorityFeePerGas = 1_000_000n;
+  const maxFeePerGas = baseFee * 2n + maxPriorityFeePerGas;
+
   return walletClient.writeContract({
     address: prepared.sale.channel,
     abi: channelAbi,
     functionName: "purchase",
-    args: [
-      prepared.sale.saleId,
-      prepared.sale.version,
-      BigInt(prepared.sale.price),
-      prepared.deadline,
-      prepared.sale.dataCommitment,
-      prepared.vssKeyCommitment,
-      prepared.encryptedVssKey,
-    ],
+    args,
     value: BigInt(prepared.sale.price),
+    gas: estimatedGas + estimatedGas / 5n,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
     account: walletClient.account,
     chain: arbitrumSepolia,
   });
@@ -104,7 +140,7 @@ export async function submitPurchase(prepared: PreparedPurchase, walletClient: W
 
 function eciesEncryptPackage(recipientPubkey: Hex, secret: Uint8Array): Uint8Array {
   const version = 1;
-  const recipientPubkeyBytes = hexToBytes(recipientPubkey);
+  const recipientPubkeyBytes = bytesFromHex(recipientPubkey, "seller owner public key");
   if (recipientPubkeyBytes.length !== 33 && recipientPubkeyBytes.length !== 65) {
     throw new Error(`Invalid seller owner public key length: ${recipientPubkeyBytes.length} bytes`);
   }
@@ -124,6 +160,11 @@ function normalizeHex(value: string, label: string): Hex {
   }
   if (hex.length % 2 === 1) hex = `0${hex}`;
   return `0x${hex}`;
+}
+
+function bytesFromHex(value: string, label: string): Uint8Array {
+  const normalized = normalizeHex(value, label);
+  return hexToBytes(normalized.slice(2));
 }
 
 function bytesToHex(bytes: Uint8Array): `0x${string}` {
