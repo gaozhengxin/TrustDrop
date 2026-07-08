@@ -74,6 +74,15 @@ export type DataKeyShare = {
   timestamp: string;
 };
 
+export type VddProof = {
+  id: string;
+  channel: `0x${string}`;
+  cCipher: `0x${string}`;
+  txHash: `0x${string}`;
+  blockNumber: string;
+  timestamp: string;
+};
+
 type GraphqlResponse<T> = {
   data?: T;
   errors?: Array<{ message: string }>;
@@ -119,12 +128,14 @@ export class TrustDropSubgraph {
     settlements: MarketplaceSettlement[];
     refunds: MarketplaceRefund[];
     dataKeyShares: DataKeyShare[];
+    vddProofs: VddProof[];
   }> {
     const result = await this.query<{
       purchases: MarketplacePurchase[];
       settlements: MarketplaceSettlement[];
       refunds: MarketplaceRefund[];
       dataKeyShares: DataKeyShare[];
+      vddProofs: VddProof[];
     }>(
       `query BuyerActivity($buyer: Bytes!) {
         purchases(first: 50, orderBy: timestamp, orderDirection: desc, where: { buyer: $buyer }) {
@@ -139,14 +150,19 @@ export class TrustDropSubgraph {
         dataKeyShares(first: 100, orderBy: timestamp, orderDirection: desc) {
           id channel audiences encryptedDataKeys txHash blockNumber timestamp
         }
+        vddProofs(first: 100, orderBy: timestamp, orderDirection: desc) {
+          id channel cCipher txHash blockNumber timestamp
+        }
       }`,
       { buyer: buyer.toLowerCase() },
     );
+    const channels = new Set(result.purchases.map((purchase) => purchase.channel.toLowerCase()));
     return {
       ...result,
       dataKeyShares: result.dataKeyShares.filter((share) =>
         share.audiences.some((audience) => audience.toLowerCase() === buyer.toLowerCase()),
       ),
+      vddProofs: result.vddProofs.filter((proof) => channels.has(proof.channel.toLowerCase())),
     };
   }
 }

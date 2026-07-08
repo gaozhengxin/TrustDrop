@@ -22,6 +22,7 @@ import {
   type MarketplaceRefund,
   type MarketplaceSale,
   type MarketplaceSettlement,
+  type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
 import { filterSalesForContentEngine } from "./content-engine/engine";
 
@@ -38,6 +39,7 @@ type UiState = {
   settlements: MarketplaceSettlement[];
   refunds: MarketplaceRefund[];
   dataKeyShares: DataKeyShare[];
+  vddProofs: VddProof[];
   localThreads: BuyerThread[];
   wallet: BrowserWallet | null;
   loading: boolean;
@@ -62,6 +64,7 @@ const state: UiState = {
   settlements: [],
   refunds: [],
   dataKeyShares: [],
+  vddProofs: [],
   localThreads: [],
   wallet: null,
   loading: true,
@@ -104,6 +107,7 @@ async function refreshBuyerActivity(): Promise<void> {
   state.settlements = activity.settlements;
   state.refunds = activity.refunds;
   state.dataKeyShares = activity.dataKeyShares;
+  state.vddProofs = activity.vddProofs;
 }
 
 function byScore(sale: MarketplaceSale): number {
@@ -528,6 +532,7 @@ async function handleDownload(txHash: `0x${string}`): Promise<void> {
       purchase,
       settlements: state.settlements,
       dataKeyShares: state.dataKeyShares,
+      vddProofs: state.vddProofs,
       buyer: state.wallet.account,
       walletClient: state.wallet.client,
       aggregatorUrl: state.aggregatorUrl,

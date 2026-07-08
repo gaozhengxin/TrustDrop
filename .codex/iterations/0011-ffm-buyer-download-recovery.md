@@ -291,3 +291,24 @@ Walrus 官方 Network Reference 说明：
 - 尚未在浏览器中实际点击 Download 做端到端下载解密验收。
 - 当前大文件恢复首版采用整文件下载/解密，后续需要 streaming/chunk decrypt。
 - `dataKeyShares(first: 100)` 是首版足够用的查询，后续如果 channel 交易量变大，需要按 channel/block/buyer 优化查询或补 subgraph 反向索引。
+
+### 2026-07-08 修复记录
+
+问题：
+
+- 前端下载时所有预设 Walrus aggregator 都返回 HTTP 404。
+- 根因不是 aggregator 不可用，而是前端使用了错误的下载 blob id。
+- 旧实现把 `Sale.dataCommitment` 转成 Walrus blob id；但 `dataCommitment` 是原文 asset id，不是密文 blob id。
+
+修复：
+
+- `TrustDropSubgraph.listBuyerActivity` 增加 `vddProofs` 查询。
+- `recoverPurchasedAsset` 下载目标改为：
+  1. 优先使用 listing metadata 中显式 `walrusBlobId` / `blobId`。
+  2. 否则使用同 channel 最新 `VddProof.cCipher` 转成 Walrus blob id。
+  3. 如果两者都没有，明确报错要求等待 VDD proof indexing 或刷新 activity。
+- 不再用 `dataCommitment` 推导 Walrus 下载目标。
+
+验证：
+
+- `pnpm --dir app/gui build` 通过。

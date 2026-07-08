@@ -2,7 +2,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { concatBytes, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import type { WalletClient } from "viem";
 import { arbitrumSepolia } from "viem/chains";
-import type { DataKeyShare, MarketplacePurchase, MarketplaceSale, MarketplaceSettlement } from "./subgraph";
+import type { DataKeyShare, MarketplacePurchase, MarketplaceSale, MarketplaceSettlement, VddProof } from "./subgraph";
 import { downloadWalrusBlob, walrusBlobIdFromHex } from "./walrus";
 
 type Hex = `0x${string}`;
@@ -14,6 +14,7 @@ export type RecoverAssetInput = {
   purchase: MarketplacePurchase;
   settlements: MarketplaceSettlement[];
   dataKeyShares: DataKeyShare[];
+  vddProofs: VddProof[];
   buyer: Hex;
   walletClient: WalletClient;
   aggregatorUrl: string;
@@ -34,7 +35,7 @@ export async function recoverPurchasedAsset(input: RecoverAssetInput): Promise<R
     ? bytesFromHex(input.manualSecret, "manual recovery secret", 32)
     : await deriveBuyerSecret(input.sale, input.buyer, input.walletClient);
   const assetKey = chacha8Xor(encryptedDataKey, secret, new Uint8Array(12), 0);
-  const blobId = walrusBlobId(input.sale);
+  const blobId = walrusBlobId(input.sale, input.vddProofs);
   const encrypted = await downloadWalrusBlob(input.aggregatorUrl, blobId);
   const nonce = deriveRslhNonce(assetKey, utf8ToBytes("trustdrop_asset_v1"));
   const paddedPlaintext = chacha8Xor(encrypted, assetKey, nonce, 0);
@@ -118,11 +119,15 @@ function encryptedKeyForAudience(share: DataKeyShare, buyer: Hex): Uint8Array {
   return bytesFromHex(encrypted, "encrypted data key", 32);
 }
 
-function walrusBlobId(sale: MarketplaceSale): string {
+function walrusBlobId(sale: MarketplaceSale, vddProofs: VddProof[]): string {
   const parsed = parseSaleInfo(sale.info);
   const explicit = parsed.walrusBlobId || parsed.walrus_blob_id || parsed.blobId;
   if (typeof explicit === "string" && explicit.length > 0) return explicit;
-  return walrusBlobIdFromHex(sale.dataCommitment);
+  const proof = [...vddProofs]
+    .filter((item) => sameHex(item.channel, sale.channel))
+    .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
+  if (proof) return walrusBlobIdFromHex(proof.cCipher);
+  throw new Error("Missing encrypted Walrus blob id; wait for VDD proof indexing or refresh activity");
 }
 
 function parseSaleInfo(info: string): Record<string, unknown> {
