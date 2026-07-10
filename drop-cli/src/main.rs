@@ -20,6 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 use std::{
+    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -877,33 +878,108 @@ fn cmd_tui(args: &[String]) -> Result<()> {
 async fn cmd_daemon(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("run") => {
-            if !has_flag(args, "--once") {
-                println!("daemon continuous mode is not enabled in the prototype.");
-                println!("usage: drop-cli daemon run --once");
-                return Ok(());
+            if has_flag(args, "--once") {
+                daemon_run_once().await
+            } else {
+                daemon_run_forever().await
             }
-            daemon_run_once().await
         }
-        _ => bail!("usage: drop-cli daemon run --once"),
+        _ => bail!("usage: drop-cli daemon run [--once]"),
     }
 }
 
 async fn daemon_run_once() -> Result<()> {
+    daemon_tick(None).await
+}
+
+async fn daemon_run_forever() -> Result<()> {
+    let interval_secs = env::var("DROP_CLI_DAEMON_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(15)
+        .max(5);
+    println!("daemon: running");
+    println!("intervalSecs: {interval_secs}");
+    println!("mode: seller-channel subgraph discovery");
+    let config = load_config()?;
+    let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
+    let mut seen_purchase_txs = baseline
+        .into_iter()
+        .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    println!("baselinePurchases: {}", seen_purchase_txs.len());
+    loop {
+        if let Err(error) = daemon_tick(Some(&mut seen_purchase_txs)).await {
+            println!("daemonError: {error:#}");
+        }
+        tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+    }
+}
+
+async fn daemon_tick(mut seen_purchase_txs: Option<&mut HashSet<String>>) -> Result<()> {
     let config = load_config()?;
     let state_dir = state_dir(&config)?;
     let sales = load_all_sale_states(&state_dir)?;
-    let purchases = collect_purchases(&sales);
-    println!("daemon: one-shot scan");
+    let local_sale_ids = sales
+        .iter()
+        .map(|state| state.sale_id.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let purchases = discover_purchases(&config, &[]).await?;
+    println!("daemon: scan");
     println!("sales: {}", sales.len());
     println!("purchases: {}", purchases.len());
-    for purchase in purchases {
-        if purchase.status == "paid" {
-            println!("paidPurchase: {}", purchase.purchase_tx_hash);
-            println!("  saleId: {}", purchase.sale_id);
+    let mut paid_purchases = purchases
+        .into_iter()
+        .filter(|purchase| {
+            purchase.status == "paid"
+                && local_sale_ids.contains(&purchase.sale_id.to_ascii_lowercase())
+                && seen_purchase_txs
+                    .as_ref()
+                    .map(|seen| {
+                        !seen.contains(&purchase.purchase_tx_hash.to_ascii_lowercase())
+                    })
+                    .unwrap_or(true)
+        })
+        .collect::<Vec<_>>();
+    paid_purchases.sort_by(|left, right| left.purchase_tx_hash.cmp(&right.purchase_tx_hash));
+    for purchase in &paid_purchases {
+        println!("paidPurchase: {}", purchase.purchase_tx_hash);
+        println!("  saleId: {}", purchase.sale_id);
+        println!(
+            "  channel: {}",
+            purchase.channel_address.as_deref().unwrap_or("-")
+        );
+    }
+    for purchase in paid_purchases {
+        if let Some(seen) = seen_purchase_txs.as_deref_mut() {
+            seen.insert(purchase.purchase_tx_hash.to_ascii_lowercase());
+        }
+        let purchase_tx_hash = purchase.purchase_tx_hash.clone();
+        phase_respond(&[purchase_tx_hash.clone()]).await?;
+        let thread = thread_for_purchase(&state_dir, &purchase.sale_id, &purchase_tx_hash)?
+            .ok_or_else(|| anyhow!("thread not created for purchase {}", purchase.purchase_tx_hash))?;
+        if !local_sale_ids.contains(&thread.sale_id.to_ascii_lowercase()) {
             println!(
-                "  next: drop-cli phase respond {}",
-                purchase.purchase_tx_hash
+                "daemonSkipThread: {} reason=missing-local-sale saleId={}",
+                thread.thread_id, thread.sale_id
             );
+            continue;
+        }
+        if matches!(thread.status, ThreadStatus::Blocked | ThreadStatus::Failed) {
+            println!(
+                "daemonBlockedThread: {} status={:?}",
+                thread.thread_id, thread.status
+            );
+            continue;
+        }
+        if !matches!(thread.status, ThreadStatus::Completed | ThreadStatus::Canceled) {
+            println!("daemonFulfillThread: {}", thread.thread_id);
+            phase_fulfill(&thread.thread_id).await?;
+            let refreshed = load_thread_state(&state_dir, &thread.thread_id)?;
+            if refreshed.status == ThreadStatus::Fulfilled || refreshed.status == ThreadStatus::SettleReady {
+                println!("daemonSettleThread: {}", refreshed.thread_id);
+                phase_settle(&refreshed.thread_id).await?;
+            }
         }
     }
     println!("daemon: complete");
@@ -1239,6 +1315,21 @@ fn list_threads(args: &[String]) -> Result<()> {
         println!("next: drop-cli purchase list");
     }
     Ok(())
+}
+
+fn thread_for_purchase(
+    state_dir: &Path,
+    sale_id: &str,
+    purchase_tx_hash: &str,
+) -> Result<Option<ThreadState>> {
+    Ok(load_all_thread_states(state_dir)?.into_iter().find(|thread| {
+        thread.sale_id.eq_ignore_ascii_case(sale_id)
+            && thread.purchases.iter().any(|purchase| {
+                purchase
+                    .purchase_tx_hash
+                    .eq_ignore_ascii_case(purchase_tx_hash)
+            })
+    }))
 }
 
 fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {

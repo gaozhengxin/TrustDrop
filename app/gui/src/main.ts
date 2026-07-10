@@ -342,6 +342,7 @@ function assetRows(items: MarketplaceSale[]): string {
 function buyerRecordRows(): string {
   if (state.purchases.length === 0 && state.localThreads.length === 0) return empty("No purchase records.");
   const refundKeys = new Set(state.refunds.map((item) => `${item.channel}:${item.saleId}:${item.buyer}`.toLowerCase()));
+  const indexedTxHashes = new Set(state.purchases.map((purchase) => purchase.txHash.toLowerCase()));
   const indexedRows = state.purchases.map((purchase) => {
     const sale = findSaleForPurchase(purchase);
     const key = `${purchase.channel}:${purchase.saleId}:${purchase.buyer}`.toLowerCase();
@@ -362,17 +363,23 @@ function buyerRecordRows(): string {
       </article>
     `;
   });
-  const localRows = state.localThreads.map(
-    (thread) => `
+  const localRows = state.localThreads
+    .filter((thread) => !indexedTxHashes.has(thread.txHash.toLowerCase()))
+    .map((thread) => {
+      const sale = state.allSales.find((item) => item.channel.toLowerCase() === thread.channel.toLowerCase() && item.saleId.toLowerCase() === thread.saleId.toLowerCase());
+      const detail = thread.lastError ? `${shortAddress(thread.txHash)} · ${thread.lastError}` : `${shortAddress(thread.txHash)} · local`;
+      return `
       <article class="record">
-        <div>
+        <span class="file-badge kind-${sale ? fileKind(sale.contentType, sale.fileName) : "binary"}">${escapeHtml(fileKindLabel(sale))}</span>
+        <div class="record-main">
           <h2>${escapeHtml(thread.title)}</h2>
-          <p>${shortAddress(thread.txHash)} · local</p>
+          <p>${escapeHtml(detail)}</p>
         </div>
         <span class="status">${statusText(thread.status)}</span>
+        <button class="text-button" type="button" disabled>Download</button>
       </article>
-    `,
-  );
+    `;
+    });
   return [...indexedRows, ...localRows].join("");
 }
 

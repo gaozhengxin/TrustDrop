@@ -312,3 +312,33 @@ Walrus 官方 Network Reference 说明：
 验证：
 
 - `pnpm --dir app/gui build` 通过。
+
+### Cloudflare Pages 部署
+
+FFM frontend 使用 Cloudflare Pages 部署，构建产物目录是 `app/gui/dist`。
+
+部署脚本：
+
+```bash
+scripts/deploy-ffm-cloudflare-pages.sh
+```
+
+默认配置：
+
+- project: `fair-file-marketplace`
+- branch: `dev`
+
+可用环境变量覆盖：
+
+```bash
+CLOUDFLARE_PAGES_PROJECT=<project-name>
+CLOUDFLARE_PAGES_BRANCH=<branch-name>
+```
+
+脚本复用 `oracle-worker` 包中已安装的 `wrangler`，避免前端包重复维护 Cloudflare CLI 依赖。
+
+2026-07-09 首次部署：
+
+- project: `fair-file-marketplace`
+- branch: `dev`
+- preview URL: `https://1391461b.fair-file-marketplace.pages.dev`

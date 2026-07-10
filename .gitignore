@@ -82,6 +82,7 @@ build/
 Thumbs.db
 .idea/
 .vscode/
+.zed/
 *.swp
 *.swo
 
@@ -94,6 +95,8 @@ Thumbs.db
 .tmp/
 temp/
 .cache/
+.wrangler/
+test-assets/
 .env
 .env.*
 !.env.example
