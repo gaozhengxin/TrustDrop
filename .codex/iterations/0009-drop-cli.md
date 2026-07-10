@@ -1747,9 +1747,9 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 1. 先实现 purchase context import 和 exchangeInfo 持久化。
 2. 已完成：实现 batch thread 状态机的手动路径。
 3. 已完成：实现 batch VSS proof + `shareDataKey`。
-4. 未完成：实现每笔 purchase 的 daemon partial success / retry 策略。
-5. 将 JSON store 迁移到 SQLite。
-6. 实现 daemon run loop、锁、nonce/pending tx 管理。
+4. 已完成：实现每笔 purchase 的 daemon partial success / retry 策略。
+5. 已完成：将 JSON store 迁移到 SQLite。
+6. 已完成：实现 daemon run loop 和单实例锁；nonce/pending tx 使用链上 receipt 与 thread 状态恢复。
 7. 实现 TUI 交互层。
 8. 最后跑全流程和回归测试。
 
@@ -1763,7 +1763,7 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
   - 不带 `--once` 时长期运行。
   - 带 `--once` 时只做一次 scan，并用启动时 baseline 避免处理历史 purchase。
 - `drop-cli daemon status`
-  - 显示 state dir、lock、pid、status 和 warning 数。
+  - 显示 state dir、lock、pid、status 和持久化 event 数。
 - `drop-cli daemon stop`
   - 写入 stop 文件，长期运行 daemon 在下一轮 tick 停止。
 - `drop-cli daemon check`
@@ -1771,7 +1771,8 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 - daemon lock
   - 使用 state dir 下 `daemon.lock` 防止多实例。
 - daemon baseline
-  - 启动时记录已有 purchase，避免误处理历史 purchase。
+  - 第一次启动时记录已有 purchase，避免误处理历史 purchase。
+  - baseline 初始化标记和已处理 purchase 写入 SQLite；重启不会重新 baseline，因此停机期间产生的新 purchase 不会丢失。
 - seller 过滤
   - 只处理当前 seller 本地 state 中存在的 sale。
 - subgraph + RPC fallback
@@ -1792,24 +1793,30 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
   - fulfill/settle 失败会把 thread 标记为 `failed`，写入 `last_error` 和 daemon warning，不阻塞其他 thread。
   - 失败 thread 不会被 daemon 无限重试。
 - health warning
-  - 周期性写入 `daemon.warnings.log`。
+  - 周期性写入 SQLite `daemon_events`。
   - 覆盖 RPC、seller ETH、Oracle Worker、Oracle relayer balance/pending 状态。
 - 资源控制
   - `DROP_CLI_DAEMON_MAX_CONCURRENT_THREADS` 控制每轮最多处理的 thread 数。
   - `DROP_CLI_DAEMON_INTERVAL_SECS` 控制轮询间隔。
   - `DROP_CLI_DAEMON_WARNING_INTERVAL_SECS` 控制 health warning 间隔。
+- SQLite 状态库
+  - 默认路径为 `~/.trustdrop/state/trustdrop.db`，启用 WAL。
+  - `sales`、`threads`、daemon seen purchase、初始化元数据和 warning/event 均持久化。
+  - 首次创建数据库时自动导入旧 sale/thread JSON；之后 SQLite 是唯一事实来源。
+  - `drop-cli db init|migrate|inspect` 管理和检查数据库。
+- Subgraph 限流控制
+  - 默认轮询间隔由 15 秒调整为 60 秒，允许通过 `DROP_CLI_DAEMON_INTERVAL_SECS` 覆盖，最小 15 秒。
+  - subgraph 429 或不可用时继续使用 RPC fallback。
 
 验证：
 
 - `cargo fmt -p drop-cli` 通过。
 - `nice -n 19 ionice -c3 cargo check -p drop-cli -j1` 通过。
 - `nice -n 19 ionice -c3 cargo build -p drop-cli -j1` 通过，`target/debug/drop-cli` 已刷新。
-- `target/debug/drop-cli daemon status` 通过。
+- `cargo test -p drop-sdk state::tests -j1` 通过：2 passed，覆盖 JSON 导入、SQLite sale/thread 持久化和 daemon 跨重启 seen 状态。
+- `target/debug/drop-cli db migrate` 通过：导入 4 个 sale、7 个 thread。
+- `target/debug/drop-cli db inspect` 通过：SQLite 中 4 个 sale、7 个 thread、1 个 purchase。
+- `target/debug/drop-cli daemon status` 通过：当前未运行，event 数可从 SQLite 读取。
 - `target/debug/drop-cli daemon run --once` 通过；subgraph 返回 `429 Too Many Requests` 时 RPC fallback 生效，未处理历史 purchase。
 
-仍留作后续架构增强，不阻塞当前 daemon 使用：
-
-- JSON state 迁移 SQLite。
-- TUI 交互式管理。
-- 外部 signer / keyring。
-- 更完整的 tx replacement / nonce repair 工具。
+TUI、外部 signer/keyring 和专用 nonce repair 命令属于其他 CLI 产品能力，不作为 daemon 功能缺口记录。

@@ -6,10 +6,11 @@ use drop_sdk::{
     config::DropCliConfig,
     oracle::OracleWorkerClient,
     state::{
-        default_state_dir, load_all_sale_states, load_all_thread_states, load_sale_state,
-        load_thread_state, save_sale_state, save_thread_state, thread_state_dir,
-        PurchaseContextRecord, SaleState, ThreadPurchase, ThreadState, ThreadStatus, TxRecord,
-        TxStatus,
+        append_daemon_event, daemon_event_count, database_path, default_state_dir,
+        initialize_or_load_daemon_seen, load_all_sale_states, load_all_thread_states,
+        load_sale_state, load_thread_state, mark_daemon_purchase_seen, save_sale_state,
+        save_thread_state, thread_state_dir, PurchaseContextRecord, SaleState, ThreadPurchase,
+        ThreadState, ThreadStatus, TxRecord, TxStatus,
     },
     walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch},
 };
@@ -132,8 +133,9 @@ fn cmd_init(_args: &[String]) -> Result<()> {
     let dir = state_dir(&config)?;
     fs::create_dir_all(&dir)?;
     fs::create_dir_all(thread_state_dir(&dir))?;
+    let _ = load_all_sale_states(&dir)?;
     println!("created state dir: {}", dir.display());
-    println!("created thread dir: {}", thread_state_dir(&dir).display());
+    println!("database: {}", database_path(&dir).display());
     println!("config source for prototype: {}", config_source());
     println!("next: drop-cli doctor");
     Ok(())
@@ -145,9 +147,12 @@ fn cmd_db(args: &[String]) -> Result<()> {
             let config = load_config()?;
             let dir = state_dir(&config)?;
             fs::create_dir_all(&dir)?;
-            fs::create_dir_all(thread_state_dir(&dir))?;
+            let sales = load_all_sale_states(&dir)?;
+            let threads = load_all_thread_states(&dir)?;
             println!("stateDir: {}", dir.display());
-            println!("threadDir: {}", thread_state_dir(&dir).display());
+            println!("database: {}", database_path(&dir).display());
+            println!("sales: {}", sales.len());
+            println!("threads: {}", threads.len());
             println!("status: ready");
             Ok(())
         }
@@ -157,6 +162,7 @@ fn cmd_db(args: &[String]) -> Result<()> {
             let sales = load_all_sale_states(&dir)?;
             let threads = load_all_thread_states(&dir)?;
             println!("stateDir: {}", dir.display());
+            println!("database: {}", database_path(&dir).display());
             println!("sales: {}", sales.len());
             println!("threads: {}", threads.len());
             println!("purchases: {}", collect_purchases(&sales).len());
@@ -899,10 +905,12 @@ async fn daemon_run_once() -> Result<()> {
     let config = load_config()?;
     let daemon_config = DaemonConfig::from_env();
     let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
-    let mut seen_purchase_txs = baseline
-        .into_iter()
-        .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
+    let mut seen_purchase_txs = initialize_or_load_daemon_seen(
+        state_dir(&config)?,
+        baseline
+            .into_iter()
+            .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase()),
+    )?;
     daemon_tick(&config, &daemon_config, Some(&mut seen_purchase_txs)).await
 }
 
@@ -918,10 +926,12 @@ async fn daemon_run_forever() -> Result<()> {
     println!("intervalSecs: {}", daemon_config.poll_interval_secs);
     println!("mode: seller-channel subgraph discovery");
     let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
-    let mut seen_purchase_txs = baseline
-        .into_iter()
-        .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase())
-        .collect::<HashSet<_>>();
+    let mut seen_purchase_txs = initialize_or_load_daemon_seen(
+        &state_dir,
+        baseline
+            .into_iter()
+            .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase()),
+    )?;
     println!("baselinePurchases: {}", seen_purchase_txs.len());
     let mut last_warning_at = 0u64;
     loop {
@@ -1009,6 +1019,7 @@ async fn daemon_tick(
             .collect::<Vec<_>>();
         phase_respond(&txs).await?;
         for purchase in &group {
+            mark_daemon_purchase_seen(&state_dir, &purchase.purchase_tx_hash)?;
             if let Some(seen) = seen_purchase_txs.as_deref_mut() {
                 seen.insert(purchase.purchase_tx_hash.to_ascii_lowercase());
             }
@@ -1242,7 +1253,7 @@ struct DaemonConfig {
 impl DaemonConfig {
     fn from_env() -> Self {
         Self {
-            poll_interval_secs: env_u64("DROP_CLI_DAEMON_INTERVAL_SECS", 15).max(5),
+            poll_interval_secs: env_u64("DROP_CLI_DAEMON_INTERVAL_SECS", 60).max(15),
             warning_interval_secs: env_u64("DROP_CLI_DAEMON_WARNING_INTERVAL_SECS", 300).max(30),
             max_concurrent_threads: env_usize("DROP_CLI_DAEMON_MAX_CONCURRENT_THREADS", 1).max(1),
             auto_respond: env_bool("DROP_CLI_DAEMON_AUTO_RESPOND", true),
@@ -1310,7 +1321,6 @@ fn daemon_status() -> Result<()> {
     let state_dir = state_dir(&config)?;
     let lock = daemon_lock_path(&state_dir);
     let status = daemon_status_path(&state_dir);
-    let warnings = daemon_warning_path(&state_dir);
     println!("stateDir: {}", state_dir.display());
     println!("lock: {}", lock.display());
     if lock.exists() {
@@ -1325,12 +1335,7 @@ fn daemon_status() -> Result<()> {
     if status.exists() {
         println!("status: {}", fs::read_to_string(status)?.trim());
     }
-    if warnings.exists() {
-        let count = fs::read_to_string(warnings)?.lines().count();
-        println!("warnings: {count}");
-    } else {
-        println!("warnings: 0");
-    }
+    println!("events: {}", daemon_event_count(&state_dir)?);
     Ok(())
 }
 
@@ -1366,10 +1371,6 @@ fn daemon_stop_path(state_dir: &Path) -> PathBuf {
     state_dir.join("daemon.stop")
 }
 
-fn daemon_warning_path(state_dir: &Path) -> PathBuf {
-    state_dir.join("daemon.warnings.log")
-}
-
 fn write_daemon_status(state_dir: &Path, status: &str) -> Result<()> {
     fs::write(
         daemon_status_path(state_dir),
@@ -1391,22 +1392,7 @@ fn daemon_stop_requested(state_dir: &Path) -> bool {
 }
 
 fn append_daemon_warning(state_dir: &Path, kind: &str, message: &str) -> Result<()> {
-    fs::create_dir_all(state_dir)?;
-    let path = daemon_warning_path(state_dir);
-    let line = json!({
-        "timestamp": unix_timestamp(),
-        "kind": kind,
-        "message": message,
-    })
-    .to_string();
-    let mut content = String::new();
-    if path.exists() {
-        content = fs::read_to_string(&path)?;
-    }
-    content.push_str(&line);
-    content.push('\n');
-    fs::write(path, content)?;
-    Ok(())
+    append_daemon_event(state_dir, kind, message)
 }
 
 fn mark_thread_failed(state_dir: &Path, thread_id: &str, message: &str) -> Result<()> {

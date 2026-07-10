@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -196,41 +198,118 @@ pub fn state_path(state_dir: impl AsRef<Path>, sale_id: &str) -> PathBuf {
         .join(format!("{}.json", sanitize_sale_id(sale_id)))
 }
 
-pub fn load_sale_state(state_dir: impl AsRef<Path>, sale_id: &str) -> Result<SaleState> {
-    let path = state_path(state_dir, sale_id);
-    let content = fs::read_to_string(&path)
-        .map_err(|error| anyhow!("failed to read {}: {}", path.display(), error))?;
-    Ok(serde_json::from_str(&content)?)
+pub fn database_path(state_dir: impl AsRef<Path>) -> PathBuf {
+    state_dir.as_ref().join("trustdrop.db")
 }
 
-pub fn save_sale_state(state_dir: impl AsRef<Path>, state: &SaleState) -> Result<()> {
+fn open_database(state_dir: impl AsRef<Path>) -> Result<Connection> {
     let state_dir = state_dir.as_ref();
     fs::create_dir_all(state_dir)?;
-    let path = state_path(state_dir, &state.sale_id);
-    let content = serde_json::to_string_pretty(state)?;
-    fs::write(path, format!("{}\n", content))?;
-    Ok(())
+    let path = database_path(state_dir);
+    let is_new = !path.exists();
+    let connection = Connection::open(path)?;
+    connection.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA foreign_keys = ON;
+         CREATE TABLE IF NOT EXISTS sales (
+             sale_id TEXT PRIMARY KEY,
+             state_json TEXT NOT NULL,
+             updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+         );
+         CREATE TABLE IF NOT EXISTS threads (
+             thread_id TEXT PRIMARY KEY,
+             sale_id TEXT NOT NULL,
+             state_json TEXT NOT NULL,
+             updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+         );
+         CREATE INDEX IF NOT EXISTS threads_sale_id ON threads(sale_id);
+         CREATE TABLE IF NOT EXISTS daemon_seen_purchases (
+             purchase_tx_hash TEXT PRIMARY KEY,
+             first_seen_at INTEGER NOT NULL DEFAULT (unixepoch())
+         );
+         CREATE TABLE IF NOT EXISTS daemon_meta (
+             key TEXT PRIMARY KEY,
+             value TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS daemon_events (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+             kind TEXT NOT NULL,
+             message TEXT NOT NULL
+         );",
+    )?;
+    if is_new {
+        import_legacy_json(state_dir, &connection)?;
+    }
+    Ok(connection)
 }
 
-pub fn load_all_sale_states(state_dir: impl AsRef<Path>) -> Result<Vec<SaleState>> {
-    let state_dir = state_dir.as_ref();
-    if !state_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut states = Vec::new();
+fn import_legacy_json(state_dir: &Path, connection: &Connection) -> Result<()> {
     for entry in fs::read_dir(state_dir)? {
-        let entry = entry?;
-        let path = entry.path();
+        let path = entry?.path();
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
         let content = fs::read_to_string(&path)?;
         if let Ok(state) = serde_json::from_str::<SaleState>(&content) {
-            states.push(state);
+            connection.execute(
+                "INSERT OR IGNORE INTO sales (sale_id, state_json) VALUES (?1, ?2)",
+                params![state.sale_id, content],
+            )?;
         }
     }
-    states.sort_by(|left, right| left.sale_id.cmp(&right.sale_id));
+    let dir = thread_state_dir(state_dir);
+    if dir.exists() {
+        for entry in fs::read_dir(dir)? {
+            let path = entry?.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let content = fs::read_to_string(&path)?;
+            if let Ok(state) = serde_json::from_str::<ThreadState>(&content) {
+                connection.execute(
+                    "INSERT OR IGNORE INTO threads (thread_id, sale_id, state_json) VALUES (?1, ?2, ?3)",
+                    params![state.thread_id, state.sale_id, content],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn load_sale_state(state_dir: impl AsRef<Path>, sale_id: &str) -> Result<SaleState> {
+    let connection = open_database(state_dir)?;
+    let content = connection
+        .query_row(
+            "SELECT state_json FROM sales WHERE lower(sale_id) = lower(?1)",
+            [sale_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("sale state not found: {sale_id}"))?;
+    Ok(serde_json::from_str(&content)?)
+}
+
+pub fn save_sale_state(state_dir: impl AsRef<Path>, state: &SaleState) -> Result<()> {
+    let state_dir = state_dir.as_ref();
+    let connection = open_database(state_dir)?;
+    let content = serde_json::to_string(state)?;
+    connection.execute(
+        "INSERT INTO sales (sale_id, state_json, updated_at) VALUES (?1, ?2, unixepoch())
+         ON CONFLICT(sale_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
+        params![state.sale_id, content],
+    )?;
+    Ok(())
+}
+
+pub fn load_all_sale_states(state_dir: impl AsRef<Path>) -> Result<Vec<SaleState>> {
+    let connection = open_database(state_dir)?;
+    let mut statement = connection.prepare("SELECT state_json FROM sales ORDER BY sale_id")?;
+    let mut states = Vec::new();
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    for content in rows {
+        states.push(serde_json::from_str(&content?)?);
+    }
     Ok(states)
 }
 
@@ -243,41 +322,99 @@ pub fn thread_state_path(state_dir: impl AsRef<Path>, thread_id: &str) -> PathBu
 }
 
 pub fn load_thread_state(state_dir: impl AsRef<Path>, thread_id: &str) -> Result<ThreadState> {
-    let path = thread_state_path(state_dir, thread_id);
-    let content = fs::read_to_string(&path)
-        .map_err(|error| anyhow!("failed to read {}: {}", path.display(), error))?;
+    let connection = open_database(state_dir)?;
+    let content = connection
+        .query_row(
+            "SELECT state_json FROM threads WHERE lower(thread_id) = lower(?1)",
+            [thread_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("thread state not found: {thread_id}"))?;
     Ok(serde_json::from_str(&content)?)
 }
 
 pub fn save_thread_state(state_dir: impl AsRef<Path>, state: &ThreadState) -> Result<()> {
-    let dir = thread_state_dir(&state_dir);
-    fs::create_dir_all(&dir)?;
-    let path = thread_state_path(state_dir, &state.thread_id);
-    let content = serde_json::to_string_pretty(state)?;
-    fs::write(path, format!("{}\n", content))?;
+    let connection = open_database(state_dir)?;
+    let content = serde_json::to_string(state)?;
+    connection.execute(
+        "INSERT INTO threads (thread_id, sale_id, state_json, updated_at) VALUES (?1, ?2, ?3, unixepoch())
+         ON CONFLICT(thread_id) DO UPDATE SET sale_id = excluded.sale_id, state_json = excluded.state_json, updated_at = excluded.updated_at",
+        params![state.thread_id, state.sale_id, content],
+    )?;
     Ok(())
 }
 
 pub fn load_all_thread_states(state_dir: impl AsRef<Path>) -> Result<Vec<ThreadState>> {
-    let dir = thread_state_dir(state_dir);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-
+    let connection = open_database(state_dir)?;
+    let mut statement = connection.prepare("SELECT state_json FROM threads ORDER BY thread_id")?;
     let mut states = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
-            continue;
-        }
-        let content = fs::read_to_string(&path)?;
-        if let Ok(state) = serde_json::from_str::<ThreadState>(&content) {
-            states.push(state);
-        }
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    for content in rows {
+        states.push(serde_json::from_str(&content?)?);
     }
-    states.sort_by(|left, right| left.thread_id.cmp(&right.thread_id));
     Ok(states)
+}
+
+pub fn initialize_or_load_daemon_seen(
+    state_dir: impl AsRef<Path>,
+    baseline: impl IntoIterator<Item = String>,
+) -> Result<HashSet<String>> {
+    let mut connection = open_database(state_dir)?;
+    let transaction = connection.transaction()?;
+    let initialized = transaction
+        .query_row(
+            "SELECT value FROM daemon_meta WHERE key = 'purchase_baseline_initialized'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .is_some();
+    if !initialized {
+        for hash in baseline {
+            transaction.execute(
+                "INSERT OR IGNORE INTO daemon_seen_purchases (purchase_tx_hash) VALUES (lower(?1))",
+                [hash],
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO daemon_meta (key, value) VALUES ('purchase_baseline_initialized', 'true')",
+            [],
+        )?;
+    }
+    transaction.commit()?;
+    load_daemon_seen(&connection)
+}
+
+fn load_daemon_seen(connection: &Connection) -> Result<HashSet<String>> {
+    let mut statement = connection.prepare("SELECT purchase_tx_hash FROM daemon_seen_purchases")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut hashes = HashSet::new();
+    for hash in rows {
+        hashes.insert(hash?);
+    }
+    Ok(hashes)
+}
+
+pub fn mark_daemon_purchase_seen(state_dir: impl AsRef<Path>, hash: &str) -> Result<()> {
+    open_database(state_dir)?.execute(
+        "INSERT OR IGNORE INTO daemon_seen_purchases (purchase_tx_hash) VALUES (lower(?1))",
+        [hash],
+    )?;
+    Ok(())
+}
+
+pub fn append_daemon_event(state_dir: impl AsRef<Path>, kind: &str, message: &str) -> Result<()> {
+    open_database(state_dir)?.execute(
+        "INSERT INTO daemon_events (kind, message) VALUES (?1, ?2)",
+        params![kind, message],
+    )?;
+    Ok(())
+}
+
+pub fn daemon_event_count(state_dir: impl AsRef<Path>) -> Result<u64> {
+    Ok(open_database(state_dir)?
+        .query_row("SELECT count(*) FROM daemon_events", [], |row| row.get(0))?)
 }
 
 fn sanitize_sale_id(sale_id: &str) -> String {
@@ -295,4 +432,76 @@ fn sanitize_sale_id(sale_id: &str) -> String {
 
 fn default_needs_vss() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        env::temp_dir().join(format!("drop-sdk-state-{name}-{nonce}"))
+    }
+
+    #[test]
+    fn imports_legacy_json_then_uses_sqlite() {
+        let dir = test_dir("migration");
+        fs::create_dir_all(&dir).unwrap();
+        let mut legacy = SaleState::new("sale-1");
+        legacy.data_version = Some("legacy".into());
+        fs::write(
+            state_path(&dir, "sale-1"),
+            serde_json::to_string(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let imported = load_sale_state(&dir, "sale-1").unwrap();
+        assert_eq!(imported.data_version.as_deref(), Some("legacy"));
+        assert!(database_path(&dir).exists());
+
+        legacy.data_version = Some("sqlite".into());
+        save_sale_state(&dir, &legacy).unwrap();
+        fs::remove_file(state_path(&dir, "sale-1")).unwrap();
+        assert_eq!(
+            load_sale_state(&dir, "sale-1")
+                .unwrap()
+                .data_version
+                .as_deref(),
+            Some("sqlite")
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn persists_threads_and_daemon_seen_state() {
+        let dir = test_dir("daemon");
+        let thread = ThreadState::new(
+            "thread-1",
+            "sale-1",
+            Some("0xchannel".into()),
+            Vec::new(),
+            "1",
+        );
+        save_thread_state(&dir, &thread).unwrap();
+        assert_eq!(
+            load_thread_state(&dir, "thread-1").unwrap().sale_id,
+            "sale-1"
+        );
+
+        let initial = initialize_or_load_daemon_seen(&dir, vec!["0xold".into()]).unwrap();
+        assert!(initial.contains("0xold"));
+        let restarted =
+            initialize_or_load_daemon_seen(&dir, vec!["0xnew-during-downtime".into()]).unwrap();
+        assert!(restarted.contains("0xold"));
+        assert!(!restarted.contains("0xnew-during-downtime"));
+
+        mark_daemon_purchase_seen(&dir, "0xNEW-DURING-DOWNTIME").unwrap();
+        let after_processing = initialize_or_load_daemon_seen(&dir, Vec::new()).unwrap();
+        assert!(after_processing.contains("0xnew-during-downtime"));
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
