@@ -1752,3 +1752,64 @@ drop-cli/scripts/test-drop-cli-full-flow.sh --yes-walrus --yes-chain --yes-prove
 6. 实现 daemon run loop、锁、nonce/pending tx 管理。
 7. 实现 TUI 交互层。
 8. 最后跑全流程和回归测试。
+
+### 2026-07-10 Daemon 完成记录
+
+本轮把 `drop-cli daemon` 从一次性 prototype 占位补齐为可长期运行的 seller daemon。
+
+已完成：
+
+- `drop-cli daemon run [--once]`
+  - 不带 `--once` 时长期运行。
+  - 带 `--once` 时只做一次 scan，并用启动时 baseline 避免处理历史 purchase。
+- `drop-cli daemon status`
+  - 显示 state dir、lock、pid、status 和 warning 数。
+- `drop-cli daemon stop`
+  - 写入 stop 文件，长期运行 daemon 在下一轮 tick 停止。
+- `drop-cli daemon check`
+  - 检查 RPC、seller ETH、Oracle Worker health/status。
+- daemon lock
+  - 使用 state dir 下 `daemon.lock` 防止多实例。
+- daemon baseline
+  - 启动时记录已有 purchase，避免误处理历史 purchase。
+- seller 过滤
+  - 只处理当前 seller 本地 state 中存在的 sale。
+- subgraph + RPC fallback
+  - 优先走 subgraph。
+  - subgraph 429 或不可用时，从 Hub `PurchaseEvent` RPC logs 回退发现 purchase。
+- 自动 batch 策略
+  - `needsVSS=false` purchase 单独 thread。
+  - `needsVSS=true` purchase 按 channel/sale 分 batch。
+  - `DROP_CLI_DAEMON_MAX_BATCH_SIZE` 控制 batch 大小。
+- 自动执行策略
+  - `DROP_CLI_DAEMON_AUTO_RESPOND`
+  - `DROP_CLI_DAEMON_AUTO_FULFILL`
+  - `DROP_CLI_DAEMON_AUTO_SETTLE`
+  - `DROP_CLI_DAEMON_REQUIRE_PROOF_APPROVAL`
+  - `DROP_CLI_DAEMON_REQUIRE_SETTLE_APPROVAL`
+- partial failure / retry
+  - 每个 thread 单独处理。
+  - fulfill/settle 失败会把 thread 标记为 `failed`，写入 `last_error` 和 daemon warning，不阻塞其他 thread。
+  - 失败 thread 不会被 daemon 无限重试。
+- health warning
+  - 周期性写入 `daemon.warnings.log`。
+  - 覆盖 RPC、seller ETH、Oracle Worker、Oracle relayer balance/pending 状态。
+- 资源控制
+  - `DROP_CLI_DAEMON_MAX_CONCURRENT_THREADS` 控制每轮最多处理的 thread 数。
+  - `DROP_CLI_DAEMON_INTERVAL_SECS` 控制轮询间隔。
+  - `DROP_CLI_DAEMON_WARNING_INTERVAL_SECS` 控制 health warning 间隔。
+
+验证：
+
+- `cargo fmt -p drop-cli` 通过。
+- `nice -n 19 ionice -c3 cargo check -p drop-cli -j1` 通过。
+- `nice -n 19 ionice -c3 cargo build -p drop-cli -j1` 通过，`target/debug/drop-cli` 已刷新。
+- `target/debug/drop-cli daemon status` 通过。
+- `target/debug/drop-cli daemon run --once` 通过；subgraph 返回 `429 Too Many Requests` 时 RPC fallback 生效，未处理历史 purchase。
+
+仍留作后续架构增强，不阻塞当前 daemon 使用：
+
+- JSON state 迁移 SQLite。
+- TUI 交互式管理。
+- 外部 signer / keyring。
+- 更完整的 tx replacement / nonce repair 工具。

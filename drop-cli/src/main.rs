@@ -20,8 +20,9 @@ use serde::Deserialize;
 use serde_json::json;
 use sha3::{Digest, Keccak256};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -105,7 +106,8 @@ Usage:
   drop-cli thread show <thread-id>
   drop-cli thread cancel <thread-id>
   drop-cli tui
-  drop-cli daemon run --once
+  drop-cli daemon run [--once]
+  drop-cli daemon status|stop|check
   drop-cli recover-test <sale-id>
   drop-cli phase prepare <file>
   drop-cli phase publish <sale-id>
@@ -884,40 +886,73 @@ async fn cmd_daemon(args: &[String]) -> Result<()> {
                 daemon_run_forever().await
             }
         }
-        _ => bail!("usage: drop-cli daemon run [--once]"),
+        Some("status") => daemon_status(),
+        Some("stop") => daemon_stop(),
+        Some("check") => daemon_check().await,
+        _ => bail!(
+            "usage: drop-cli daemon run [--once] | daemon status | daemon stop | daemon check"
+        ),
     }
 }
 
 async fn daemon_run_once() -> Result<()> {
-    daemon_tick(None).await
+    let config = load_config()?;
+    let daemon_config = DaemonConfig::from_env();
+    let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
+    let mut seen_purchase_txs = baseline
+        .into_iter()
+        .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    daemon_tick(&config, &daemon_config, Some(&mut seen_purchase_txs)).await
 }
 
 async fn daemon_run_forever() -> Result<()> {
-    let interval_secs = env::var("DROP_CLI_DAEMON_INTERVAL_SECS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(15)
-        .max(5);
-    println!("daemon: running");
-    println!("intervalSecs: {interval_secs}");
-    println!("mode: seller-channel subgraph discovery");
     let config = load_config()?;
+    let daemon_config = DaemonConfig::from_env();
+    let state_dir = state_dir(&config)?;
+    fs::create_dir_all(&state_dir)?;
+    let _lock = DaemonLock::acquire(&state_dir)?;
+    clear_daemon_stop(&state_dir)?;
+    write_daemon_status(&state_dir, "running")?;
+    println!("daemon: running");
+    println!("intervalSecs: {}", daemon_config.poll_interval_secs);
+    println!("mode: seller-channel subgraph discovery");
     let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
     let mut seen_purchase_txs = baseline
         .into_iter()
         .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase())
         .collect::<HashSet<_>>();
     println!("baselinePurchases: {}", seen_purchase_txs.len());
+    let mut last_warning_at = 0u64;
     loop {
-        if let Err(error) = daemon_tick(Some(&mut seen_purchase_txs)).await {
-            println!("daemonError: {error:#}");
+        if daemon_stop_requested(&state_dir) {
+            println!("daemon: stop requested");
+            write_daemon_status(&state_dir, "stopped")?;
+            break;
         }
-        tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+        let now = unix_timestamp();
+        if now.saturating_sub(last_warning_at) >= daemon_config.warning_interval_secs {
+            if let Err(error) = daemon_health_check(&config, &daemon_config).await {
+                append_daemon_warning(&state_dir, "health", &format!("{error:#}"))?;
+                println!("daemonWarning: {error:#}");
+            }
+            last_warning_at = now;
+        }
+        if let Err(error) = daemon_tick(&config, &daemon_config, Some(&mut seen_purchase_txs)).await
+        {
+            println!("daemonError: {error:#}");
+            append_daemon_warning(&state_dir, "tick", &format!("{error:#}"))?;
+        }
+        tokio::time::sleep(Duration::from_secs(daemon_config.poll_interval_secs)).await;
     }
+    Ok(())
 }
 
-async fn daemon_tick(mut seen_purchase_txs: Option<&mut HashSet<String>>) -> Result<()> {
-    let config = load_config()?;
+async fn daemon_tick(
+    config: &DropCliConfig,
+    daemon_config: &DaemonConfig,
+    mut seen_purchase_txs: Option<&mut HashSet<String>>,
+) -> Result<()> {
     let state_dir = state_dir(&config)?;
     let sales = load_all_sale_states(&state_dir)?;
     let local_sale_ids = sales
@@ -928,19 +963,18 @@ async fn daemon_tick(mut seen_purchase_txs: Option<&mut HashSet<String>>) -> Res
     println!("daemon: scan");
     println!("sales: {}", sales.len());
     println!("purchases: {}", purchases.len());
-    let mut paid_purchases = purchases
+    let paid_purchases = purchases
         .into_iter()
         .filter(|purchase| {
             purchase.status == "paid"
                 && local_sale_ids.contains(&purchase.sale_id.to_ascii_lowercase())
                 && seen_purchase_txs
                     .as_ref()
-                    .map(|seen| {
-                        !seen.contains(&purchase.purchase_tx_hash.to_ascii_lowercase())
-                    })
+                    .map(|seen| !seen.contains(&purchase.purchase_tx_hash.to_ascii_lowercase()))
                     .unwrap_or(true)
         })
         .collect::<Vec<_>>();
+    let mut paid_purchases = daemon_enrich_and_filter_purchases(config, paid_purchases).await;
     paid_purchases.sort_by(|left, right| left.purchase_tx_hash.cmp(&right.purchase_tx_hash));
     for purchase in &paid_purchases {
         println!("paidPurchase: {}", purchase.purchase_tx_hash);
@@ -950,40 +984,438 @@ async fn daemon_tick(mut seen_purchase_txs: Option<&mut HashSet<String>>) -> Res
             purchase.channel_address.as_deref().unwrap_or("-")
         );
     }
-    for purchase in paid_purchases {
-        if let Some(seen) = seen_purchase_txs.as_deref_mut() {
-            seen.insert(purchase.purchase_tx_hash.to_ascii_lowercase());
+    if !daemon_config.auto_respond {
+        for purchase in paid_purchases {
+            append_daemon_warning(
+                &state_dir,
+                "purchase",
+                &format!(
+                    "purchase {} is paid; auto_respond=false",
+                    purchase.purchase_tx_hash
+                ),
+            )?;
         }
-        let purchase_tx_hash = purchase.purchase_tx_hash.clone();
-        phase_respond(&[purchase_tx_hash.clone()]).await?;
-        let thread = thread_for_purchase(&state_dir, &purchase.sale_id, &purchase_tx_hash)?
-            .ok_or_else(|| anyhow!("thread not created for purchase {}", purchase.purchase_tx_hash))?;
-        if !local_sale_ids.contains(&thread.sale_id.to_ascii_lowercase()) {
-            println!(
-                "daemonSkipThread: {} reason=missing-local-sale saleId={}",
-                thread.thread_id, thread.sale_id
-            );
-            continue;
-        }
-        if matches!(thread.status, ThreadStatus::Blocked | ThreadStatus::Failed) {
-            println!(
-                "daemonBlockedThread: {} status={:?}",
-                thread.thread_id, thread.status
-            );
-            continue;
-        }
-        if !matches!(thread.status, ThreadStatus::Completed | ThreadStatus::Canceled) {
-            println!("daemonFulfillThread: {}", thread.thread_id);
-            phase_fulfill(&thread.thread_id).await?;
-            let refreshed = load_thread_state(&state_dir, &thread.thread_id)?;
-            if refreshed.status == ThreadStatus::Fulfilled || refreshed.status == ThreadStatus::SettleReady {
-                println!("daemonSettleThread: {}", refreshed.thread_id);
-                phase_settle(&refreshed.thread_id).await?;
+        println!("daemon: complete");
+        return Ok(());
+    }
+
+    let thread_inputs = daemon_build_thread_inputs(paid_purchases, daemon_config);
+    let mut processed_threads = HashSet::new();
+    let mut handled_threads = 0usize;
+    for group in thread_inputs {
+        let txs = group
+            .iter()
+            .map(|purchase| purchase.purchase_tx_hash.clone())
+            .collect::<Vec<_>>();
+        phase_respond(&txs).await?;
+        for purchase in &group {
+            if let Some(seen) = seen_purchase_txs.as_deref_mut() {
+                seen.insert(purchase.purchase_tx_hash.to_ascii_lowercase());
             }
         }
+        let first = group
+            .first()
+            .ok_or_else(|| anyhow!("daemon built an empty purchase group"))?;
+        let thread = thread_for_purchase(&state_dir, &first.sale_id, &first.purchase_tx_hash)?
+            .ok_or_else(|| anyhow!("thread not created for purchase {}", first.purchase_tx_hash))?;
+        if !processed_threads.insert(thread.thread_id.clone()) {
+            continue;
+        }
+        if handled_threads >= daemon_config.max_concurrent_threads {
+            append_daemon_warning(
+                &state_dir,
+                "thread",
+                &format!(
+                    "thread {} deferred by max_concurrent_threads",
+                    thread.thread_id
+                ),
+            )?;
+            continue;
+        }
+        daemon_process_thread(&state_dir, daemon_config, thread).await?;
+        handled_threads += 1;
     }
     println!("daemon: complete");
     Ok(())
+}
+
+async fn daemon_process_thread(
+    state_dir: &Path,
+    daemon_config: &DaemonConfig,
+    thread: ThreadState,
+) -> Result<()> {
+    if matches!(thread.status, ThreadStatus::Blocked | ThreadStatus::Failed) {
+        println!(
+            "daemonBlockedThread: {} status={:?}",
+            thread.thread_id, thread.status
+        );
+        return Ok(());
+    }
+    if !daemon_config.auto_fulfill
+        && !matches!(
+            thread.status,
+            ThreadStatus::Fulfilled | ThreadStatus::SettleReady
+        )
+    {
+        append_daemon_warning(
+            state_dir,
+            "thread",
+            &format!("thread {} ready; auto_fulfill=false", thread.thread_id),
+        )?;
+        return Ok(());
+    }
+    if !matches!(
+        thread.status,
+        ThreadStatus::Fulfilled
+            | ThreadStatus::SettleReady
+            | ThreadStatus::Completed
+            | ThreadStatus::Canceled
+    ) {
+        if daemon_config.require_manual_approval_for_proof
+            && thread.purchases.iter().any(|purchase| purchase.needs_vss)
+        {
+            append_daemon_warning(
+                state_dir,
+                "proof",
+                &format!(
+                    "thread {} requires VSS proof; require_manual_approval_for_proof=true",
+                    thread.thread_id
+                ),
+            )?;
+            return Ok(());
+        }
+        println!("daemonFulfillThread: {}", thread.thread_id);
+        if let Err(error) = phase_fulfill(&thread.thread_id).await {
+            mark_thread_failed(state_dir, &thread.thread_id, &format!("{error:#}"))?;
+            append_daemon_warning(
+                state_dir,
+                "fulfill",
+                &format!("thread {} fulfill failed: {error:#}", thread.thread_id),
+            )?;
+            return Ok(());
+        }
+    }
+    let refreshed = load_thread_state(state_dir, &thread.thread_id)?;
+    if matches!(
+        refreshed.status,
+        ThreadStatus::Fulfilled | ThreadStatus::SettleReady
+    ) {
+        if !daemon_config.auto_settle {
+            append_daemon_warning(
+                state_dir,
+                "settle",
+                &format!(
+                    "thread {} ready to settle; auto_settle=false",
+                    refreshed.thread_id
+                ),
+            )?;
+            return Ok(());
+        }
+        if daemon_config.require_manual_approval_for_settle {
+            append_daemon_warning(
+                state_dir,
+                "settle",
+                &format!(
+                    "thread {} requires settle; require_manual_approval_for_settle=true",
+                    refreshed.thread_id
+                ),
+            )?;
+            return Ok(());
+        }
+        println!("daemonSettleThread: {}", refreshed.thread_id);
+        if let Err(error) = phase_settle(&refreshed.thread_id).await {
+            mark_thread_failed(state_dir, &refreshed.thread_id, &format!("{error:#}"))?;
+            append_daemon_warning(
+                state_dir,
+                "settle",
+                &format!("thread {} settle failed: {error:#}", refreshed.thread_id),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn daemon_enrich_and_filter_purchases(
+    config: &DropCliConfig,
+    purchases: Vec<PurchaseView>,
+) -> Vec<PurchaseView> {
+    let mut enriched = Vec::new();
+    for purchase in purchases {
+        enriched.push(enrich_purchase_or_assume_vss(config, purchase).await);
+    }
+    enriched
+}
+
+fn daemon_build_thread_inputs(
+    purchases: Vec<PurchaseView>,
+    daemon_config: &DaemonConfig,
+) -> Vec<Vec<PurchaseView>> {
+    let mut grouped: BTreeMap<String, Vec<PurchaseView>> = BTreeMap::new();
+    let mut groups = Vec::new();
+    for purchase in purchases {
+        if purchase.needs_vss == Some(false) {
+            groups.push(vec![purchase]);
+            continue;
+        }
+        let key = if daemon_config.only_batch_same_sale {
+            format!(
+                "{}:{}",
+                purchase
+                    .channel_address
+                    .clone()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+                purchase.sale_id.to_ascii_lowercase()
+            )
+        } else {
+            purchase
+                .channel_address
+                .clone()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+        };
+        let bucket = grouped.entry(key).or_default();
+        bucket.push(purchase);
+        if bucket.len() >= daemon_config.max_purchases_per_thread {
+            groups.push(std::mem::take(bucket));
+        }
+    }
+    for (_, bucket) in grouped {
+        if !bucket.is_empty() {
+            groups.push(bucket);
+        }
+    }
+    groups
+}
+
+async fn daemon_health_check(config: &DropCliConfig, daemon_config: &DaemonConfig) -> Result<()> {
+    if let Some(rpc_url) = config.rpc_url.as_deref() {
+        let provider = Provider::<Http>::try_from(rpc_url)?;
+        provider.get_chainid().await?;
+        if let Some(seller_key) = config.seller_private_key.as_deref() {
+            let wallet = seller_key
+                .parse::<LocalWallet>()?
+                .with_chain_id(config.chain_id);
+            let balance = provider.get_balance(wallet.address(), None).await?;
+            if balance < daemon_config.min_seller_eth_wei {
+                bail!(
+                    "seller ETH balance below daemon minimum: balance={} min={}",
+                    balance,
+                    daemon_config.min_seller_eth_wei
+                );
+            }
+        }
+    }
+    match oracle_worker(config) {
+        Ok(worker) => {
+            if !worker.health().await.unwrap_or(false) {
+                bail!("oracle worker health check failed");
+            }
+            let status = worker.status().await?;
+            if status.relayer_has_pending_tx.unwrap_or(false) {
+                bail!("oracle relayer has pending transaction");
+            }
+            if !status.relayer_balance_sufficient.unwrap_or(false) {
+                bail!("oracle relayer balance is insufficient");
+            }
+        }
+        Err(error) => bail!("oracle worker config failed: {error}"),
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct DaemonConfig {
+    poll_interval_secs: u64,
+    warning_interval_secs: u64,
+    max_concurrent_threads: usize,
+    auto_respond: bool,
+    auto_fulfill: bool,
+    auto_settle: bool,
+    require_manual_approval_for_proof: bool,
+    require_manual_approval_for_settle: bool,
+    max_purchases_per_thread: usize,
+    only_batch_same_sale: bool,
+    min_seller_eth_wei: U256,
+}
+
+impl DaemonConfig {
+    fn from_env() -> Self {
+        Self {
+            poll_interval_secs: env_u64("DROP_CLI_DAEMON_INTERVAL_SECS", 15).max(5),
+            warning_interval_secs: env_u64("DROP_CLI_DAEMON_WARNING_INTERVAL_SECS", 300).max(30),
+            max_concurrent_threads: env_usize("DROP_CLI_DAEMON_MAX_CONCURRENT_THREADS", 1).max(1),
+            auto_respond: env_bool("DROP_CLI_DAEMON_AUTO_RESPOND", true),
+            auto_fulfill: env_bool("DROP_CLI_DAEMON_AUTO_FULFILL", true),
+            auto_settle: env_bool("DROP_CLI_DAEMON_AUTO_SETTLE", true),
+            require_manual_approval_for_proof: env_bool(
+                "DROP_CLI_DAEMON_REQUIRE_PROOF_APPROVAL",
+                false,
+            ),
+            require_manual_approval_for_settle: env_bool(
+                "DROP_CLI_DAEMON_REQUIRE_SETTLE_APPROVAL",
+                false,
+            ),
+            max_purchases_per_thread: env_usize("DROP_CLI_DAEMON_MAX_BATCH_SIZE", 16).max(1),
+            only_batch_same_sale: env_bool("DROP_CLI_DAEMON_ONLY_BATCH_SAME_SALE", true),
+            min_seller_eth_wei: env::var("DROP_CLI_DAEMON_MIN_SELLER_ETH_WEI")
+                .ok()
+                .and_then(|value| U256::from_dec_str(&value).ok())
+                .unwrap_or_else(|| U256::from(10_000_000_000_000_000u128)),
+        }
+    }
+}
+
+struct DaemonLock {
+    path: PathBuf,
+    _file: fs::File,
+}
+
+impl DaemonLock {
+    fn acquire(state_dir: &Path) -> Result<Self> {
+        let path = daemon_lock_path(state_dir);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                fs::write(
+                    &path,
+                    format!("{}\n{}\n", std::process::id(), unix_timestamp()),
+                )?;
+                Ok(Self { path, _file: file })
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let content = fs::read_to_string(&path).unwrap_or_default();
+                let pid = content.lines().next().unwrap_or("unknown");
+                bail!(
+                    "daemon already appears to be running; lock={} pid={pid}",
+                    path.display()
+                )
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+impl Drop for DaemonLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn daemon_status() -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let lock = daemon_lock_path(&state_dir);
+    let status = daemon_status_path(&state_dir);
+    let warnings = daemon_warning_path(&state_dir);
+    println!("stateDir: {}", state_dir.display());
+    println!("lock: {}", lock.display());
+    if lock.exists() {
+        let content = fs::read_to_string(&lock).unwrap_or_default();
+        let mut lines = content.lines();
+        println!("running: true");
+        println!("pid: {}", lines.next().unwrap_or("-"));
+        println!("startedAt: {}", lines.next().unwrap_or("-"));
+    } else {
+        println!("running: false");
+    }
+    if status.exists() {
+        println!("status: {}", fs::read_to_string(status)?.trim());
+    }
+    if warnings.exists() {
+        let count = fs::read_to_string(warnings)?.lines().count();
+        println!("warnings: {count}");
+    } else {
+        println!("warnings: 0");
+    }
+    Ok(())
+}
+
+fn daemon_stop() -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    fs::create_dir_all(&state_dir)?;
+    fs::write(
+        daemon_stop_path(&state_dir),
+        format!("{}\n", unix_timestamp()),
+    )?;
+    println!("stopRequested: true");
+    Ok(())
+}
+
+async fn daemon_check() -> Result<()> {
+    let config = load_config()?;
+    let daemon_config = DaemonConfig::from_env();
+    daemon_health_check(&config, &daemon_config).await?;
+    println!("daemonCheck: ok");
+    Ok(())
+}
+
+fn daemon_lock_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("daemon.lock")
+}
+
+fn daemon_status_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("daemon.status")
+}
+
+fn daemon_stop_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("daemon.stop")
+}
+
+fn daemon_warning_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("daemon.warnings.log")
+}
+
+fn write_daemon_status(state_dir: &Path, status: &str) -> Result<()> {
+    fs::write(
+        daemon_status_path(state_dir),
+        format!("{} {}\n", unix_timestamp(), status),
+    )?;
+    Ok(())
+}
+
+fn clear_daemon_stop(state_dir: &Path) -> Result<()> {
+    match fs::remove_file(daemon_stop_path(state_dir)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn daemon_stop_requested(state_dir: &Path) -> bool {
+    daemon_stop_path(state_dir).exists()
+}
+
+fn append_daemon_warning(state_dir: &Path, kind: &str, message: &str) -> Result<()> {
+    fs::create_dir_all(state_dir)?;
+    let path = daemon_warning_path(state_dir);
+    let line = json!({
+        "timestamp": unix_timestamp(),
+        "kind": kind,
+        "message": message,
+    })
+    .to_string();
+    let mut content = String::new();
+    if path.exists() {
+        content = fs::read_to_string(&path)?;
+    }
+    content.push_str(&line);
+    content.push('\n');
+    fs::write(path, content)?;
+    Ok(())
+}
+
+fn mark_thread_failed(state_dir: &Path, thread_id: &str, message: &str) -> Result<()> {
+    let mut thread = load_thread_state(state_dir, thread_id)?;
+    thread.status = ThreadStatus::Failed;
+    thread.last_error = Some(message.to_string());
+    thread.next_actions = vec![format!("drop-cli thread show {}", thread.thread_id)];
+    thread.updated_at = unix_timestamp_string();
+    save_thread_state(state_dir, &thread)
 }
 
 async fn cmd_debug(args: &[String]) -> Result<()> {
@@ -1236,21 +1668,34 @@ async fn discover_purchases(config: &DropCliConfig, args: &[String]) -> Result<V
     match fetch_subgraph_purchases(config, channel_filter, sale_filter).await {
         Ok(subgraph_purchases) => {
             for purchase in subgraph_purchases {
-                if purchases.iter().any(|known| {
-                    known
-                        .purchase_tx_hash
-                        .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
-                }) {
-                    continue;
-                }
-                purchases.push(purchase);
+                push_unique_purchase(&mut purchases, purchase);
             }
         }
         Err(error) => {
-            if purchases.is_empty() {
-                return Err(error.context("failed to discover purchases from subgraph"));
-            }
             println!("WARN failed to discover purchases from subgraph: {error}");
+            match fetch_rpc_purchases(config, &states, channel_filter, sale_filter).await {
+                Ok(rpc_purchases) => {
+                    for purchase in rpc_purchases {
+                        push_unique_purchase(&mut purchases, purchase);
+                    }
+                }
+                Err(rpc_error) if purchases.is_empty() => {
+                    return Err(rpc_error
+                        .context("failed to discover purchases from RPC fallback")
+                        .context(error)
+                        .context("failed to discover purchases from subgraph"));
+                }
+                Err(rpc_error) => {
+                    println!("WARN failed to discover purchases from RPC fallback: {rpc_error}");
+                }
+            }
+        }
+    }
+    if let Ok(rpc_purchases) =
+        fetch_rpc_purchases(config, &states, channel_filter, sale_filter).await
+    {
+        for purchase in rpc_purchases {
+            push_unique_purchase(&mut purchases, purchase);
         }
     }
 
@@ -1277,6 +1722,17 @@ async fn discover_purchases(config: &DropCliConfig, args: &[String]) -> Result<V
             .cmp(&right.purchase_tx_hash.to_ascii_lowercase())
     });
     Ok(purchases)
+}
+
+fn push_unique_purchase(purchases: &mut Vec<PurchaseView>, purchase: PurchaseView) {
+    if purchases.iter().any(|known| {
+        known
+            .purchase_tx_hash
+            .eq_ignore_ascii_case(&purchase.purchase_tx_hash)
+    }) {
+        return;
+    }
+    purchases.push(purchase);
 }
 
 fn list_threads(args: &[String]) -> Result<()> {
@@ -1322,14 +1778,16 @@ fn thread_for_purchase(
     sale_id: &str,
     purchase_tx_hash: &str,
 ) -> Result<Option<ThreadState>> {
-    Ok(load_all_thread_states(state_dir)?.into_iter().find(|thread| {
-        thread.sale_id.eq_ignore_ascii_case(sale_id)
-            && thread.purchases.iter().any(|purchase| {
-                purchase
-                    .purchase_tx_hash
-                    .eq_ignore_ascii_case(purchase_tx_hash)
-            })
-    }))
+    Ok(load_all_thread_states(state_dir)?
+        .into_iter()
+        .find(|thread| {
+            thread.sale_id.eq_ignore_ascii_case(sale_id)
+                && thread.purchases.iter().any(|purchase| {
+                    purchase
+                        .purchase_tx_hash
+                        .eq_ignore_ascii_case(purchase_tx_hash)
+                })
+        }))
 }
 
 fn collect_purchases(states: &[SaleState]) -> Vec<PurchaseView> {
@@ -1469,6 +1927,104 @@ async fn fetch_subgraph_purchases(
             settle_tx_hash: None,
         })
         .collect())
+}
+
+async fn fetch_rpc_purchases(
+    config: &DropCliConfig,
+    states: &[SaleState],
+    channel_filter: Option<&str>,
+    sale_filter: Option<&str>,
+) -> Result<Vec<PurchaseView>> {
+    let rpc_url = config
+        .rpc_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("ARBITRUM_SEPOLIA_RPC_URL is missing"))?;
+    let hub_address = parse_address(
+        config
+            .hub_address
+            .as_deref()
+            .ok_or_else(|| anyhow!("HUB_ADDRESS is missing"))?,
+    )?;
+    let provider = Provider::<Http>::try_from(rpc_url)?;
+    let hub = hub_abi::ExchangeHubContract::new(hub_address, Arc::new(provider.clone()));
+    let local_sales = states
+        .iter()
+        .filter(|state| {
+            channel_filter
+                .map(|channel| {
+                    state
+                        .channel_address
+                        .as_deref()
+                        .map(|value| value.eq_ignore_ascii_case(channel))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(true)
+                && sale_filter
+                    .map(|sale| state.sale_id.eq_ignore_ascii_case(sale))
+                    .unwrap_or(true)
+        })
+        .filter_map(|state| {
+            Some((
+                state.sale_id.to_ascii_lowercase(),
+                state.channel_address.as_deref()?.to_ascii_lowercase(),
+                state
+                    .transactions
+                    .iter()
+                    .find(|tx| tx.kind == "sale_list")
+                    .and_then(|tx| tx.block_number)
+                    .unwrap_or(0),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if local_sales.is_empty() {
+        return Ok(Vec::new());
+    }
+    let from_block = local_sales
+        .iter()
+        .map(|(_, _, block)| *block)
+        .min()
+        .unwrap_or(0);
+    let local_sale_ids = local_sales
+        .iter()
+        .map(|(sale_id, _, _)| sale_id.clone())
+        .collect::<HashSet<_>>();
+    let local_channels = local_sales
+        .iter()
+        .map(|(_, channel, _)| channel.clone())
+        .collect::<HashSet<_>>();
+    let filter = Filter::new()
+        .address(hub_address)
+        .topic0(<hub_abi::PurchaseEventFilter as ethers::contract::EthEvent>::signature())
+        .from_block(from_block);
+    let logs = provider.get_logs(&filter).await?;
+    let mut purchases = Vec::new();
+    for log in logs {
+        let Some(tx_hash) = log.transaction_hash else {
+            continue;
+        };
+        let Ok(event) = hub.decode_event::<hub_abi::PurchaseEventFilter>(
+            "PurchaseEvent",
+            log.topics.clone(),
+            log.data.clone(),
+        ) else {
+            continue;
+        };
+        let sale_id = format!("0x{}", hex::encode(event.sale_id)).to_ascii_lowercase();
+        let channel = format!("{:?}", event.channel).to_ascii_lowercase();
+        if !local_sale_ids.contains(&sale_id) || !local_channels.contains(&channel) {
+            continue;
+        }
+        purchases.push(PurchaseView {
+            purchase_tx_hash: format!("{tx_hash:?}"),
+            sale_id,
+            channel_address: Some(channel),
+            buyer: Some(format!("{:?}", event.buyer)),
+            needs_vss: None,
+            status: "paid".to_string(),
+            settle_tx_hash: None,
+        });
+    }
+    Ok(purchases)
 }
 
 async fn seller_channels_from_subgraph(
@@ -2754,10 +3310,40 @@ fn upsert_purchase_context(state: &mut SaleState, context: PurchaseContextRecord
 }
 
 fn unix_timestamp_string() -> String {
+    unix_timestamp().to_string()
+}
+
+fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".to_string())
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    env::var(key)
+        .ok()
+        .map(|value| {
+            value == "1"
+                || value.eq_ignore_ascii_case("true")
+                || value.eq_ignore_ascii_case("yes")
+                || value.eq_ignore_ascii_case("on")
+        })
+        .unwrap_or(default)
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default)
 }
 
 fn has_flag(args: &[String], flag: &str) -> bool {
