@@ -5,6 +5,7 @@ use k256::elliptic_curve::sec1::ToEncodedPoint;
 use k256::SecretKey;
 use std::{
     env, fs,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -78,8 +79,8 @@ fn env_or_default(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-pub fn configured_input_asset_name() -> String {
-    env_or_default("DROP_SCRIPT_INPUT_ASSET", INPUT_ASSET_NAME)
+fn configured_input_asset_path() -> PathBuf {
+    PathBuf::from(env_or_default("DROP_SCRIPT_INPUT_ASSET", INPUT_ASSET_NAME))
 }
 
 fn configured_drop_script_mode() -> String {
@@ -160,6 +161,7 @@ pub struct ListingState {
     pub original_asset_id: [u8; 32],
     pub encrypted_blob_id: [u8; 32],
     pub original_len: usize,
+    pub original_asset_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -286,7 +288,10 @@ fn validate_vss_public_values_batch(
         decoded.h_k_commitment == expected_key_commitments,
         "VSS public key commitments mismatch"
     );
-    ensure!(decoded.nonce == expected_nonces, "VSS public nonce mismatch");
+    ensure!(
+        decoded.nonce == expected_nonces,
+        "VSS public nonce mismatch"
+    );
     Ok(())
 }
 
@@ -625,9 +630,13 @@ pub async fn simulate_vdd_verify(
 /// - `channel_addr`: 交易通道地址。
 /// - `original_asset_id`: 原始数据的哈希 ID。
 /// - `encrypted_blob_id`: 加密数据的哈希 ID。
-pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Result<ListingState> {
+pub async fn stage_1_listing(
+    walrus: &WalrusClient,
+    ctx: &SellerContext,
+    original_asset_path: &Path,
+) -> Result<ListingState> {
     println!(">>> [STAGE 1] LISTING...");
-    let mut file_payload = fs::read(configured_input_asset_name())?;
+    let mut file_payload = fs::read(original_asset_path)?;
     let original_len = file_payload.len();
     let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
     file_payload.resize(padded_len, 0);
@@ -693,6 +702,7 @@ pub async fn stage_1_listing(walrus: &WalrusClient, ctx: &SellerContext) -> Resu
         original_asset_id,
         encrypted_blob_id,
         original_len,
+        original_asset_path: original_asset_path.to_path_buf(),
     })
 }
 
@@ -757,11 +767,12 @@ pub async fn stage_1_6_submit_vdd_proof(
     let data_key_commit = data_key_commitment(&ctx.asset_encryption_key);
     let vdd_binding_hash =
         compute_vdd_binding_hash(&listing.original_asset_id, data_key_commit, &c_cipher);
-    let vdd_verifier_addr = configured_vdd_verifier_address()?;
+    let vdd_verifier_addr = ctx.vdd_verifier_address;
     let (proof, public_values, vk) = generate_vdd_proof(
         walrus_client,
         &listing.walrus_blob_id,
         ctx,
+        &listing.original_asset_path,
         listing.original_asset_id,
         listing.encrypted_blob_id,
     )
@@ -918,11 +929,16 @@ pub async fn stage_3_fulfill(
     let vss_binding_hash =
         compute_vss_binding_hash(data_key_commit, vss_key_commit, wrapped_asset_key);
     // --- 使用配置的 Verifier 地址 ---
-    let vss_verifier_addr = configured_vss_verifier_address()?;
+    let vss_verifier_addr = ctx.vss_verifier_address;
     println!("  - Using VSS Verifier at: {}", vss_verifier_addr);
 
     // --- 生成并独立模拟 VSS 证明 ---
-    let vss_result = generate_vss_proof(secret_sharing_key, ctx.asset_encryption_key).await;
+    let vss_result = generate_vss_proof(
+        secret_sharing_key,
+        ctx.asset_encryption_key,
+        &ctx.sp1_private_key,
+    )
+    .await;
     let (v_proof, v_pv) = if let Ok((proof, pv, vk)) = vss_result {
         if let Err(e) =
             validate_vss_public_values(&pv, wrapped_asset_key, vss_key_commit, [0u8; 12])
@@ -1011,7 +1027,10 @@ pub async fn stage_3_share_data_key_batch(
     ctx: &SellerContext,
 ) -> Result<H256> {
     println!(">>> [STAGE 3B] BATCH VSS SHARE...");
-    ensure!(!shares.is_empty(), "batch VSS requires at least one purchase");
+    ensure!(
+        !shares.is_empty(),
+        "batch VSS requires at least one purchase"
+    );
 
     let channel_contract =
         channel_abi::ExchangeChannelContract::new(listing.channel_address, ctx.signer.clone());
@@ -1099,12 +1118,13 @@ pub async fn stage_3_share_data_key_batch(
         ),
     ]));
 
-    let vss_verifier_addr = configured_vss_verifier_address()?;
+    let vss_verifier_addr = ctx.vss_verifier_address;
     println!("  - Using VSS Verifier at: {}", vss_verifier_addr);
     println!("  - batch size: {}", audiences.len());
 
     let (proof, public_values, vk) =
-        generate_vss_proof_batch(secret_keys, ctx.asset_encryption_key).await?;
+        generate_vss_proof_batch(secret_keys, ctx.asset_encryption_key, &ctx.sp1_private_key)
+            .await?;
     let nonces = vec![nonce; audiences.len()];
     validate_vss_public_values_batch(
         &public_values,
@@ -1237,26 +1257,28 @@ pub async fn trigger_centralized_oracle_worker_if_enabled(
 /// ## 输出
 /// - `(Bytes, Bytes)`: ZK 证明和公开值。
 pub async fn generate_vdd_proof(
-    walrus_client: &WalrusClient,
-    walrus_blob_id: &str,
+    _walrus_client: &WalrusClient,
+    _walrus_blob_id: &str,
     ctx: &SellerContext,
+    original_asset_path: &Path,
     original_asset_id: [u8; 32],
     encrypted_blob_id: [u8; 32],
 ) -> Result<(Bytes, Bytes, String)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
-    let mut origin_data = fs::read(configured_input_asset_name())?;
+    let mut origin_data = fs::read(original_asset_path)?;
     let original_len = origin_data.len();
     let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
     origin_data.resize(padded_len, 0);
 
-    let mut reader = download_walrus_blob_with_backoff(walrus_client, walrus_blob_id).await?;
-    let mut cipher_data = Vec::new();
-    reader.read_to_end(&mut cipher_data).await?;
-
-    // 【重大修复】：必须使用和 stage_1_5_submit_key_commitment 相同的哈希算法
-    let c_key_bytes = data_key_commitment(&ctx.asset_encryption_key);
     let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
+    let cipher_data = chacha8_encrypt(&origin_data, &ctx.asset_encryption_key, &nonce, 0)?;
+    ensure!(
+        compute_rs_id(&cipher_data)? == encrypted_blob_id,
+        "locally reconstructed ciphertext does not match listing encrypted_blob_id"
+    );
+
+    let c_key_bytes = data_key_commitment(&ctx.asset_encryption_key);
 
     println!(">>> [VDD PROOF] zkVM Inputs:");
     println!(
@@ -1308,9 +1330,9 @@ pub async fn generate_vdd_proof(
     }
 
     // 3. === 设置并运行 Prover ===
-    env::set_var("NETWORK_PRIVATE_KEY", required_env("SP1_PRIVATE_KEY")?);
     let client = ProverClient::builder()
         .network_for(NetworkMode::Mainnet)
+        .private_key(&ctx.sp1_private_key)
         .build()
         .await;
     let pk = client.setup(VDD_ELF).await?;
@@ -1357,15 +1379,23 @@ pub async fn generate_vdd_proof(
 ///
 /// ## 输出
 /// - `(Bytes, Bytes)`: ZK 证明和公开值。
-pub async fn generate_vss_proof(v_k: [u8; 32], d_k: [u8; 32]) -> Result<(Bytes, Bytes, String)> {
-    generate_vss_proof_batch(vec![v_k], d_k).await
+pub async fn generate_vss_proof(
+    v_k: [u8; 32],
+    d_k: [u8; 32],
+    sp1_private_key: &str,
+) -> Result<(Bytes, Bytes, String)> {
+    generate_vss_proof_batch(vec![v_k], d_k, sp1_private_key).await
 }
 
 pub async fn generate_vss_proof_batch(
     v_keys: Vec<[u8; 32]>,
     d_k: [u8; 32],
+    sp1_private_key: &str,
 ) -> Result<(Bytes, Bytes, String)> {
-    ensure!(!v_keys.is_empty(), "VSS batch must contain at least one key");
+    ensure!(
+        !v_keys.is_empty(),
+        "VSS batch must contain at least one key"
+    );
     ensure!(v_keys.len() <= u8::MAX as usize, "VSS batch too large");
     println!(">>> [VSS PROOF] zkVM Inputs:");
     println!("  - d_k (asset_encryption_key): 0x{}", hex::encode(d_k));
@@ -1389,9 +1419,9 @@ pub async fn generate_vss_proof_batch(
         stdin.write(&[0u8; 12]); // nonce, matches guest read::<[u8; 12]>()
     }
 
-    env::set_var("NETWORK_PRIVATE_KEY", required_env("SP1_PRIVATE_KEY")?);
     let client = ProverClient::builder()
         .network_for(NetworkMode::Mainnet)
+        .private_key(sp1_private_key)
         .build()
         .await;
     let pk = client.setup(VSS_ELF).await?;
@@ -1614,6 +1644,9 @@ pub struct SellerContext {
     pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>,
     pub owner_sk_bytes: [u8; 32],
     pub asset_encryption_key: [u8; 32],
+    pub sp1_private_key: String,
+    pub vss_verifier_address: Address,
+    pub vdd_verifier_address: Address,
 }
 pub struct BuyerContext {
     pub signer: Arc<SignerMiddleware<Provider<Http>, LocalWallet>>,
@@ -1674,6 +1707,9 @@ async fn main() -> Result<()> {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), seller_wallet)),
         owner_sk_bytes: [0x11; 32],
         asset_encryption_key: [0x22; 32],
+        sp1_private_key: required_env("SP1_PRIVATE_KEY")?,
+        vss_verifier_address: configured_vss_verifier_address()?,
+        vdd_verifier_address: configured_vdd_verifier_address()?,
     };
     let buyer_ctx = BuyerContext {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), buyer_wallet)),
@@ -1688,7 +1724,8 @@ async fn main() -> Result<()> {
     // --- 执行端到端完整流程 ---
 
     // 1. 卖家挂牌
-    let listing = stage_1_listing(&walrus_client, &seller_ctx).await?;
+    let input_asset_path = configured_input_asset_path();
+    let listing = stage_1_listing(&walrus_client, &seller_ctx, &input_asset_path).await?;
 
     // 1.5. 卖家提交数据密钥承诺
     stage_1_5_submit_key_commitment(&seller_ctx, listing.channel_address).await?;

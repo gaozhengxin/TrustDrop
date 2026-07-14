@@ -6,8 +6,11 @@ pub struct DropCliConfig {
     pub rpc_url: Option<String>,
     pub chain_id: u64,
     pub seller_private_key: Option<String>,
+    pub sp1_private_key: Option<String>,
     pub buyer_private_key: Option<String>,
     pub hub_address: Option<String>,
+    pub vss_verifier_address: Option<String>,
+    pub vdd_verifier_address: Option<String>,
     pub subgraph_query_url: Option<String>,
     pub oracle_worker_url: Option<String>,
     pub oracle_worker_token: Option<String>,
@@ -33,8 +36,11 @@ impl DropCliConfig {
                 .and_then(|value| value.parse::<u64>().ok())
                 .unwrap_or(421614),
             seller_private_key: first_value(&vars, &["SELLER_KEY", "PRIVATE_KEY"]),
+            sp1_private_key: first_value(&vars, &["SP1_PRIVATE_KEY", "NETWORK_PRIVATE_KEY"]),
             buyer_private_key: first_value(&vars, &["BUYER_KEY"]),
             hub_address: first_value(&vars, &["HUB_ADDRESS"]),
+            vss_verifier_address: first_value(&vars, &["VSS_VERIFIER_ADDRESS"]),
+            vdd_verifier_address: first_value(&vars, &["VDD_VERIFIER_ADDRESS"]),
             subgraph_query_url: first_value(&vars, &["SUBGRAPH_QUERY_URL"]),
             oracle_worker_url: first_value(&vars, &["ORACLE_WORKER_URL"]),
             oracle_worker_token: first_value(&vars, &["ORACLE_WORKER_TOKEN"]),
@@ -92,6 +98,13 @@ impl DropCliConfig {
             "OWNER_SECRET_KEY is missing; set it explicitly or set TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1 for prototype testing"
         ))
     }
+
+    pub fn require_sp1_private_key(&self) -> Result<&str> {
+        self.sp1_private_key
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("SP1_PRIVATE_KEY is missing"))
+    }
 }
 
 fn parse_env_with_base(path: impl AsRef<Path>) -> Result<BTreeMap<String, String>> {
@@ -106,6 +119,8 @@ fn parse_env_with_base(path: impl AsRef<Path>) -> Result<BTreeMap<String, String
         "TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS",
         "ASSET_ENCRYPTION_KEY",
         "OWNER_SECRET_KEY",
+        "SP1_PRIVATE_KEY",
+        "NETWORK_PRIVATE_KEY",
     ] {
         if let Ok(value) = env::var(key) {
             vars.insert(key.to_string(), value);

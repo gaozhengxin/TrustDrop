@@ -236,6 +236,10 @@ fn open_database(state_dir: impl AsRef<Path>) -> Result<Connection> {
              created_at INTEGER NOT NULL DEFAULT (unixepoch()),
              kind TEXT NOT NULL,
              message TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS daemon_resume_queue (
+             thread_id TEXT PRIMARY KEY,
+             requested_at INTEGER NOT NULL DEFAULT (unixepoch())
          );",
     )?;
     if is_new {
@@ -415,6 +419,35 @@ pub fn append_daemon_event(state_dir: impl AsRef<Path>, kind: &str, message: &st
 pub fn daemon_event_count(state_dir: impl AsRef<Path>) -> Result<u64> {
     Ok(open_database(state_dir)?
         .query_row("SELECT count(*) FROM daemon_events", [], |row| row.get(0))?)
+}
+
+pub fn enqueue_thread_resume(state_dir: impl AsRef<Path>, thread_id: &str) -> Result<()> {
+    open_database(state_dir)?.execute(
+        "INSERT INTO daemon_resume_queue (thread_id, requested_at) VALUES (?1, unixepoch())
+         ON CONFLICT(thread_id) DO UPDATE SET requested_at = excluded.requested_at",
+        [thread_id],
+    )?;
+    Ok(())
+}
+
+pub fn load_thread_resume_queue(state_dir: impl AsRef<Path>) -> Result<Vec<String>> {
+    let connection = open_database(state_dir)?;
+    let mut statement = connection
+        .prepare("SELECT thread_id FROM daemon_resume_queue ORDER BY requested_at, thread_id")?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    let mut thread_ids = Vec::new();
+    for thread_id in rows {
+        thread_ids.push(thread_id?);
+    }
+    Ok(thread_ids)
+}
+
+pub fn remove_thread_resume(state_dir: impl AsRef<Path>, thread_id: &str) -> Result<()> {
+    open_database(state_dir)?.execute(
+        "DELETE FROM daemon_resume_queue WHERE thread_id = ?1",
+        [thread_id],
+    )?;
+    Ok(())
 }
 
 fn sanitize_sale_id(sale_id: &str) -> String {

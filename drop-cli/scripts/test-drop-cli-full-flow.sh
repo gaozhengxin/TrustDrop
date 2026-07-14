@@ -3,16 +3,18 @@ set -euo pipefail
 
 # TrustDrop drop-cli prototype full-flow test.
 #
-# This script intentionally uses only composite seller phases for the seller
-# side:
+# This script intentionally uses separated seller commands:
 #   1. drop-cli phase prepare
 #   2. drop-cli phase publish
-#   3. drop-cli phase complete-test-flow
+#   3. drop-cli proof vdd
+#   4. drop-cli debug buyer-purchase
+#   5. drop-cli phase respond
+#   6. drop-cli phase fulfill
+#   7. drop-cli phase settle
 #
-# `complete-test-flow` is a prototype-only e2e phase. It calls the shared
-# drop-script library implementation for buyer purchase, sale-bound VSS/VDD
-# proofs, fulfill, centralized oracle trigger, oracle wait, and settle. Buyer
-# purchase is still not a seller product command.
+# `debug buyer-purchase` is a test-only helper that sends a real buyer
+# transaction and records the buyer's local recovery key in the isolated test
+# state dir. Seller protocol handling still uses respond / fulfill / settle.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
@@ -142,7 +144,7 @@ ensure_asset_file() {
   fi
 
   ASSET_FILE="$RUN_DIR/drop-cli-e2e-asset.bin"
-  dd if=/dev/zero of="$ASSET_FILE" bs=1024 count=64 status=none
+  dd if=/dev/urandom of="$ASSET_FILE" bs=1024 count=64 status=none
 }
 
 print_settings() {
@@ -214,13 +216,58 @@ if [ -z "$ONCHAIN_SALE_ID" ]; then
 fi
 [ -n "$ONCHAIN_SALE_ID" ] || fail "failed to parse on-chain sale id from $PUBLISH_LOG"
 
-COMPLETE_LOG="$RUN_DIR/complete-test-flow.log"
-log "phase complete-test-flow"
-if ! drop_cli phase complete-test-flow "$ONCHAIN_SALE_ID" --yes >"$COMPLETE_LOG" 2>&1; then
-  cat "$COMPLETE_LOG"
-  fail "phase complete-test-flow failed"
+VDD_LOG="$RUN_DIR/proof-vdd.log"
+log "proof vdd"
+if ! drop_cli proof vdd "$ONCHAIN_SALE_ID" --yes >"$VDD_LOG" 2>&1; then
+  cat "$VDD_LOG"
+  fail "proof vdd failed"
 fi
-cat "$COMPLETE_LOG"
+cat "$VDD_LOG"
+
+PURCHASE_LOG="$RUN_DIR/buyer-purchase.log"
+log "debug buyer-purchase"
+if ! drop_cli debug buyer-purchase "$ONCHAIN_SALE_ID" --yes >"$PURCHASE_LOG" 2>&1; then
+  cat "$PURCHASE_LOG"
+  fail "debug buyer-purchase failed"
+fi
+cat "$PURCHASE_LOG"
+PURCHASE_TX="$(extract_last_value "purchaseTx" "$PURCHASE_LOG")"
+[ -n "$PURCHASE_TX" ] || fail "failed to parse purchaseTx from $PURCHASE_LOG"
+
+RESPOND_LOG="$RUN_DIR/respond.log"
+log "phase respond"
+if ! drop_cli phase respond "$PURCHASE_TX" >"$RESPOND_LOG" 2>&1; then
+  cat "$RESPOND_LOG"
+  fail "phase respond failed"
+fi
+cat "$RESPOND_LOG"
+THREAD_ID="$(extract_last_value "thread" "$RESPOND_LOG")"
+[ -n "$THREAD_ID" ] || fail "failed to parse thread from $RESPOND_LOG"
+
+FULFILL_LOG="$RUN_DIR/fulfill.log"
+log "phase fulfill"
+if ! drop_cli phase fulfill "$THREAD_ID" >"$FULFILL_LOG" 2>&1; then
+  cat "$FULFILL_LOG"
+  fail "phase fulfill failed"
+fi
+cat "$FULFILL_LOG"
+
+SETTLE_LOG="$RUN_DIR/settle.log"
+log "phase settle"
+if ! drop_cli phase settle "$THREAD_ID" >"$SETTLE_LOG" 2>&1; then
+  cat "$SETTLE_LOG"
+  fail "phase settle failed"
+fi
+cat "$SETTLE_LOG"
+
+RECOVER_LOG="$RUN_DIR/recover.log"
+log "recover-test"
+rm -f "$RECOVERED_FILE"
+if ! drop_cli recover-test "$ONCHAIN_SALE_ID" >"$RECOVER_LOG" 2>&1; then
+  cat "$RECOVER_LOG"
+  fail "recover-test failed"
+fi
+cat "$RECOVER_LOG"
 
 log "verify recovered asset"
 [ -f "$RECOVERED_FILE" ] || fail "recovered file not found: $RECOVERED_FILE"

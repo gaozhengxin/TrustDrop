@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use drop_lib::walrus_address::compute_blob_id_default;
 use storage::{BlobId, BlobStatus, StorageNetwork, WalrusClient};
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, sleep, timeout};
 
 pub fn compute_rs_id(data: &[u8]) -> Result<[u8; 32]> {
     let id_raw = compute_blob_id_default(data).map_err(|e| anyhow!(e))?;

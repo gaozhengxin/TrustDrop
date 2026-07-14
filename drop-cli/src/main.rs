@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use drop_lib::rslh_ve::{derive_rslh_nonce, SYMBOL_SIZE};
 use drop_sdk::{
     abi::{exchange_channel_contract as channel_abi, exchange_hub_contract as hub_abi},
@@ -7,10 +7,11 @@ use drop_sdk::{
     oracle::OracleWorkerClient,
     state::{
         append_daemon_event, daemon_event_count, database_path, default_state_dir,
-        initialize_or_load_daemon_seen, load_all_sale_states, load_all_thread_states,
-        load_sale_state, load_thread_state, mark_daemon_purchase_seen, save_sale_state,
-        save_thread_state, thread_state_dir, PurchaseContextRecord, SaleState, ThreadPurchase,
-        ThreadState, ThreadStatus, TxRecord, TxStatus,
+        enqueue_thread_resume, initialize_or_load_daemon_seen, load_all_sale_states,
+        load_all_thread_states, load_sale_state, load_thread_resume_queue, load_thread_state,
+        mark_daemon_purchase_seen, remove_thread_resume, save_sale_state, save_thread_state,
+        thread_state_dir, PurchaseContextRecord, SaleState, ThreadPurchase, ThreadState,
+        ThreadStatus, TxRecord, TxStatus,
     },
     walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch},
 };
@@ -105,7 +106,7 @@ Usage:
   drop-cli settle <sale-id> --yes
   drop-cli thread list [--channel <channel>] [--sale <sale-id>]
   drop-cli thread show <thread-id>
-  drop-cli thread cancel <thread-id>
+  drop-cli thread cancel|resume <thread-id>
   drop-cli tui
   drop-cli daemon run [--once]
   drop-cli daemon status|stop|check
@@ -120,6 +121,7 @@ Usage:
   drop-cli phase verify <sale-id>
   drop-cli tx status <tx-hash>
   drop-cli tx resume <sale-id>
+  drop-cli debug buyer-purchase <sale-id> --yes
   drop-cli debug thread resume <thread-id>
 
 Prototype target:
@@ -362,11 +364,29 @@ async fn ensure_walrus_asset_available(
             error
         )
     })?;
+    let c_cipher = format!("0x{}", hex::encode(compute_rs_id(&encrypted_payload)?));
+    if let Some((blob_id, end_epoch)) = active_walrus_blob_for_cipher(config, &c_cipher).await {
+        println!("Walrus blob is already active; recording existing network state.");
+        state.walrus_blob_id = Some(blob_id.clone());
+        state.walrus_end_epoch = Some(end_epoch);
+        state.next_actions = vec![format!("drop-cli oracle check {}", state.sale_id)];
+        save_sale_state(state_dir, state)?;
+        println!("walrusBlobId: {blob_id}");
+        println!("walrusEndEpoch: {end_epoch}");
+        wait_for_active_walrus_blob(config, &blob_id).await?;
+        return Ok(());
+    }
     let walrus = drop_script_walrus_client(config);
 
     println!("Uploading encrypted asset to Walrus. This consumes Walrus storage.");
-    let (blob_id, end_epoch) =
-        upload_data_idempotent_with_end_epoch(&walrus, encrypted_payload).await?;
+    let upload_result = upload_data_idempotent_with_end_epoch(&walrus, encrypted_payload).await;
+    let (blob_id, end_epoch) = match upload_result {
+        Ok(result) => result,
+        Err(upload_error) => active_walrus_blob_for_cipher(config, &c_cipher)
+            .await
+            .map(|(blob_id, end_epoch)| (blob_id, Some(end_epoch)))
+            .ok_or(upload_error)?,
+    };
     let end_epoch = end_epoch.ok_or_else(|| anyhow!("Walrus upload did not return end epoch"))?;
     state.walrus_blob_id = Some(blob_id.clone());
     state.walrus_end_epoch = Some(end_epoch);
@@ -376,6 +396,27 @@ async fn ensure_walrus_asset_available(
     println!("walrusEndEpoch: {end_epoch}");
 
     wait_for_active_walrus_blob(config, &blob_id).await
+}
+
+async fn active_walrus_blob_for_cipher(
+    config: &DropCliConfig,
+    c_cipher: &str,
+) -> Option<(String, u64)> {
+    let status = oracle_worker(config)
+        .ok()?
+        .blob_status_by_c_cipher(c_cipher)
+        .await
+        .ok()?;
+    if !status.found || status.expired || status.status != 0 {
+        return None;
+    }
+    if !walrus_blob_is_retrievable(config, &status.blob_id)
+        .await
+        .ok()?
+    {
+        return None;
+    }
+    Some((status.blob_id, status.end_epoch?))
 }
 
 async fn walrus_blob_is_usable(config: &DropCliConfig, blob_id: &str) -> Result<bool> {
@@ -831,7 +872,38 @@ async fn cmd_thread(args: &[String]) -> Result<()> {
             println!("status: canceled");
             Ok(())
         }
-        _ => bail!("usage: drop-cli thread list [--channel <channel>] [--sale <sale-id>] | thread show <thread-id> | thread cancel <thread-id>"),
+        Some("resume") => {
+            let thread_id = require_arg(&args[1..], "thread-id")?;
+            let config = load_config()?;
+            let state_dir = state_dir(&config)?;
+            let thread = load_thread_state(&state_dir, thread_id)?;
+            if !matches!(
+                thread.status,
+                ThreadStatus::Failed
+                    | ThreadStatus::Blocked
+                    | ThreadStatus::Fulfilling
+                    | ThreadStatus::Settling
+                    | ThreadStatus::ProvingVss
+            ) {
+                bail!(
+                    "thread {} is {:?}; only failed, blocked, or interrupted in-progress threads can be resumed",
+                    thread.thread_id,
+                    thread.status
+                );
+            }
+            enqueue_thread_resume(&state_dir, &thread.thread_id)?;
+            append_daemon_event(
+                &state_dir,
+                "resume_requested",
+                &format!("thread {} queued for daemon resume", thread.thread_id),
+            )?;
+            println!("thread: {}", thread.thread_id);
+            println!("status: queued_for_resume");
+            println!("lastError: {}", thread.last_error.as_deref().unwrap_or("-"));
+            println!("next: daemon will attempt resume on its next scan");
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli thread list [--channel <channel>] [--sale <sale-id>] | thread show <thread-id> | thread cancel|resume <thread-id>"),
     }
 }
 
@@ -964,6 +1036,7 @@ async fn daemon_tick(
     mut seen_purchase_txs: Option<&mut HashSet<String>>,
 ) -> Result<()> {
     let state_dir = state_dir(&config)?;
+    daemon_process_resume_queue(&state_dir, daemon_config).await?;
     let sales = load_all_sale_states(&state_dir)?;
     let local_sale_ids = sales
         .iter()
@@ -1047,6 +1120,48 @@ async fn daemon_tick(
         handled_threads += 1;
     }
     println!("daemon: complete");
+    Ok(())
+}
+
+async fn daemon_process_resume_queue(state_dir: &Path, daemon_config: &DaemonConfig) -> Result<()> {
+    for thread_id in load_thread_resume_queue(state_dir)? {
+        let mut thread = match load_thread_state(state_dir, &thread_id) {
+            Ok(thread) => thread,
+            Err(error) => {
+                append_daemon_warning(
+                    state_dir,
+                    "resume",
+                    &format!("thread {thread_id} resume discarded: {error:#}"),
+                )?;
+                remove_thread_resume(state_dir, &thread_id)?;
+                continue;
+            }
+        };
+        println!("daemonResumeThread: {}", thread.thread_id);
+        thread.status = if thread.fulfill_tx_hash.is_some() {
+            ThreadStatus::Fulfilled
+        } else {
+            ThreadStatus::Planned
+        };
+        thread.next_actions = vec![if thread.fulfill_tx_hash.is_some() {
+            format!("drop-cli phase settle {}", thread.thread_id)
+        } else {
+            format!("drop-cli phase fulfill {}", thread.thread_id)
+        }];
+        thread.updated_at = unix_timestamp_string();
+        save_thread_state(state_dir, &thread)?;
+        daemon_process_thread(state_dir, daemon_config, thread).await?;
+        remove_thread_resume(state_dir, &thread_id)?;
+        let refreshed = load_thread_state(state_dir, &thread_id)?;
+        append_daemon_event(
+            state_dir,
+            "resume_attempted",
+            &format!(
+                "thread {} daemon resume finished with status {:?}",
+                refreshed.thread_id, refreshed.status
+            ),
+        )?;
+    }
     Ok(())
 }
 
@@ -1285,6 +1400,13 @@ struct DaemonLock {
 impl DaemonLock {
     fn acquire(state_dir: &Path) -> Result<Self> {
         let path = daemon_lock_path(state_dir);
+        if path.exists() {
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            let pid = content.lines().next().and_then(|value| value.parse().ok());
+            if !pid.is_some_and(daemon_pid_is_running) {
+                fs::remove_file(&path)?;
+            }
+        }
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1326,8 +1448,13 @@ fn daemon_status() -> Result<()> {
     if lock.exists() {
         let content = fs::read_to_string(&lock).unwrap_or_default();
         let mut lines = content.lines();
-        println!("running: true");
-        println!("pid: {}", lines.next().unwrap_or("-"));
+        let pid_text = lines.next().unwrap_or("-");
+        let running = pid_text
+            .parse::<u32>()
+            .ok()
+            .is_some_and(daemon_pid_is_running);
+        println!("running: {running}");
+        println!("pid: {pid_text}");
         println!("startedAt: {}", lines.next().unwrap_or("-"));
     } else {
         println!("running: false");
@@ -1337,6 +1464,15 @@ fn daemon_status() -> Result<()> {
     }
     println!("events: {}", daemon_event_count(&state_dir)?);
     Ok(())
+}
+
+fn daemon_pid_is_running(pid: u32) -> bool {
+    fs::read(format!("/proc/{pid}/cmdline"))
+        .ok()
+        .is_some_and(|command| {
+            let command = String::from_utf8_lossy(&command).replace('\0', " ");
+            command.contains("drop-cli") && command.contains("daemon") && command.contains("run")
+        })
 }
 
 fn daemon_stop() -> Result<()> {
@@ -1409,6 +1545,15 @@ async fn cmd_debug(args: &[String]) -> Result<()> {
         args.first().map(String::as_str),
         args.get(1).map(String::as_str),
     ) {
+        (Some("buyer-purchase"), _) => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            if !has_flag(args, "--yes") {
+                println!("debug buyer-purchase requires --yes because it sends a buyer transaction.");
+                println!("usage: drop-cli debug buyer-purchase <sale-id> --yes");
+                return Ok(());
+            }
+            debug_buyer_purchase(sale_id).await
+        }
         (Some("thread"), Some("resume")) => {
             let thread_id = require_arg(&args[2..], "thread-id")?;
             let config = load_config()?;
@@ -1417,7 +1562,7 @@ async fn cmd_debug(args: &[String]) -> Result<()> {
             print_thread(&thread);
             Ok(())
         }
-        _ => bail!("usage: drop-cli debug thread resume <thread-id>"),
+        _ => bail!("usage: drop-cli debug buyer-purchase <sale-id> --yes | debug thread resume <thread-id>"),
     }
 }
 
@@ -2105,6 +2250,47 @@ async fn enrich_purchase_or_assume_vss(
     }
 }
 
+async fn purchase_from_tx_receipt(config: &DropCliConfig, tx_hash: &str) -> Result<PurchaseView> {
+    let rpc_url = config
+        .rpc_url
+        .as_deref()
+        .ok_or_else(|| anyhow!("ARBITRUM_SEPOLIA_RPC_URL is missing"))?;
+    let hub_address = parse_address(
+        config
+            .hub_address
+            .as_deref()
+            .ok_or_else(|| anyhow!("HUB_ADDRESS is missing"))?,
+    )?;
+    let provider = Provider::<Http>::try_from(rpc_url)?;
+    let tx: H256 = tx_hash.parse()?;
+    let receipt = provider
+        .get_transaction_receipt(tx)
+        .await?
+        .ok_or_else(|| anyhow!("purchase receipt not found: {tx_hash}"))?;
+    let hub = hub_abi::ExchangeHubContract::new(hub_address, Arc::new(provider));
+
+    for log in receipt.logs.iter().filter(|log| log.address == hub_address) {
+        let Ok(event) = hub.decode_event::<hub_abi::PurchaseEventFilter>(
+            "PurchaseEvent",
+            log.topics.clone(),
+            log.data.clone(),
+        ) else {
+            continue;
+        };
+        return Ok(PurchaseView {
+            purchase_tx_hash: tx_hash.to_string(),
+            sale_id: format!("{:?}", event.sale_id),
+            channel_address: Some(format!("{:?}", event.channel)),
+            buyer: Some(format!("{:?}", event.buyer)),
+            needs_vss: None,
+            status: "paid".to_string(),
+            settle_tx_hash: None,
+        });
+    }
+
+    bail!("matching PurchaseEvent not found in tx {tx_hash}")
+}
+
 async fn enrich_purchase_from_chain(
     config: &DropCliConfig,
     mut purchase: PurchaseView,
@@ -2158,6 +2344,50 @@ async fn enrich_purchase_from_chain(
     Ok(purchase)
 }
 
+async fn debug_buyer_purchase(sale_id: &str) -> Result<()> {
+    let config = load_config()?;
+    let state_dir = state_dir(&config)?;
+    let mut state = load_sale_state(&state_dir, sale_id)?;
+    let listing = drop_script_listing_from_state(&state)?;
+    let seller_ctx = drop_script_seller_context(&config).await?;
+    let buyer_ctx = drop_script_buyer_context(&config).await?;
+    let seller_vss_pubkey = drop_script::seller_public_key_bytes(&seller_ctx.owner_sk_bytes)?;
+
+    let purchase = drop_script::stage_2_purchase(
+        &buyer_ctx,
+        listing.unique_sale_id,
+        listing.onchain_data_version,
+        listing.channel_address,
+        listing.original_asset_id,
+        &seller_vss_pubkey,
+    )
+    .await?;
+    let purchase_tx = format!("{:?}", purchase.transaction_hash);
+    state.transactions.push(tx_record(
+        "purchase",
+        Some(purchase_tx.clone()),
+        TxStatus::Confirmed,
+        None,
+    ));
+    upsert_purchase_context(
+        &mut state,
+        PurchaseContextRecord {
+            purchase_tx_hash: purchase_tx.clone(),
+            buyer: Some(format!("{:?}", buyer_ctx.signer.address())),
+            secret_sharing_key: Some(format!("0x{}", hex::encode(purchase.secret_sharing_key))),
+            status: "paid".to_string(),
+            fulfill_tx_hash: None,
+            settle_tx_hash: None,
+        },
+    );
+    state.next_actions = vec![format!("drop-cli phase respond {purchase_tx}")];
+    save_sale_state(&state_dir, &state)?;
+    println!("purchaseTx: {purchase_tx}");
+    println!("buyer: {:?}", buyer_ctx.signer.address());
+    println!("next: drop-cli phase respond {purchase_tx}");
+    Ok(())
+}
+
 fn print_purchase(purchase: &PurchaseView) {
     println!("purchaseTx: {}", purchase.purchase_tx_hash);
     println!("saleId: {}", purchase.sale_id);
@@ -2188,11 +2418,14 @@ async fn phase_respond(purchase_txs: &[String]) -> Result<()> {
     let purchases = discover_purchases(&config, &[]).await?;
     let mut selected = Vec::new();
     for tx in purchase_txs {
-        let purchase = purchases
+        let purchase = match purchases
             .iter()
             .find(|purchase| purchase.purchase_tx_hash.eq_ignore_ascii_case(tx))
-            .ok_or_else(|| anyhow!("purchase not found: {tx}"))?;
-        selected.push(enrich_purchase_or_assume_vss(&config, purchase.clone()).await);
+        {
+            Some(purchase) => purchase.clone(),
+            None => purchase_from_tx_receipt(&config, tx).await?,
+        };
+        selected.push(enrich_purchase_or_assume_vss(&config, purchase).await);
     }
     let first = selected
         .first()
@@ -2445,9 +2678,6 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
     let state_dir = state_dir(&config)?;
     let mut state = load_sale_state(&state_dir, sale_id)?;
     ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
-    if let Some(input_asset_path) = state.input_asset_path.as_deref() {
-        env::set_var("DROP_SCRIPT_INPUT_ASSET", input_asset_path);
-    }
     let listing = drop_script_listing_from_state(&state)?;
     let seller_ctx = drop_script_seller_context(&config).await?;
     let walrus = drop_script_walrus_client(&config);
@@ -2460,8 +2690,7 @@ async fn submit_vdd_for_sale(sale_id: &str) -> Result<()> {
             TxStatus::Confirmed,
             None,
         ));
-        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx, listing.walrus_end_epoch)
-            .await?;
+        trigger_oracle_worker(&config, vdd_tx, listing.walrus_end_epoch).await?;
     }
     state.next_actions = vec![format!("drop-cli purchase list --sale {}", state.sale_id)];
     save_sale_state(&state_dir, &state)?;
@@ -2537,11 +2766,8 @@ async fn ensure_oracle_signal_for_listing(
         receipt.transaction_hash
     };
 
-    drop_script::trigger_centralized_oracle_worker_if_enabled(
-        oracle_source_tx,
-        listing.walrus_end_epoch,
-    )
-    .await?;
+    let config = load_config()?;
+    trigger_oracle_worker(&config, oracle_source_tx, listing.walrus_end_epoch).await?;
     drop_script::wait_for_oracle_signal(
         listing.channel_address,
         listing.encrypted_blob_id,
@@ -2923,10 +3149,6 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
 
     ensure_walrus_asset_available(&config, &state_dir, &mut state).await?;
 
-    if let Some(input_asset_path) = state.input_asset_path.as_deref() {
-        env::set_var("DROP_SCRIPT_INPUT_ASSET", input_asset_path);
-    }
-
     let listing = drop_script_listing_from_state(&state)?;
     let seller_ctx = drop_script_seller_context(&config).await?;
     let buyer_ctx = drop_script_buyer_context(&config).await?;
@@ -2941,8 +3163,7 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
             None,
         ));
         save_sale_state(&state_dir, &state)?;
-        drop_script::trigger_centralized_oracle_worker_if_enabled(vdd_tx, listing.walrus_end_epoch)
-            .await?;
+        trigger_oracle_worker(&config, vdd_tx, listing.walrus_end_epoch).await?;
     }
     drop_script::wait_for_oracle_signal(
         listing.channel_address,
@@ -3208,6 +3429,19 @@ async fn drop_script_seller_context(config: &DropCliConfig) -> Result<drop_scrip
         signer: Arc::new(SignerMiddleware::new(provider, wallet)),
         owner_sk_bytes: config.require_owner_secret_key()?,
         asset_encryption_key: config.require_asset_encryption_key()?,
+        sp1_private_key: config.require_sp1_private_key()?.to_string(),
+        vss_verifier_address: parse_address(
+            config
+                .vss_verifier_address
+                .as_deref()
+                .ok_or_else(|| anyhow!("VSS_VERIFIER_ADDRESS is missing"))?,
+        )?,
+        vdd_verifier_address: parse_address(
+            config
+                .vdd_verifier_address
+                .as_deref()
+                .ok_or_else(|| anyhow!("VDD_VERIFIER_ADDRESS is missing"))?,
+        )?,
     })
 }
 
@@ -3280,6 +3514,12 @@ fn drop_script_listing_from_state(state: &SaleState) -> Result<drop_script::List
         original_len: state
             .original_len
             .ok_or_else(|| anyhow!("state missing original_len"))?,
+        original_asset_path: PathBuf::from(
+            state
+                .input_asset_path
+                .as_deref()
+                .ok_or_else(|| anyhow!("state missing input_asset_path"))?,
+        ),
     })
 }
 
@@ -3444,6 +3684,30 @@ fn oracle_worker(config: &DropCliConfig) -> Result<OracleWorkerClient> {
         config.default_oracle_worker_url(),
         config.require_oracle_worker_token()?,
     ))
+}
+
+async fn trigger_oracle_worker(
+    config: &DropCliConfig,
+    source_tx: H256,
+    walrus_end_epoch: Option<u64>,
+) -> Result<()> {
+    let worker = oracle_worker(config)?;
+    let status = worker.status().await?;
+    ensure!(status.ok, "oracle worker is not ready");
+    let result = worker
+        .fulfill(
+            config.chain_id,
+            &format!("{source_tx:#x}"),
+            walrus_end_epoch,
+        )
+        .await?;
+    ensure!(result.ok, "oracle worker did not accept the request");
+    if result.already_fulfilled {
+        println!("oracleWorker: already fulfilled");
+    } else if let Some(tx_hash) = result.report_tx_hash {
+        println!("oracleWorkerReportTx: {tx_hash}");
+    }
+    Ok(())
 }
 
 fn require_arg<'a>(args: &'a [String], name: &str) -> Result<&'a str> {

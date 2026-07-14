@@ -46,6 +46,16 @@ pub struct BlobStatus {
     pub upstream_status: u16,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OracleFulfillResult {
+    pub ok: bool,
+    #[serde(default)]
+    pub already_fulfilled: bool,
+    #[serde(default)]
+    pub report_tx_hash: Option<String>,
+}
+
 impl OracleWorkerClient {
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
@@ -73,6 +83,35 @@ impl OracleWorkerClient {
     pub async fn blob_status_by_c_cipher(&self, c_cipher: &str) -> Result<BlobStatus> {
         self.get_json(&format!("/walrus/blob-status?cCipher={}", c_cipher))
             .await
+    }
+
+    pub async fn fulfill(
+        &self,
+        chain_id: u64,
+        tx_hash: &str,
+        walrus_end_epoch: Option<u64>,
+    ) -> Result<OracleFulfillResult> {
+        let url = format!("{}/oracle/fulfill", self.base_url);
+        let mut body = serde_json::json!({
+            "chainId": chain_id,
+            "txHash": tx_hash,
+        });
+        if let Some(end_epoch) = walrus_end_epoch {
+            body["walrusEndEpoch"] = serde_json::json!(end_epoch);
+        }
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("oracle worker returned {}: {}", status, body));
+        }
+        Ok(response.json::<OracleFulfillResult>().await?)
     }
 
     async fn get_json<T>(&self, path_and_query: &str) -> Result<T>
