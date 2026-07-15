@@ -1,0 +1,182 @@
+:root {
+  background: #f7f7f4;
+  color: #171717;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+a {
+  color: inherit;
+}
+
+.topbar {
+  align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid #deded8;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  min-height: 68px;
+  padding: 0 28px;
+}
+
+.brand {
+  align-items: center;
+  display: inline-flex;
+  font-weight: 700;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.brand-mark {
+  align-items: center;
+  background: #19332e;
+  border-radius: 8px;
+  color: #ffffff;
+  display: inline-flex;
+  font-size: 14px;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.nav {
+  display: flex;
+  gap: 10px;
+}
+
+.nav a,
+.button {
+  border: 1px solid #d2d2ca;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 9px 12px;
+  text-decoration: none;
+}
+
+.button.primary {
+  background: #19332e;
+  border-color: #19332e;
+  color: #ffffff;
+}
+
+.layout {
+  margin: 0 auto;
+  max-width: 1120px;
+  padding: 36px 28px 56px;
+}
+
+.hero {
+  display: grid;
+  gap: 34px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  min-height: calc(100vh - 180px);
+  align-items: center;
+}
+
+.hero h1 {
+  font-size: clamp(40px, 6vw, 76px);
+  line-height: 0.98;
+  margin: 0;
+  max-width: 820px;
+}
+
+.hero p {
+  color: #4f5652;
+  font-size: 18px;
+  max-width: 680px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.visual {
+  aspect-ratio: 4 / 3;
+  background:
+    linear-gradient(rgba(12, 23, 21, 0.12), rgba(12, 23, 21, 0.12)),
+    url("https://images-assets.nasa.gov/image/PIA12110/PIA12110~medium.jpg");
+  background-position: center;
+  background-size: cover;
+  border: 1px solid #d2d2ca;
+  border-radius: 8px;
+  min-height: 280px;
+}
+
+.section {
+  border-top: 1px solid #deded8;
+  padding: 32px 0;
+}
+
+.grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.item {
+  background: #ffffff;
+  border: 1px solid #deded8;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.item h2 {
+  font-size: 18px;
+  margin: 0 0 8px;
+}
+
+.item p {
+  color: #565c58;
+  margin: 0;
+}
+
+.contact {
+  max-width: 680px;
+}
+
+.contact h1 {
+  font-size: 42px;
+  margin-bottom: 10px;
+}
+
+.contact p {
+  color: #565c58;
+}
+
+.email {
+  display: inline-block;
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 12px;
+}
+
+@media (max-width: 820px) {
+  .topbar,
+  .nav,
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hero,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+

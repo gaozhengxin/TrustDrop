@@ -181,13 +181,25 @@ function renderShell(content: string): string {
         ${state.wallet && state.walletMenuOpen ? walletMenu() : ""}
       </div>
     </header>
-    <main class="layout">${content}</main>
+    <main class="layout">
+      ${trustdropProtocolNote()}
+      ${content}
+    </main>
   `;
 }
 
 function navButton(route: Route, label: string): string {
   const active = state.route === route ? " active" : "";
   return `<button class="nav-button${active}" data-route="${route}" type="button">${label}</button>`;
+}
+
+function trustdropProtocolNote(): string {
+  return `
+    <section class="protocol-note">
+      Fair File Marketplace uses TrustDrop for escrow, proof-backed fulfillment, and buyer recovery.
+      <a href="https://trustdrop.pages.dev">Learn about TrustDrop</a>
+    </section>
+  `;
 }
 
 function walletMenu(): string {
@@ -208,6 +220,7 @@ function walletMenu(): string {
 }
 
 function renderHome(): string {
+  if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
   const recommended = sortSalesForRecommendation(state.sales, byScore).slice(0, 2);
   return renderShell(`
@@ -234,6 +247,7 @@ function renderHome(): string {
 }
 
 function renderBrowse(): string {
+  if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
   const current = filteredSales();
   return renderShell(`
@@ -303,6 +317,7 @@ function renderSettings(): string {
 }
 
 function renderDetail(sale: MarketplaceSale): string {
+  if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
   return renderShell(`
     <section class="detail">
@@ -834,6 +849,18 @@ function contentRulesUnavailable(): string {
       </div>
     </section>
     ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ""}
+  `;
+}
+
+function contentRulesLoading(): string {
+  return `
+    <section class="loading-screen" aria-live="polite">
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <div>
+        <h1>Loading marketplace</h1>
+        <p>Fetching content rules and marketplace listings.</p>
+      </div>
+    </section>
   `;
 }
 

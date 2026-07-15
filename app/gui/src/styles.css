@@ -191,6 +191,48 @@ button:disabled {
   align-items: center;
 }
 
+.protocol-note {
+  background: #ffffff;
+  border: 1px solid #deded8;
+  border-radius: 8px;
+  color: #4f5652;
+  margin: 0 0 24px;
+  padding: 12px 14px;
+}
+
+.protocol-note a {
+  color: #19332e;
+  font-weight: 700;
+  margin-left: 6px;
+}
+
+.loading-screen {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #deded8;
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  min-height: 180px;
+  padding: 28px;
+}
+
+.loading-spinner {
+  animation: spin 0.9s linear infinite;
+  border: 3px solid #deded8;
+  border-top-color: #19332e;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  height: 34px;
+  width: 34px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 h1,
 h2,
 p {

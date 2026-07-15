@@ -42,6 +42,8 @@ export type HiddenReason = "before_start_timestamp" | "before_minimum_block" | "
 
 const visionRegistryAbi = parseAbi(["function visionCid() view returns (string)"]);
 const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+const DEFAULT_FALLBACK_VISION_URL =
+  "https://aesthetic-cicada-m1hbq.lighthouseweb3.xyz/ipfs/bafkreibyknvym7ozscmiqgb3imt3255sxpqugpekf2ewdppkyubxogwv2i";
 const VISION_FETCH_TIMEOUT_MS = 8_000;
 
 let activeVision: VisionDescriptor | null = null;
@@ -113,10 +115,20 @@ async function fetchVision(cid: string): Promise<VisionDescriptor> {
   const cleanCid = cid.replace(/^ipfs:\/\//, "");
   const env = (import.meta as ImportMetaWithEnv).env ?? {};
   const gateway = (env.VITE_TRUSTDROP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY).replace(/\/?$/, "/");
+  const fallbackUrl = env.VITE_TRUSTDROP_FALLBACK_VISION_URL || DEFAULT_FALLBACK_VISION_URL;
+  try {
+    return await fetchVisionUrl(`${gateway}${cleanCid}`);
+  } catch (error) {
+    if (!fallbackUrl) throw error;
+    return fetchVisionUrl(fallbackUrl);
+  }
+}
+
+async function fetchVisionUrl(url: string): Promise<VisionDescriptor> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), VISION_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(`${gateway}${cleanCid}`, {
+    const response = await fetch(url, {
       headers: { accept: "application/json" },
       signal: controller.signal,
     });

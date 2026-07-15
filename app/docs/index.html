@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrustDrop Docs</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">TD</span>
+        <span>TrustDrop Docs</span>
+      </a>
+      <nav class="nav">
+        <a href="/">Portal</a>
+        <a href="https://fair-file-marketplace.pages.dev">App</a>
+        <a href="https://github.com/gaozhengxin/TrustDrop">GitHub</a>
+      </nav>
+    </header>
+    <main class="layout">
+      <aside class="sidebar">
+        <span class="sidebar-title">TrustDrop</span>
+        <a class="active" href="/docs/">Overview</a>
+        <a href="./protocol.html">Protocol</a>
+        <a href="./ffm.html">Fair File Marketplace</a>
+        <a href="./integration.html">Deployment & SDK</a>
+      </aside>
+      <article class="doc">
+        <p class="eyebrow">TrustDrop Protocol</p>
+        <h1>Fair exchange for encrypted files</h1>
+        <p class="lead">
+          TrustDrop is a protocol for exchanging encrypted files without relying on seller promises. It combines on-chain escrow, zero-knowledge proof verification, data availability checks, and buyer recovery logic into one exchange flow.
+        </p>
+        <div class="callout">
+          <strong>Current prototype:</strong> contracts run on Arbitrum Sepolia, encrypted assets are stored on Walrus Mainnet, and proofs are generated with SP1 Prove Network.
+        </div>
+
+        <h2>Guarantees</h2>
+        <div class="card-grid">
+          <section class="doc-card">
+            <h3>Escrowed payment</h3>
+            <p>Buyer payment is locked in an exchange channel until the exchange reaches a valid closing path.</p>
+          </section>
+          <section class="doc-card">
+            <h3>Proof-backed fulfillment</h3>
+            <p>Seller fulfillment is tied to VSS and VDD verifier contracts rather than a plain off-chain claim.</p>
+          </section>
+          <section class="doc-card">
+            <h3>Buyer recovery</h3>
+            <p>The buyer can recover the encrypted asset using wallet-derived or manually supplied purchase secrets.</p>
+          </section>
+        </div>
+
+        <h2>Applications</h2>
+        <p>
+          Fair File Marketplace is the first buyer-facing application built on TrustDrop. It is an application of the protocol, not the protocol itself.
+        </p>
+        <nav class="page-nav">
+          <a href="./protocol.html">Read protocol details</a>
+          <a href="./ffm.html">Fair File Marketplace</a>
+        </nav>
+      </article>
+    </main>
+  </body>
+</html>
