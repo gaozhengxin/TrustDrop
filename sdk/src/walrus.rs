@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use drop_lib::walrus_address::compute_blob_id_default;
-use storage::{BlobId, BlobStatus, StorageNetwork, WalrusClient};
+use storage::WalrusClient;
 use tokio::time::{Duration, sleep, timeout};
 
 pub fn compute_rs_id(data: &[u8]) -> Result<[u8; 32]> {
@@ -18,14 +18,6 @@ pub async fn upload_data_idempotent_with_end_epoch(
     walrus: &WalrusClient,
     data: Vec<u8>,
 ) -> Result<(String, Option<u64>)> {
-    let target_id = compute_rs_id(&data)?;
-    let blob_id_hex = hex::encode(target_id);
-    if let Ok(BlobStatus::Info { end_epoch, .. }) =
-        walrus.get_status(&BlobId(blob_id_hex.clone())).await
-    {
-        return Ok((blob_id_hex, Some(end_epoch)));
-    }
-
     let mut last_error = None::<String>;
     for attempt in 1..=3 {
         match timeout(

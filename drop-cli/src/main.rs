@@ -976,13 +976,7 @@ async fn cmd_daemon(args: &[String]) -> Result<()> {
 async fn daemon_run_once() -> Result<()> {
     let config = load_config()?;
     let daemon_config = DaemonConfig::from_env();
-    let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
-    let mut seen_purchase_txs = initialize_or_load_daemon_seen(
-        state_dir(&config)?,
-        baseline
-            .into_iter()
-            .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase()),
-    )?;
+    let mut seen_purchase_txs = initialize_or_load_daemon_seen(state_dir(&config)?, Vec::new())?;
     daemon_tick(&config, &daemon_config, Some(&mut seen_purchase_txs)).await
 }
 
@@ -997,13 +991,7 @@ async fn daemon_run_forever() -> Result<()> {
     println!("daemon: running");
     println!("intervalSecs: {}", daemon_config.poll_interval_secs);
     println!("mode: seller-channel subgraph discovery");
-    let baseline = discover_purchases(&config, &[]).await.unwrap_or_default();
-    let mut seen_purchase_txs = initialize_or_load_daemon_seen(
-        &state_dir,
-        baseline
-            .into_iter()
-            .map(|purchase| purchase.purchase_tx_hash.to_ascii_lowercase()),
-    )?;
+    let mut seen_purchase_txs = initialize_or_load_daemon_seen(&state_dir, Vec::new())?;
     println!("baselinePurchases: {}", seen_purchase_txs.len());
     let mut last_warning_at = 0u64;
     loop {
@@ -2847,7 +2835,6 @@ async fn fulfill_thread_purchases(thread: &ThreadState) -> Result<()> {
         batch_shares.push(drop_script::BatchVssShare {
             buyer: parse_address(buyer)?,
             purchase_tx_hash: thread_purchase.purchase_tx_hash.parse()?,
-            secret_sharing_key: [0u8; 32],
         });
     }
 

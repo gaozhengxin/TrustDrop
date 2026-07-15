@@ -174,7 +174,6 @@ pub struct PurchaseState {
 pub struct BatchVssShare {
     pub buyer: Address,
     pub purchase_tx_hash: H256,
-    pub secret_sharing_key: [u8; 32],
 }
 
 pub fn seller_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
