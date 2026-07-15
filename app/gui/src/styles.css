@@ -32,6 +32,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .topbar {
   align-items: center;
   background: #ffffff;
@@ -110,6 +115,63 @@ button {
   padding: 8px 12px;
 }
 
+.wallet-panel {
+  justify-self: end;
+  position: relative;
+}
+
+.wallet-menu {
+  background: #ffffff;
+  border: 1px solid #d2d2ca;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+  display: grid;
+  gap: 4px;
+  min-width: 210px;
+  padding: 8px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 4;
+}
+
+.wallet-menu-account {
+  border-bottom: 1px solid #ecece7;
+  display: grid;
+  gap: 2px;
+  margin-bottom: 4px;
+  padding: 6px 8px 10px;
+}
+
+.wallet-menu-account span {
+  color: #6d716d;
+  font-size: 12px;
+}
+
+.wallet-menu-account strong {
+  font-size: 14px;
+}
+
+.wallet-menu-item {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #171717;
+  display: block;
+  padding: 8px;
+  text-align: left;
+  text-decoration: none;
+  width: 100%;
+}
+
+.wallet-menu-item:hover {
+  background: #f1f1ed;
+}
+
+.wallet-menu-item.danger {
+  color: #8f2424;
+}
+
 .layout {
   margin: 0 auto;
   max-width: 1180px;
@@ -182,6 +244,12 @@ p {
 
 .text-button {
   padding: 7px 10px;
+}
+
+.text-button:disabled {
+  background: #eeeeea;
+  border-color: #ddddd6;
+  color: #8a8d89;
 }
 
 .asset-grid {
@@ -408,7 +476,7 @@ p {
   align-items: center;
   display: grid;
   gap: 12px;
-  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto auto;
 }
 
 .record-main {
@@ -420,6 +488,17 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.record-main .record-guarantees {
+  color: #69706d;
+  font-size: 12px;
+}
+
+.moderation-badge {
+  color: #6f5f12;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .kind-text {
@@ -507,12 +586,18 @@ p {
   }
 
   .brand,
-  .wallet {
+  .wallet,
+  .wallet-panel {
     justify-self: stretch;
   }
 
   .wallet {
     width: 100%;
+  }
+
+  .wallet-menu {
+    left: 0;
+    right: 0;
   }
 
   .nav {

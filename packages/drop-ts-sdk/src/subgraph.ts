@@ -123,6 +123,19 @@ export class TrustDropSubgraph {
     return result.sales;
   }
 
+  async getSale(channel: `0x${string}`, saleId: `0x${string}`): Promise<MarketplaceSale | null> {
+    const result = await this.query<{ sales: MarketplaceSale[] }>(
+      `query Sale($channel: Bytes!, $saleId: Bytes!) {
+        sales(first: 1, where: { channel: $channel, saleId: $saleId }) {
+          id channel saleId dataCommitment price version info title description fileName fileSize contentType
+          tags normalizedTags purchaseCount settlementCount refundCount listedAtBlock listedAtTimestamp updatedAtBlock updatedAtTimestamp status
+        }
+      }`,
+      { channel: channel.toLowerCase(), saleId: saleId.toLowerCase() },
+    );
+    return result.sales[0] ?? null;
+  }
+
   async listBuyerActivity(buyer: `0x${string}`): Promise<{
     purchases: MarketplacePurchase[];
     settlements: MarketplaceSettlement[];

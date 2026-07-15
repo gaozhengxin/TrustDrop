@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { concatBytes, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
-import type { WalletClient } from "viem";
+import { keccak256, type WalletClient } from "viem";
 import { arbitrumSepolia } from "viem/chains";
 import type { DataKeyShare, MarketplacePurchase, MarketplaceSale, MarketplaceSettlement, VddProof } from "./subgraph";
 import { downloadWalrusBlob, walrusBlobIdFromHex } from "./walrus";
@@ -28,6 +28,10 @@ export type RecoverAssetResult = {
 };
 
 export async function recoverPurchasedAsset(input: RecoverAssetInput): Promise<RecoverAssetResult> {
+  validateSaleDataCommitment(input.sale);
+  if (!sameHex(input.sale.dataCommitment, input.purchase.dataCommitment)) {
+    throw new Error("Purchase data commitment does not match sale data commitment");
+  }
   const share = findDataKeyShare(input.dataKeyShares, input.buyer, input.purchase.timestamp);
   if (!share) throw new Error("No data key share found for this purchase");
   const encryptedDataKey = encryptedKeyForAudience(share, input.buyer);
@@ -136,6 +140,12 @@ function parseSaleInfo(info: string): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
   } catch {
     return {};
+  }
+}
+
+function validateSaleDataCommitment(sale: MarketplaceSale): void {
+  if (keccak256(sale.dataCommitment).toLowerCase() !== sale.version.toLowerCase()) {
+    throw new Error("Sale data commitment does not match sale data version");
   }
 }
 

@@ -4,7 +4,10 @@ import {
   connectWallet,
   fileKind,
   getStoredWalrusAggregatorUrl,
+  onWalletAccountsChanged,
+  onWalletChainChanged,
   recoverPurchasedAsset,
+  refundPurchase,
   listLocalThreads,
   preparePurchase,
   saleDisplayTitle,
@@ -14,6 +17,7 @@ import {
   TrustDropSubgraph,
   upsertLocalThread,
   WALRUS_AGGREGATOR_PRESETS,
+  walletFromAccount,
   type BrowserWallet,
   type BuyerThread,
   type BuyerKeyMode,
@@ -24,7 +28,7 @@ import {
   type MarketplaceSettlement,
   type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
-import { filterSalesForContentEngine } from "./content-engine/engine";
+import { filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, sortSalesForRecommendation } from "./content-engine/engine";
 
 type Route = "home" | "browse" | "records" | "settings" | "detail";
 
@@ -45,9 +49,12 @@ type UiState = {
   loading: boolean;
   purchaseBusy: boolean;
   downloadBusy: string;
+  refundBusy: string;
   keyMode: BuyerKeyMode;
   aggregatorUrl: string;
   aggregatorStatus: string;
+  visionReady: boolean;
+  walletMenuOpen: boolean;
   message: string;
 };
 
@@ -70,13 +77,28 @@ const state: UiState = {
   loading: true,
   purchaseBusy: false,
   downloadBusy: "",
+  refundBusy: "",
   keyMode: "wallet_derived",
   aggregatorUrl: getStoredWalrusAggregatorUrl(),
   aggregatorStatus: "",
+  visionReady: false,
+  walletMenuOpen: false,
   message: "",
 };
 
 async function boot(): Promise<void> {
+  installWalletListeners();
+  render();
+  try {
+    await loadVisionDescriptor();
+    state.visionReady = true;
+  } catch (error) {
+    state.visionReady = false;
+    state.loading = false;
+    state.message = `Content rules unavailable: ${errorMessage(error)}`;
+    render();
+    return;
+  }
   await refreshMarketplace();
   render();
 }
@@ -115,6 +137,7 @@ function byScore(sale: MarketplaceSale): number {
 }
 
 function filteredSales(): MarketplaceSale[] {
+  if (!state.visionReady) return [];
   const query = state.query.trim().toLowerCase();
   return state.sales
     .filter((sale) => sale.status === "LISTED")
@@ -129,10 +152,12 @@ function filteredSales(): MarketplaceSale[] {
 }
 
 function tagOptions(): string[] {
+  if (!state.visionReady) return ["all"];
   return ["all", ...Array.from(new Set(state.sales.flatMap((sale) => sale.normalizedTags))).filter(Boolean)];
 }
 
 function selectedSale(): MarketplaceSale | null {
+  if (!state.visionReady) return null;
   return state.sales.find((sale) => sale.id === state.selectedSaleId) ?? state.sales[0] ?? null;
 }
 
@@ -149,7 +174,12 @@ function renderShell(content: string): string {
         ${navButton("records", "Records")}
         ${navButton("settings", "Settings")}
       </nav>
-      <button class="wallet" id="wallet-button" type="button">${state.wallet ? shortAddress(state.wallet.account) : "Connect wallet"}</button>
+      <div class="wallet-panel">
+        <button class="wallet" id="wallet-button" type="button" aria-expanded="${state.wallet && state.walletMenuOpen ? "true" : "false"}">
+          ${state.wallet ? shortAddress(state.wallet.account) : "Connect wallet"}
+        </button>
+        ${state.wallet && state.walletMenuOpen ? walletMenu() : ""}
+      </div>
     </header>
     <main class="layout">${content}</main>
   `;
@@ -160,8 +190,26 @@ function navButton(route: Route, label: string): string {
   return `<button class="nav-button${active}" data-route="${route}" type="button">${label}</button>`;
 }
 
+function walletMenu(): string {
+  if (!state.wallet) return "";
+  const explorerUrl = `https://sepolia.arbiscan.io/address/${state.wallet.account}`;
+  return `
+    <div class="wallet-menu">
+      <div class="wallet-menu-account">
+        <span>Arbitrum Sepolia</span>
+        <strong>${escapeHtml(shortAddress(state.wallet.account))}</strong>
+      </div>
+      <button class="wallet-menu-item" id="switch-wallet-button" type="button">Switch account</button>
+      <button class="wallet-menu-item" id="copy-wallet-button" type="button">Copy address</button>
+      <a class="wallet-menu-item" href="${escapeAttr(explorerUrl)}" target="_blank" rel="noreferrer">View on explorer</a>
+      <button class="wallet-menu-item danger" id="disconnect-wallet-button" type="button">Disconnect</button>
+    </div>
+  `;
+}
+
 function renderHome(): string {
-  const recommended = [...state.sales].sort((a, b) => byScore(b) - byScore(a)).slice(0, 2);
+  if (!state.visionReady) return renderShell(contentRulesUnavailable());
+  const recommended = sortSalesForRecommendation(state.sales, byScore).slice(0, 2);
   return renderShell(`
     <section class="toolbar">
       <div>
@@ -186,6 +234,7 @@ function renderHome(): string {
 }
 
 function renderBrowse(): string {
+  if (!state.visionReady) return renderShell(contentRulesUnavailable());
   const current = filteredSales();
   return renderShell(`
     <section class="toolbar compact">
@@ -254,6 +303,7 @@ function renderSettings(): string {
 }
 
 function renderDetail(sale: MarketplaceSale): string {
+  if (!state.visionReady) return renderShell(contentRulesUnavailable());
   return renderShell(`
     <section class="detail">
       <button class="text-button" data-route="browse" type="button">Back to browse</button>
@@ -348,17 +398,24 @@ function buyerRecordRows(): string {
     const key = `${purchase.channel}:${purchase.saleId}:${purchase.buyer}`.toLowerCase();
     const status = refundKeys.has(key) ? "refunded" : buyerAssetStatus(purchase, state.settlements, state.dataKeyShares);
     const title = sale ? saleDisplayTitle(sale) : shortAddress(purchase.saleId);
-    const canDownload = sale && state.wallet && status === "ready_to_download";
+    const canDownload = Boolean(state.wallet && status === "ready_to_download");
+    const hidden = sale ? hiddenReasonsForSale(sale).length > 0 : false;
+    const refundState = refundAvailability(purchase, status);
+    const refundBusy = state.refundBusy.toLowerCase() === purchase.txHash.toLowerCase();
     return `
       <article class="record">
         <span class="file-badge kind-${sale ? fileKind(sale.contentType, sale.fileName) : "binary"}">${escapeHtml(fileKindLabel(sale))}</span>
         <div class="record-main">
-          <h2>${escapeHtml(title)}</h2>
+          <h2>${escapeHtml(title)}${hidden ? ` <span class="moderation-badge">Hidden</span>` : ""}</h2>
           <p>${shortAddress(purchase.txHash)} · ${formatTimestamp(purchase.timestamp)}</p>
+          <p class="record-guarantees">Fulfill by ${formatTimestamp(purchase.deadline)} · Download guaranteed until ${protocolDownloadGuarantee(purchase)}</p>
         </div>
         <span class="status">${statusText(status)}</span>
         <button class="text-button" data-download="${escapeAttr(purchase.txHash)}" type="button" ${canDownload && state.downloadBusy !== purchase.txHash ? "" : "disabled"}>
           ${state.downloadBusy === purchase.txHash ? "Working" : "Download"}
+        </button>
+        <button class="text-button" data-refund="${escapeAttr(purchase.txHash)}" title="${escapeAttr(refundState.reason)}" type="button" ${refundState.enabled && !refundBusy ? "" : "disabled"}>
+          ${refundBusy ? "Refunding" : "Refund"}
         </button>
       </article>
     `;
@@ -408,6 +465,7 @@ function bindEvents(root: HTMLElement): void {
     button.addEventListener("click", () => {
       state.route = (button.dataset.route as Route) ?? "home";
       state.message = "";
+      state.walletMenuOpen = false;
       render();
     });
   });
@@ -417,6 +475,7 @@ function bindEvents(root: HTMLElement): void {
       state.selectedSaleId = item.dataset.asset ?? state.sales[0]?.id ?? "";
       state.route = "detail";
       state.message = "";
+      state.walletMenuOpen = false;
       render();
     });
   });
@@ -442,7 +501,21 @@ function bindEvents(root: HTMLElement): void {
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
-    void connect();
+    if (state.wallet) {
+      state.walletMenuOpen = !state.walletMenuOpen;
+      render();
+    } else {
+      void connect();
+    }
+  });
+  root.querySelector<HTMLButtonElement>("#copy-wallet-button")?.addEventListener("click", () => {
+    void copyWalletAddress();
+  });
+  root.querySelector<HTMLButtonElement>("#switch-wallet-button")?.addEventListener("click", () => {
+    void switchAccount();
+  });
+  root.querySelector<HTMLButtonElement>("#disconnect-wallet-button")?.addEventListener("click", () => {
+    disconnect();
   });
   root.querySelector<HTMLButtonElement>("#refresh-button")?.addEventListener("click", () => {
     void refreshMarketplace();
@@ -471,16 +544,93 @@ function bindEvents(root: HTMLElement): void {
       void handleDownload(button.dataset.download as `0x${string}`);
     });
   });
+  root.querySelectorAll<HTMLButtonElement>("[data-refund]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void handleRefund(button.dataset.refund as `0x${string}`);
+    });
+  });
 }
 
 async function connect(): Promise<void> {
   try {
     state.wallet = await connectWallet();
+    state.walletMenuOpen = false;
     await refreshBuyerActivity();
     state.message = "";
   } catch (error) {
     state.message = errorMessage(error);
   }
+  render();
+}
+
+async function switchAccount(): Promise<void> {
+  state.walletMenuOpen = false;
+  await connect();
+}
+
+function disconnect(): void {
+  state.wallet = null;
+  state.walletMenuOpen = false;
+  clearBuyerState();
+  state.message = "Wallet disconnected.";
+  render();
+}
+
+function clearBuyerState(): void {
+  state.purchases = [];
+  state.settlements = [];
+  state.refunds = [];
+  state.dataKeyShares = [];
+  state.vddProofs = [];
+  state.localThreads = [];
+  state.purchaseBusy = false;
+  state.downloadBusy = "";
+  state.refundBusy = "";
+}
+
+function installWalletListeners(): void {
+  onWalletAccountsChanged((accounts) => {
+    void handleWalletAccountsChanged(accounts);
+  });
+  onWalletChainChanged(() => {
+    if (!state.wallet) return;
+    disconnect();
+    state.message = "Wallet network changed. Reconnect on Arbitrum Sepolia.";
+    render();
+  });
+}
+
+async function handleWalletAccountsChanged(accounts: `0x${string}`[]): Promise<void> {
+  const account = accounts[0];
+  if (!account) {
+    disconnect();
+    return;
+  }
+  if (state.wallet?.account.toLowerCase() === account.toLowerCase()) return;
+  try {
+    clearBuyerState();
+    state.wallet = await walletFromAccount(account);
+    state.walletMenuOpen = false;
+    await refreshBuyerActivity();
+    state.message = "";
+  } catch (error) {
+    clearBuyerState();
+    state.wallet = null;
+    state.walletMenuOpen = false;
+    state.message = errorMessage(error);
+  }
+  render();
+}
+
+async function copyWalletAddress(): Promise<void> {
+  if (!state.wallet) return;
+  try {
+    await navigator.clipboard.writeText(state.wallet.account);
+    state.message = "Wallet address copied.";
+  } catch (error) {
+    state.message = errorMessage(error);
+  }
+  state.walletMenuOpen = false;
   render();
 }
 
@@ -495,7 +645,10 @@ async function handlePurchase(): Promise<void> {
   state.message = "";
   render();
   try {
-    const prepared = await preparePurchase(sale, state.wallet.account, state.wallet.client);
+    const manualSecret = state.keyMode === "manual_secret" ? promptManualSecret("Purchase secret hex") : undefined;
+    const prepared = await preparePurchase(sale, state.wallet.account, state.wallet.client, {
+      manualSecret,
+    });
     const txHash = await submitPurchase(prepared, state.wallet.client);
     await upsertLocalThread({
       id: `${sale.channel.toLowerCase()}:${sale.saleId.toLowerCase()}:${txHash.toLowerCase()}`,
@@ -522,18 +675,13 @@ async function handlePurchase(): Promise<void> {
 async function handleDownload(txHash: `0x${string}`): Promise<void> {
   const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
   if (!purchase || !state.wallet) return;
-  const sale = findSaleForPurchase(purchase);
-  if (!sale) {
-    state.message = "Sale metadata is missing for this purchase.";
-    render();
-    return;
-  }
   const thread = state.localThreads.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
-  const manualSecret = thread?.keyMode === "manual_secret" ? prompt("Recovery secret hex") : undefined;
+  const manualSecret = thread?.keyMode === "manual_secret" ? promptManualSecret("Recovery secret hex") : undefined;
   state.downloadBusy = txHash;
   state.message = "";
   render();
   try {
+    const sale = await saleForPurchase(purchase);
     const result = await recoverPurchasedAsset({
       sale,
       purchase,
@@ -555,6 +703,46 @@ async function handleDownload(txHash: `0x${string}`): Promise<void> {
     state.localThreads = await listLocalThreads();
     render();
   }
+}
+
+async function saleForPurchase(purchase: MarketplacePurchase): Promise<MarketplaceSale> {
+  const existing = findSaleForPurchase(purchase);
+  if (existing) return existing;
+  const sale = await subgraph.getSale(purchase.channel, purchase.saleId);
+  if (!sale) throw new Error("Unable to load purchase recovery data. Refresh records and try again.");
+  state.allSales = [sale, ...state.allSales.filter((item) => item.id.toLowerCase() !== sale.id.toLowerCase())];
+  return sale;
+}
+
+async function handleRefund(txHash: `0x${string}`): Promise<void> {
+  const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
+  if (!purchase || !state.wallet) return;
+  state.refundBusy = txHash;
+  state.message = "";
+  render();
+  try {
+    const refundTx = await refundPurchase(purchase, state.wallet.client);
+    state.message = `Refund submitted: ${shortAddress(refundTx)}`;
+    await refreshBuyerActivity();
+  } catch (error) {
+    state.message = errorMessage(error);
+  } finally {
+    state.refundBusy = "";
+    render();
+  }
+}
+
+function promptManualSecret(label: string): `0x${string}` {
+  const input = prompt(`${label} (32 bytes hex)`);
+  if (!input) throw new Error("Manual secret is required");
+  return normalizeSecretHex(input, label);
+}
+
+function normalizeSecretHex(value: string, label: string): `0x${string}` {
+  const hex = value.trim().toLowerCase().replace(/^0x/, "");
+  if (!/^[0-9a-f]+$/.test(hex)) throw new Error(`${label} must be hex`);
+  if (hex.length !== 64) throw new Error(`${label} must be exactly 32 bytes`);
+  return `0x${hex}`;
 }
 
 async function saveSettings(root: HTMLElement): Promise<void> {
@@ -637,6 +825,18 @@ function empty(message: string): string {
   return `<div class="empty">${escapeHtml(message)}</div>`;
 }
 
+function contentRulesUnavailable(): string {
+  return `
+    <section class="toolbar compact">
+      <div>
+        <h1>Marketplace unavailable</h1>
+        <p>Content rules must load before listings can be shown.</p>
+      </div>
+    </section>
+    ${state.message ? `<div class="notice">${escapeHtml(state.message)}</div>` : ""}
+  `;
+}
+
 function loadingRows(): string {
   return `<div class="empty">Loading</div>`;
 }
@@ -656,7 +856,37 @@ function initials(title: string): string {
 function formatTimestamp(value: string): string {
   const timestamp = Number(value);
   if (!Number.isFinite(timestamp) || timestamp <= 0) return "-";
-  return new Date(timestamp * 1000).toISOString().slice(0, 10);
+  return new Date(timestamp * 1000).toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function protocolDownloadGuarantee(purchase: MarketplacePurchase): string {
+  const initTime = Number(purchase.initTime);
+  if (!Number.isFinite(initTime) || initTime <= 0) return "-";
+  return formatTimestamp(String(initTime + 7 * 24 * 60 * 60));
+}
+
+function refundAvailability(
+  purchase: MarketplacePurchase,
+  status: ReturnType<typeof buyerAssetStatus> | "refunded",
+): { enabled: boolean; reason: string } {
+  if (!state.wallet) return { enabled: false, reason: "Connect wallet to refund" };
+  if (status === "ready_to_download") return { enabled: false, reason: "Settled purchases cannot be refunded" };
+  if (status === "refunded") return { enabled: false, reason: "Purchase already refunded" };
+  const deadline = Number(purchase.deadline);
+  if (!Number.isFinite(deadline)) return { enabled: false, reason: "Invalid refund deadline" };
+  if (deadline >= currentUnixTime()) return { enabled: false, reason: `Refund available after ${formatTimestamp(purchase.deadline)}` };
+  return { enabled: true, reason: "Refund expired pending purchase" };
+}
+
+function currentUnixTime(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 function formatBytes(value: string): string {
