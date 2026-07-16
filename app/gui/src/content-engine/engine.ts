@@ -42,8 +42,7 @@ export type HiddenReason = "before_start_timestamp" | "before_minimum_block" | "
 
 const visionRegistryAbi = parseAbi(["function visionCid() view returns (string)"]);
 const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/";
-const DEFAULT_FALLBACK_VISION_URL =
-  "https://aesthetic-cicada-m1hbq.lighthouseweb3.xyz/ipfs/bafkreibyknvym7ozscmiqgb3imt3255sxpqugpekf2ewdppkyubxogwv2i";
+const PUBLIC_IPFS_GATEWAYS = ["https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://nftstorage.link/ipfs/"];
 const VISION_FETCH_TIMEOUT_MS = 8_000;
 
 let activeVision: VisionDescriptor | null = null;
@@ -115,13 +114,24 @@ async function fetchVision(cid: string): Promise<VisionDescriptor> {
   const cleanCid = cid.replace(/^ipfs:\/\//, "");
   const env = (import.meta as ImportMetaWithEnv).env ?? {};
   const gateway = (env.VITE_TRUSTDROP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY).replace(/\/?$/, "/");
-  const fallbackUrl = env.VITE_TRUSTDROP_FALLBACK_VISION_URL || DEFAULT_FALLBACK_VISION_URL;
-  try {
-    return await fetchVisionUrl(`${gateway}${cleanCid}`);
-  } catch (error) {
-    if (!fallbackUrl) throw error;
-    return fetchVisionUrl(fallbackUrl);
-  }
+  const urls = Array.from(new Set([gateway, ...PUBLIC_IPFS_GATEWAYS].map((item) => item.replace(/\/?$/, "/")))).map((item) => `${item}${cleanCid}`);
+  return firstSuccessfulVision(urls);
+}
+
+async function firstSuccessfulVision(urls: string[]): Promise<VisionDescriptor> {
+  const failures: string[] = [];
+  return new Promise((resolve, reject) => {
+    let pending = urls.length;
+    for (const url of urls) {
+      fetchVisionUrl(url)
+        .then(resolve)
+        .catch((error) => {
+          failures.push(`${url}: ${errorMessage(error)}`);
+          pending -= 1;
+          if (pending === 0) reject(new Error(`Vision fetch failed from all gateways: ${failures.join("; ")}`));
+        });
+    }
+  });
 }
 
 async function fetchVisionUrl(url: string): Promise<VisionDescriptor> {
@@ -174,4 +184,8 @@ function parseBigInt(value: string): bigint {
   } catch {
     return 0n;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

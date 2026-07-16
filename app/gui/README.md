@@ -26,13 +26,9 @@ CLOUDFLARE_PAGES_PROJECT=fair-file-marketplace
 CLOUDFLARE_PAGES_BRANCH=dev
 VITE_TRUSTDROP_VISION_REGISTRY_ADDRESS=0x79A070bF4b64f815249F4ac0ea05bdB983b92261
 VITE_TRUSTDROP_IPFS_GATEWAY=https://ipfs.io/ipfs/
-VITE_TRUSTDROP_FALLBACK_VISION_URL=/vision/0.json
 ```
 
 ## Vision File
-
-The fallback vision descriptor is served as static configuration from `public/vision/0.json`.
-It is not imported from `src`.
 
 Vision files describe externally updated content rules:
 
