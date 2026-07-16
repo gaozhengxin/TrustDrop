@@ -1,0 +1,15 @@
+PUBLIC_EXPORT.md
+.env
+target/
+cache/
+out/
+broadcast/
+node_modules/
+dist/
+.wrangler/
+contracts/--broadcast
+contracts/--rpc-url
+contracts/bin/
+contracts/lib/
+*.pem
+*.key

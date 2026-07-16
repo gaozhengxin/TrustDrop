@@ -1,0 +1,40 @@
+[package]
+version = "0.1.0"
+name = "vss-script"
+edition = "2021"
+default-run = "vss"
+
+[[bin]]
+name = "vss"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "evm"
+path = "src/bin/evm.rs"
+
+[[bin]]
+name = "pn"
+path = "src/bin/pn.rs"
+
+[[bin]]
+name = "vkey"
+path = "src/bin/vkey.rs"
+
+[dependencies]
+sp1-sdk = { version = "6.2.4", features = ["network"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.200", default-features = false, features = ["derive"] }
+clap = { version = "4.0", features = ["derive", "env"] }
+tracing = "0.1.40"
+hex = "0.4.3"
+alloy-sol-types = { workspace = true }
+vss-lib = { path = "../lib" }
+dotenv = "0.15.0"
+k256 = "0.13.4"
+rand = { version = "0.8", features = ["std"] }
+blake3 = "1.8.2"
+drop-lib = { path = "../../../drop-lib" }
+tokio = { version = "1", features = ["full"] }
+
+[build-dependencies]
+sp1-build = "6.2.4"

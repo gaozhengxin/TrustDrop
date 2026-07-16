@@ -1,0 +1,90 @@
+{
+  "schema": "trustdrop.vision.v1",
+  "network": "arbitrum-sepolia",
+  "version": 2,
+  "updatedAt": "2026-07-15T00:00:00Z",
+  "source": {
+    "type": "local"
+  },
+  "recommendations": {
+    "featuredAssets": [
+      {
+        "channel": "0xa33f0e76f0e5ad1164ac6cb5cca2d34092f479e8",
+        "saleId": "0x8313812a57553b39412362c051ff695379c01c65fa206c56e53bfefe1b76c694",
+        "reason": "featured demo video"
+      },
+      {
+        "channel": "0x1389676eec6c0211bde8727959228d22110e8553",
+        "saleId": "0xce69914519358cf649030efc9471f69d934c72a0879dd0f62e9e85c1a53a78ba",
+        "reason": "featured Mars landing video"
+      },
+      {
+        "channel": "0x85a49648b21af4df68cb66ab4372a837cdc13a3b",
+        "saleId": "0x09ef6ccfa628f1fd5505446488b3468255a521fffce0f2b6b571e84195612b36",
+        "reason": "featured Webb telescope video"
+      },
+      {
+        "channel": "0xe6e4b3806a13e5992380eadb943267b86c7b4c12",
+        "saleId": "0xb03b57b0db9dd310da91c7506e0c27b14af90e5eafef0dedc9d09bc1a97c0431",
+        "reason": "featured Earth observation video"
+      },
+      {
+        "channel": "0xcc30f774e4b2e173368407fc811d5b4d4326f842",
+        "saleId": "0x6332a667f519080b88efbbc455be82121627409dcddfa42773eb59da36657857",
+        "reason": "featured Hubble image"
+      }
+    ]
+  },
+  "moderation": {
+    "startTimestamp": 1784073600,
+    "minimumListedBlock": "285001853",
+    "blacklistedAssets": [
+      {
+        "channel": "0xc176c6977e9c9c7ebe09e24bfc687cf602df3e2f",
+        "saleId": "0xde807122cdb407b3aa723852a306d1fefe07b0e19bafae68bb7c4aba3a1ec087",
+        "reason": "restricted placeholder"
+      },
+      {
+        "channel": "0x71f14f985f4f6f32a63a4aec6f1d4dea5a994ca6",
+        "saleId": "0x1ac30cf6fe3ec0bd66326bf2015e2fbab2aa3f972201f60eac527860417dbce7",
+        "reason": "restricted placeholder"
+      },
+      {
+        "channel": "0x76060b7a3b7ec296ff82733d1839bb59da8fce90",
+        "saleId": "0x4b4c93de0b07ad79956632f8b715705828f9eb1d438cb932c49f1462864bcec5",
+        "reason": "restricted placeholder"
+      },
+      {
+        "channel": "0x125eba1f88735b9b88fc8db983dae9ef333e4794",
+        "saleId": "0x87256d0dda8280ce562dbc14e8512a5858bcba1d155c0101746901e98446a4b1",
+        "reason": "restricted placeholder"
+      },
+      {
+        "channel": "0x5d280f34f1a7ee153b21293d4f158671bca8e62a",
+        "saleId": "0x31693cb50f777467342e7cddabdd320aa92e9db36fb07acddbdd4c057a3a4233",
+        "reason": "duplicate demo sale"
+      },
+      {
+        "channel": "0xfa07523257dcfb3ffb3bd575e4a194c80f73a0db",
+        "saleId": "0xd97537c9b98082a32353aee012d3fe538a9d814e1a459172e29b75ad7c9d59d6",
+        "reason": "duplicate demo sale"
+      },
+      {
+        "channel": "0x3995c3e6b68f7fc37227685bf91f47238b434249",
+        "saleId": "0x302225c8bfc82eada4902792dfc46f35beeac0c0977e58149c64861da5af0f48",
+        "reason": "duplicate demo sale"
+      },
+      {
+        "channel": "0xf8600620c8face5850c7de07dcabc73f50cf8c12",
+        "saleId": "0x0d40b1ce136afd08995a5c36d5401c39dc9a4b19819c8009764df46023c2046a",
+        "reason": "duplicate demo sale"
+      },
+      {
+        "channel": "0xe2262a8e59ea2037d24d0684b0bb0ab2e314b2a2",
+        "saleId": "0xa4ae31b5767677ac619d53f2f157f074c9b2a4f00addd84e2429d13968299229",
+        "reason": "duplicate demo sale"
+      }
+    ],
+    "blacklistedSellers": []
+  }
+}

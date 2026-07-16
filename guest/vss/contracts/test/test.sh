@@ -1,0 +1,1 @@
+forge test --match-test test_ValidVSSProof --rpc-url https://sepolia-rollup.arbitrum.io/rpc -vvvv --evm-version cancun

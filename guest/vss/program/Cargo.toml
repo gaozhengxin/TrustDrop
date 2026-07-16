@@ -1,0 +1,12 @@
+[package]
+version = "0.1.0"
+name = "vss-program"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+sp1-zkvm = "6.2.4"
+blake3 = "1.8.2"
+sha2 = "0.10.9"
+vss-lib = { path = "../lib" }
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }

@@ -1,0 +1,13 @@
+[package]
+version = "0.1.0"
+name = "program-vdd-filecoin"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+sp1-zkvm = "6.2.4"
+vdd-lib = { path = "../lib" }
+blake3 = "1.8.2"
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }
+hex = "0.4.3"
+cid = "0.11"

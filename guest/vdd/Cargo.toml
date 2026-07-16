@@ -1,0 +1,6 @@
+[workspace]
+members = ["lib", "program-vdd-walrus", "program-vdd-walrus-rslhve", "program-vdd-filecoin", "script"]
+resolver = "2"
+
+[workspace.dependencies]
+alloy-sol-types = "1.0"

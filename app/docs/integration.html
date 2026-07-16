@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Integration - TrustDrop Docs</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">TD</span>
+        <span>TrustDrop Docs</span>
+      </a>
+      <nav class="nav">
+        <a href="/">Portal</a>
+        <a href="https://fair-file-marketplace.pages.dev">App</a>
+        <a href="https://github.com/gaozhengxin/TrustDrop">GitHub</a>
+      </nav>
+    </header>
+    <main class="layout">
+      <aside class="sidebar">
+        <span class="sidebar-title">TrustDrop</span>
+        <a href="/docs/">Overview</a>
+        <a href="./protocol.html">Protocol</a>
+        <a href="./ffm.html">Fair File Marketplace</a>
+        <a class="active" href="./integration.html">Deployment & SDK</a>
+      </aside>
+      <article class="doc">
+        <p class="eyebrow">Deployment & SDK</p>
+        <h1>Current Prototype Deployment</h1>
+        <p class="lead">These addresses describe the current Arbitrum Sepolia deployment used by the prototype stack.</p>
+        <ul>
+          <li><a href="#contracts">Contracts</a></li>
+          <li><a href="#sp1-guests">SP1 guest programs</a></li>
+          <li><a href="#typescript-sdk">TypeScript SDK</a></li>
+          <li><a href="#seller-cli">Seller CLI</a></li>
+        </ul>
+
+        <h2 id="contracts">Contracts</h2>
+        <table>
+          <thead>
+            <tr><th>Contract</th><th>Address</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>ExchangeHub</code></td><td><code>0x907337991b4cE4D9a6e70865e40Dc013df13a0D7</code></td></tr>
+            <tr><td><code>ExchangeChannelImplementation</code></td><td><code>0xB8D465C1ee0f990F6bA0AB23531eebc03f374c74</code></td></tr>
+            <tr><td><code>OracleProxy</code></td><td><code>0x456Eb12B6A9584967d4ed1cB5B640B4Cd7215672</code></td></tr>
+            <tr><td><code>VisionRegistry</code></td><td><code>0x79A070bF4b64f815249F4ac0ea05bdB983b92261</code></td></tr>
+          </tbody>
+        </table>
+
+        <h2 id="sp1-guests">SP1 Guest Programs</h2>
+        <table>
+          <thead>
+            <tr><th>Guest</th><th>Verifier</th><th>ELF</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>VSS</td>
+              <td><code>0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2</code></td>
+              <td><code>guest/vss/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/vss-program</code></td>
+            </tr>
+            <tr>
+              <td>VDD Walrus RSLH/VE</td>
+              <td><code>0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071</code></td>
+              <td><code>guest/vdd/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/program-vdd-walrus-rslhve</code></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 id="typescript-sdk">TypeScript SDK</h2>
+        <p>
+          <code>packages/drop-ts-sdk</code> is the buyer-side SDK. It provides wallet connection, account switching support, purchase preparation, contract submission, refund submission, subgraph reads, Walrus aggregator download, and buyer recovery/decryption.
+        </p>
+        <pre><code>import {
+  connectWallet,
+  preparePurchase,
+  submitPurchase,
+  recoverPurchasedAsset
+} from "@trustdrop/drop-ts-sdk";</code></pre>
+
+        <h2 id="seller-cli">Seller CLI</h2>
+        <p>
+          Sellers use <code>drop-cli</code> for listing, Walrus upload, SP1 proof requests, fulfillment, oracle checks, and settlement.
+        </p>
+        <p>
+          The seller side has four moving parts: a funded Arbitrum Sepolia seller account, a Walrus publisher endpoint, SP1 Prove Network credentials, and the local <code>drop-cli</code> state database. An agent should first inspect the repository's CLI help, environment examples, and seller state directory, then run the readonly checks before sending any transaction or proof request.
+        </p>
+        <p>
+          The CLI supports both direct commands and a daemon mode. Direct commands are useful for listing a file, checking a sale, uploading to Walrus, requesting VSS/VDD proofs, fulfilling a purchase, and settling it. The daemon watches seller sales, discovers purchase requests, records threads in the local database, and can resume failed work after the operator fixes the missing dependency.
+        </p>
+        <p>
+          For a new seller flow, use the CLI to prepare and list an asset, make sure the Walrus blob is readable, then let either explicit phase commands or the daemon handle buyer purchases. If a step fails, inspect the thread state, check Walrus, RPC, oracle, and SP1 readiness, then resume the same thread instead of starting a new exchange.
+        </p>
+        <nav class="page-nav">
+          <a href="./protocol.html">Protocol details</a>
+          <a href="https://github.com/gaozhengxin/TrustDrop">GitHub repository</a>
+        </nav>
+      </article>
+    </main>
+  </body>
+</html>
