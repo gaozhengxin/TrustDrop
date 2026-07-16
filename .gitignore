@@ -13,3 +13,8 @@ contracts/bin/
 contracts/lib/
 *.pem
 *.key
+*.mp4
+*-recovered.*
+listing_result.txt
+build/
+generated/

@@ -1,0 +1,15 @@
+{
+  "name": "trustdrop-subgraph",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "deploy:studio": ". ./.env && graph deploy $SUBGRAPH_SLUG subgraph.yaml --deploy-key $DEPLOY_KEY --version-label ${SUBGRAPH_VERSION_LABEL:-v0.0.1}",
+    "check:marketplace": "node scripts/check-marketplace-capabilities.mjs"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.97.1",
+    "@graphprotocol/graph-ts": "^0.38.1"
+  }
+}

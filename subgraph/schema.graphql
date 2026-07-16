@@ -1,0 +1,135 @@
+type ExchangeChannel @entity(immutable: false) {
+  id: Bytes!
+  owner: Bytes!
+  channel: Bytes!
+  saleCount: BigInt!
+  purchaseCount: BigInt!
+  settlementCount: BigInt!
+  refundCount: BigInt!
+  createdAtBlock: BigInt!
+  createdAtTimestamp: BigInt!
+  createdTx: Bytes!
+}
+
+type Sale @entity(immutable: false) {
+  id: Bytes!
+  channel: Bytes!
+  saleId: Bytes!
+  dataCommitment: Bytes!
+  price: BigInt!
+  version: Bytes!
+  info: String!
+  title: String!
+  description: String!
+  fileName: String!
+  fileSize: BigInt!
+  contentType: String!
+  tags: [String!]!
+  normalizedTags: [String!]!
+  purchaseCount: BigInt!
+  settlementCount: BigInt!
+  refundCount: BigInt!
+  lastPurchasedAt: BigInt
+  lastSettledAt: BigInt
+  lastRefundedAt: BigInt
+  status: String!
+  listedAtBlock: BigInt!
+  listedAtTimestamp: BigInt!
+  updatedAtBlock: BigInt!
+  updatedAtTimestamp: BigInt!
+}
+
+type Tag @entity(immutable: false) {
+  id: String!
+  name: String!
+  normalizedName: String!
+  saleCount: BigInt!
+  purchaseCount: BigInt!
+  settlementCount: BigInt!
+}
+
+type Purchase @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  saleId: Bytes!
+  dataCommitment: Bytes!
+  buyer: Bytes!
+  price: BigInt!
+  saleDigest: Bytes!
+  initTime: BigInt!
+  deadline: BigInt!
+  vssKeyCommitment: Bytes!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type Settlement @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  buyer: Bytes!
+  saleId: Bytes!
+  dataCommitment: Bytes!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type Refund @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  buyer: Bytes!
+  saleId: Bytes!
+  dataCommitment: Bytes!
+  amount: BigInt!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type Audience @entity(immutable: false) {
+  id: Bytes!
+  channel: Bytes!
+  user: Bytes!
+  index: BigInt!
+  joinedAtBlock: BigInt!
+  joinedAtTimestamp: BigInt!
+}
+
+type DataKeyCommitment @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  commitment: Bytes!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type DataKeyShare @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  audiences: [Bytes!]!
+  encryptedDataKeys: [Bytes!]!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type VddProof @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  cCipher: Bytes!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type OracleRequestSkipped @entity(immutable: true) {
+  id: Bytes!
+  channel: Bytes!
+  cCipher: Bytes!
+  message: String!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
