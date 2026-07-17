@@ -2,6 +2,8 @@
 
 TrustDrop is a prototype protocol for fair exchange of encrypted files. A buyer locks payment on-chain, a seller proves fulfillment with SP1 zk programs, and the buyer can recover the delivered file through the protocol flow.
 
+Portal: https://trustdrop.pages.dev
+
 ## Project Map
 
 - `contracts/`: Arbitrum Sepolia contracts, deploy scripts, and Foundry tests.
