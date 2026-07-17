@@ -54,7 +54,7 @@ Manual gates that remain user-owned:
 - Confirm Walrus publisher is mainnet and `/home/justin/walrus/start.sh` is running. For setup or diagnosis, use the `walrus-publisher-setup` skill first.
 - Confirm Walrus/Sui balance or storage quota.
 - Confirm seller, buyer, and SP1 keys in `drop-script/.env` are allowed for the test.
-- Confirm SP1 Prove Network key has balance and PROVE allowance.
+- Confirm SP1 Prove Network key has balance and PROVE allowance. For detailed operator guidance, use the `prove-network-credit-check` skill.
 - Confirm centralized Oracle Worker is deployed and configured with its signer key.
 - Confirm `OracleProxy.centralizedOracleSigner()` matches the Worker signer.
 - Confirm Worker signer has enough Arbitrum Sepolia ETH.
