@@ -13,9 +13,9 @@ services:
       WALRUS_SUB_WALLETS_DIR: /home/justin/.sui/sui_config
       WALRUS_BIND_ADDRESS: 0.0.0.0:31415
       WALRUS_N_CLIENTS: ${WALRUS_N_CLIENTS:-1}
-      HTTPS_PROXY: ${HTTPS_PROXY:-http://host.docker.internal:8118}
-      HTTP_PROXY: ${HTTP_PROXY:-http://host.docker.internal:8118}
-      ALL_PROXY: ${ALL_PROXY:-socks5h://host.docker.internal:8119}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
       NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost,walrus-publisher}
     volumes:
       - ${TRUSTDROP_SUI_DIR:-/Users/niuniu/.sui}:/home/justin/.sui
@@ -43,9 +43,9 @@ services:
       DROP_CLI_BASE_ENV_FILE: drop-script/.env
       TRUSTDROP_CONTAINER_WALRUS_ENDPOINT: http://walrus-publisher:31415
       SP1_CORE_RUNNER_OVERRIDE_BINARY: /home/justin/.cargo/sp1-native-bins/debug/sp1-core-executor-runner-binary
-      HTTPS_PROXY: ${HTTPS_PROXY:-http://host.docker.internal:8118}
-      HTTP_PROXY: ${HTTP_PROXY:-http://host.docker.internal:8118}
-      ALL_PROXY: ${ALL_PROXY:-socks5h://host.docker.internal:8119}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
       NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost,walrus-publisher}
     volumes:
       - ../../:/home/justin/TrustDrop/TrustDrop

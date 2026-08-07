@@ -49,5 +49,7 @@ for path in "$TRUSTDROP_SUI_DIR/sui_config/client.yaml" "$TRUSTDROP_WALRUS_DIR/c
   fi
 done
 
+"${SCRIPT_DIR}/check-elf-hashes.sh"
+
 cd "$SCRIPT_DIR"
 exec "$DOCKER_BIN" compose --env-file /dev/null up --build seller-daemon

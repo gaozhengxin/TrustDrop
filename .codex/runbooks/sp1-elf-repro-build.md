@@ -182,7 +182,7 @@ The same amd64 Ubuntu runner can build the seller-side CLI, with these extra not
 - `libprotobuf-dev` must be installed in the image. `protobuf-compiler` alone is not enough for `sp1-prover-types`.
 - If `sp1-core-executor-runner` fails to find `sp1-core-executor-runner-binary`, prebuild `sp1-core-executor-runner-binary` and set `SP1_CORE_RUNNER_OVERRIDE_BINARY` while building `drop-cli`.
 - If the build stalls under `ethers-*` with a nested `cargo metadata`, the child Cargo process is usually waiting on the parent package-cache lock. Use a temporary Cargo wrapper so `cargo metadata` uses an independent `/home/justin/.cargo-metadata` cache.
-- On the Mac mini, Docker containers do not automatically inherit the GUI VPN/system proxy. For external services, pass `HTTPS_PROXY=http://host.docker.internal:8118`, `HTTP_PROXY=http://host.docker.internal:8118`, and `ALL_PROXY=socks5h://host.docker.internal:8119`.
+- On the Mac mini, Docker containers do not automatically inherit the GUI VPN/system proxy. If external access needs a proxy, put the real HTTPS_PROXY, HTTP_PROXY, ALL_PROXY, and NO_PROXY values in local-only docker/seller/seller.env. Do not commit concrete proxy endpoints.
 
 Minimal seller build flow:
 
@@ -226,9 +226,9 @@ Before starting the daemon, verify the container can reach the oracle worker thr
 
 ```sh
 docker run --rm --platform linux/amd64 \
-  -e HTTPS_PROXY=http://host.docker.internal:8118 \
-  -e HTTP_PROXY=http://host.docker.internal:8118 \
-  -e ALL_PROXY=socks5h://host.docker.internal:8119 \
+  -e HTTPS_PROXY=${HTTPS_PROXY} \
+  -e HTTP_PROXY=${HTTP_PROXY} \
+  -e ALL_PROXY=${ALL_PROXY} \
   trustdrop/elf-repro-runner:ubuntu-amd64 \
   curl -sS https://trustdrop-oracle-worker.zhengxingao.workers.dev/health
 ```
@@ -239,9 +239,9 @@ Start seller daemon with the same proxy and mounted repo/Cargo home:
 docker run --rm --platform linux/amd64 --name trustdrop-seller-daemon \
   -e DROP_CLI_ENV=drop-script/.env \
   -e SP1_CORE_RUNNER_OVERRIDE_BINARY=/home/justin/.cargo/sp1-native-bins/debug/sp1-core-executor-runner-binary \
-  -e HTTPS_PROXY=http://host.docker.internal:8118 \
-  -e HTTP_PROXY=http://host.docker.internal:8118 \
-  -e ALL_PROXY=socks5h://host.docker.internal:8119 \
+  -e HTTPS_PROXY=${HTTPS_PROXY} \
+  -e HTTP_PROXY=${HTTP_PROXY} \
+  -e ALL_PROXY=${ALL_PROXY} \
   -v /Users/niuniu/.cargo-trustdrop-justin:/home/justin/.cargo \
   -v /Users/niuniu/TrustDrop/TrustDrop:/home/justin/TrustDrop/TrustDrop \
   -w /home/justin/TrustDrop/TrustDrop \
