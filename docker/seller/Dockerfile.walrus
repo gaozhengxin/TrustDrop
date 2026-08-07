@@ -1,0 +1,24 @@
+# TrustDrop Walrus publisher sidecar container for Apple Silicon hosts.
+#
+# Build context must include ignored linux/arm64 artifact:
+#   docker/seller/bin/linux-arm64/walrus
+
+FROM --platform=linux/arm64 ubuntu:22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update     && apt-get install -y --no-install-recommends ca-certificates curl bash     && rm -rf /var/lib/apt/lists/*
+
+COPY docker/seller/bin/linux-arm64/walrus /usr/local/bin/walrus
+COPY docker/seller/walrus-entrypoint.sh /usr/local/bin/trustdrop-walrus-entrypoint
+
+RUN chmod +x /usr/local/bin/walrus /usr/local/bin/trustdrop-walrus-entrypoint     && walrus --version
+
+ENV HOME=/home/justin
+ENV WALRUS_HOME=/home/justin/walrus
+ENV WALRUS_CONFIG=/home/justin/walrus/client_config.yaml
+ENV WALRUS_WALLET=/home/justin/.sui/sui_config/client.yaml
+ENV WALRUS_SUB_WALLETS_DIR=/home/justin/.sui/sui_config
+ENV WALRUS_BIND_ADDRESS=0.0.0.0:31415
+ENV WALRUS_N_CLIENTS=1
+
+ENTRYPOINT ["/usr/local/bin/trustdrop-walrus-entrypoint"]
