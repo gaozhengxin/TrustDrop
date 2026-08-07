@@ -174,6 +174,83 @@ Expected:
 791680137fe92209b774830c7272bda8b7c0c8e53c73345be3e0e51cbc3e69df
 ```
 
+
+## Build and run seller `drop-cli` in the container
+
+The same amd64 Ubuntu runner can build the seller-side CLI, with these extra notes:
+
+- `libprotobuf-dev` must be installed in the image. `protobuf-compiler` alone is not enough for `sp1-prover-types`.
+- If `sp1-core-executor-runner` fails to find `sp1-core-executor-runner-binary`, prebuild `sp1-core-executor-runner-binary` and set `SP1_CORE_RUNNER_OVERRIDE_BINARY` while building `drop-cli`.
+- If the build stalls under `ethers-*` with a nested `cargo metadata`, the child Cargo process is usually waiting on the parent package-cache lock. Use a temporary Cargo wrapper so `cargo metadata` uses an independent `/home/justin/.cargo-metadata` cache.
+- On the Mac mini, Docker containers do not automatically inherit the GUI VPN/system proxy. For external services, pass `HTTPS_PROXY=http://host.docker.internal:8118`, `HTTP_PROXY=http://host.docker.internal:8118`, and `ALL_PROXY=socks5h://host.docker.internal:8119`.
+
+Minimal seller build flow:
+
+```sh
+cd /Users/niuniu/TrustDrop/TrustDrop
+
+# Persistent Ubuntu-aligned Cargo home for container builds.
+mkdir -p /Users/niuniu/.cargo-trustdrop-justin
+cp -a /Users/niuniu/.cargo/registry /Users/niuniu/.cargo-trustdrop-justin/registry
+cp -a /Users/niuniu/.cargo/git /Users/niuniu/.cargo-trustdrop-justin/git
+rm -f /Users/niuniu/.cargo-trustdrop-justin/config /Users/niuniu/.cargo-trustdrop-justin/config.toml
+
+# Inside the runner container:
+runner_manifest=/home/justin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sp1-core-executor-runner-binary-6.2.4/Cargo.toml
+CARGO_TARGET_DIR=/home/justin/.cargo/sp1-native-bins cargo build --manifest-path "$runner_manifest"
+runner_bin=/home/justin/.cargo/sp1-native-bins/debug/sp1-core-executor-runner-binary
+SP1_CORE_RUNNER_OVERRIDE_BINARY="$runner_bin" cargo build -p drop-cli
+target/debug/drop-cli --help
+```
+
+If the `ethers-*` metadata lock issue appears, create this wrapper inside the container and invoke it as Cargo:
+
+```sh
+cat >/tmp/trustdrop-cargo-wrapper <<'EOF'
+#!/usr/bin/env bash
+set -e
+real_cargo=/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo
+if [ "${1:-}" = "metadata" ]; then
+  export CARGO_HOME=/home/justin/.cargo-metadata
+  export CARGO_NET_OFFLINE=true
+fi
+export CARGO=/tmp/trustdrop-cargo-wrapper
+exec "$real_cargo" "$@"
+EOF
+chmod +x /tmp/trustdrop-cargo-wrapper
+```
+
+Copy `/home/justin/.cargo/registry` and `/home/justin/.cargo/git` into `/home/justin/.cargo-metadata`, then run `CARGO=/tmp/trustdrop-cargo-wrapper /tmp/trustdrop-cargo-wrapper build -p drop-cli`.
+
+Before starting the daemon, verify the container can reach the oracle worker through the Mac mini proxy:
+
+```sh
+docker run --rm --platform linux/amd64 \
+  -e HTTPS_PROXY=http://host.docker.internal:8118 \
+  -e HTTP_PROXY=http://host.docker.internal:8118 \
+  -e ALL_PROXY=socks5h://host.docker.internal:8119 \
+  trustdrop/elf-repro-runner:ubuntu-amd64 \
+  curl -sS https://trustdrop-oracle-worker.zhengxingao.workers.dev/health
+```
+
+Start seller daemon with the same proxy and mounted repo/Cargo home:
+
+```sh
+docker run --rm --platform linux/amd64 --name trustdrop-seller-daemon \
+  -e DROP_CLI_ENV=drop-script/.env \
+  -e SP1_CORE_RUNNER_OVERRIDE_BINARY=/home/justin/.cargo/sp1-native-bins/debug/sp1-core-executor-runner-binary \
+  -e HTTPS_PROXY=http://host.docker.internal:8118 \
+  -e HTTP_PROXY=http://host.docker.internal:8118 \
+  -e ALL_PROXY=socks5h://host.docker.internal:8119 \
+  -v /Users/niuniu/.cargo-trustdrop-justin:/home/justin/.cargo \
+  -v /Users/niuniu/TrustDrop/TrustDrop:/home/justin/TrustDrop/TrustDrop \
+  -w /home/justin/TrustDrop/TrustDrop \
+  trustdrop/elf-repro-runner:ubuntu-amd64 \
+  target/debug/drop-cli daemon run
+```
+
+This image does not bundle a Walrus node or Walrus/Sui CLI. It only builds and runs the TrustDrop/SP1-side binaries; Walrus publisher/node settings still come from the migrated TrustDrop environment and external services.
+
 ## Troubleshooting
 
 If the ELF hash does not match:

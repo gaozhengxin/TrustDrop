@@ -26,6 +26,7 @@ RUN apt-get update \
         clang \
         cmake \
         protobuf-compiler \
+        libprotobuf-dev \
         file \
         xz-utils \
         bash \
