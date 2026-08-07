@@ -30,6 +30,7 @@
 - [0009 drop-cli](./iterations/0009-drop-cli.md)
 - [0010 File Mall Web App](./iterations/0010-file-mall-web-app.md)
 - [0011 FFM Buyer 下载与恢复闭环](./iterations/0011-ffm-buyer-download-recovery.md)
+- [SP1 guest ELF 可复现构建手册](./runbooks/sp1-elf-repro-build.md)
 
 ## 项目推进标准流程
 
