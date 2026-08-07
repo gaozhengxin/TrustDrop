@@ -51,4 +51,5 @@ services:
     volumes:
       - ../../:/home/justin/TrustDrop/TrustDrop
       - ${TRUSTDROP_CARGO_HOME:-/Users/niuniu/.cargo-trustdrop-justin}:/home/justin/.cargo
+      - ${TRUSTDROP_STATE_DIR:-/Users/niuniu/.trustdrop}:/root/.trustdrop
     command: ["bash", "-lc", "target/debug/drop-cli daemon run"]

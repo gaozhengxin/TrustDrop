@@ -57,6 +57,17 @@ docker/seller/bin/linux-amd64/sui      # Ubuntu reference copy; kept for debuggi
 
 Do not commit these binaries.
 
+
+## Persistent seller state
+
+The seller `drop-cli` state is persisted on the host via:
+
+```text
+TRUSTDROP_STATE_DIR=~/.trustdrop
+```
+
+Compose mounts it as `/root/.trustdrop` in every seller CLI container. This is required because host-file commands such as `phase prepare ~/Desktop/file.dat` run in one-off containers, while later commands and the long-running daemon must see the same sale state.
+
 ## Run
 
 From the Mac mini:
@@ -68,6 +79,20 @@ cp seller.env.example seller.env  # optional; edit paths if not using defaults
 ```
 
 The helper uses Docker Desktop's CLI path automatically when `docker` is not on the non-interactive shell PATH.
+
+
+## Host-side `drop-cli` operations
+
+Use `drop-cli-host.sh` for user-facing commands from the Mac mini host. It supports normal `drop-cli` commands and also accepts host file paths for file-taking commands.
+
+```sh
+cd /Users/niuniu/TrustDrop/TrustDrop
+./docker/seller/drop-cli-host.sh doctor
+./docker/seller/drop-cli-host.sh phase prepare ~/Desktop/demo.mp4
+./docker/seller/drop-cli-host.sh phase publish <sale-id>
+```
+
+See `HOST_OPERATIONS.md` for the full command map.
 
 ## Checks
 
