@@ -50,7 +50,7 @@ run_exec() {
   if [ -t 0 ] && [ -t 1 ]; then
     exec_flags=(-it)
   fi
-  "$DOCKER_BIN" exec "${exec_flags[@]}" trustdrop-seller-daemon target/debug/drop-cli "$@"
+  "$DOCKER_BIN" exec "${exec_flags[@]}" trustdrop-seller-daemon docker/seller/run-drop-cli-in-container.sh "$@"
 }
 
 run_oneoff_with_file() {
@@ -71,7 +71,7 @@ run_oneoff_with_file() {
     --name "trustdrop-seller-cli-$(date +%s)-$$" \
     -v "$host_dir:/host-input:ro" \
     seller-daemon \
-    bash -lc 'target/debug/drop-cli "$@"' _ "$@" "$container_file"
+    bash -lc 'docker/seller/run-drop-cli-in-container.sh "$@"' _ "$@" "$container_file"
 }
 
 case "${1:-} ${2:-}" in

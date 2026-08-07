@@ -40,10 +40,9 @@ services:
       LC_ALL: C
       LANG: C
       CARGO_HOME: /home/justin/.cargo
-      DROP_CLI_ENV: drop-script/.env
+      DROP_CLI_BASE_ENV_FILE: drop-script/.env
+      TRUSTDROP_CONTAINER_WALRUS_ENDPOINT: http://walrus-publisher:31415
       SP1_CORE_RUNNER_OVERRIDE_BINARY: /home/justin/.cargo/sp1-native-bins/debug/sp1-core-executor-runner-binary
-      WALRUS_LOCAL_ENDPOINT: http://walrus-publisher:31415
-      WALRUS_PUBLISHER_URL: http://walrus-publisher:31415
       HTTPS_PROXY: ${HTTPS_PROXY:-http://host.docker.internal:8118}
       HTTP_PROXY: ${HTTP_PROXY:-http://host.docker.internal:8118}
       ALL_PROXY: ${ALL_PROXY:-socks5h://host.docker.internal:8119}
@@ -52,4 +51,4 @@ services:
       - ../../:/home/justin/TrustDrop/TrustDrop
       - ${TRUSTDROP_CARGO_HOME:-/Users/niuniu/.cargo-trustdrop-justin}:/home/justin/.cargo
       - ${TRUSTDROP_STATE_DIR:-/Users/niuniu/.trustdrop}:/root/.trustdrop
-    command: ["bash", "-lc", "target/debug/drop-cli daemon run"]
+    command: ["bash", "-lc", "rm -f /root/.trustdrop/state/daemon.lock && docker/seller/run-drop-cli-in-container.sh daemon run"]
