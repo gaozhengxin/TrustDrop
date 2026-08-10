@@ -48,6 +48,9 @@ type UiState = {
   localThreads: BuyerThread[];
   wallet: BrowserWallet | null;
   loading: boolean;
+  loadingMoreSales: boolean;
+  salesHasMore: boolean;
+  salesLoadedCount: number;
   purchaseBusy: boolean;
   downloadBusy: string;
   refundBusy: string;
@@ -60,6 +63,7 @@ type UiState = {
 };
 
 const subgraph = new TrustDropSubgraph();
+const SUBGRAPH_SALES_PAGE_SIZE = 24;
 const BROWSE_PAGE_SIZE = 8;
 
 const state: UiState = {
@@ -78,6 +82,9 @@ const state: UiState = {
   localThreads: [],
   wallet: null,
   loading: true,
+  loadingMoreSales: false,
+  salesHasMore: true,
+  salesLoadedCount: 0,
   purchaseBusy: false,
   downloadBusy: "",
   refundBusy: "",
@@ -108,10 +115,14 @@ async function boot(): Promise<void> {
 
 async function refreshMarketplace(): Promise<void> {
   state.loading = true;
+  state.loadingMoreSales = false;
+  state.salesHasMore = true;
+  state.salesLoadedCount = 0;
+  state.allSales = [];
+  state.sales = [];
   render();
   try {
-    state.allSales = await subgraph.listSales();
-    state.sales = filterSalesForContentEngine(state.allSales);
+    await loadMoreMarketplaceSales(false);
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
       state.selectedSaleId = state.sales[0]?.id || "";
     }
@@ -122,6 +133,29 @@ async function refreshMarketplace(): Promise<void> {
     state.message = errorMessage(error);
   } finally {
     state.loading = false;
+  }
+}
+
+async function loadMoreMarketplaceSales(renderOnFinish = true): Promise<void> {
+  if (state.loadingMoreSales || !state.salesHasMore) return;
+  state.loadingMoreSales = true;
+  if (renderOnFinish) render();
+  try {
+    const next = await subgraph.listSales(SUBGRAPH_SALES_PAGE_SIZE, state.salesLoadedCount);
+    const known = new Set(state.allSales.map((sale) => sale.id.toLowerCase()));
+    state.allSales = [...state.allSales, ...next.filter((sale) => !known.has(sale.id.toLowerCase()))];
+    state.salesLoadedCount += next.length;
+    state.salesHasMore = next.length === SUBGRAPH_SALES_PAGE_SIZE;
+    state.sales = filterSalesForContentEngine(state.allSales);
+    if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
+      state.selectedSaleId = state.sales[0]?.id || "";
+    }
+    state.message = "";
+  } catch (error) {
+    state.message = errorMessage(error);
+  } finally {
+    state.loadingMoreSales = false;
+    if (renderOnFinish) render();
   }
 }
 
@@ -281,6 +315,7 @@ function renderBrowse(): string {
       <div>
         <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(page.items)}</div>
         ${pagination(page.page, page.pageCount, page.total)}
+        ${loadMoreSalesControl()}
       </div>
     </section>
   `);
@@ -435,6 +470,19 @@ function pagination(page: number, pageCount: number, total: number): string {
   `;
 }
 
+function loadMoreSalesControl(): string {
+  if (state.loading) return "";
+  if (!state.salesHasMore) return `<p class="load-more-note">All currently indexed listings have been loaded.</p>`;
+  return `
+    <div class="load-more">
+      <button class="text-button" id="load-more-sales-button" type="button" ${state.loadingMoreSales ? "disabled" : ""}>
+        ${state.loadingMoreSales ? "Loading..." : "More listings"}
+      </button>
+      <span>Loads another ${SUBGRAPH_SALES_PAGE_SIZE} listings from the subgraph, then applies content rules.</span>
+    </div>
+  `;
+}
+
 function buyerRecordRows(): string {
   if (state.purchases.length === 0 && state.localThreads.length === 0) return empty("No purchase records.");
   const refundKeys = new Set(state.refunds.map((item) => `${item.channel}:${item.saleId}:${item.buyer}`.toLowerCase()));
@@ -556,6 +604,10 @@ function bindEvents(root: HTMLElement): void {
       state.message = "";
       render();
     });
+  });
+
+  root.querySelector<HTMLButtonElement>("#load-more-sales-button")?.addEventListener("click", () => {
+    void loadMoreMarketplaceSales();
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {

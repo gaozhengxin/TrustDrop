@@ -110,15 +110,15 @@ export class TrustDropSubgraph {
     return payload.data;
   }
 
-  async listSales(first = 24): Promise<MarketplaceSale[]> {
+  async listSales(first = 24, skip = 0): Promise<MarketplaceSale[]> {
     const result = await this.query<{ sales: MarketplaceSale[] }>(
-      `query Sales($first: Int!) {
-        sales(first: $first, orderBy: listedAtTimestamp, orderDirection: desc, where: { status: "LISTED" }) {
+      `query Sales($first: Int!, $skip: Int!) {
+        sales(first: $first, skip: $skip, orderBy: listedAtTimestamp, orderDirection: desc, where: { status: "LISTED" }) {
           id channel saleId dataCommitment price version info title description fileName fileSize contentType
           tags normalizedTags purchaseCount settlementCount refundCount listedAtBlock listedAtTimestamp updatedAtBlock updatedAtTimestamp status
         }
       }`,
-      { first },
+      { first, skip },
     );
     return result.sales;
   }
