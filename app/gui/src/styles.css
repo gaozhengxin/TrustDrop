@@ -402,6 +402,21 @@ p {
   border-color: #8ca49a;
 }
 
+.pagination {
+  align-items: center;
+  color: #626259;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.pagination div {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
 .detail {
   display: grid;
   gap: 18px;

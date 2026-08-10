@@ -36,6 +36,7 @@ type UiState = {
   route: Route;
   query: string;
   tag: string;
+  browsePage: number;
   selectedSaleId: string;
   allSales: MarketplaceSale[];
   sales: MarketplaceSale[];
@@ -59,11 +60,13 @@ type UiState = {
 };
 
 const subgraph = new TrustDropSubgraph();
+const BROWSE_PAGE_SIZE = 8;
 
 const state: UiState = {
   route: "home",
   query: "",
   tag: "all",
+  browsePage: 1,
   selectedSaleId: "",
   allSales: [],
   sales: [],
@@ -149,6 +152,14 @@ function filteredSales(): MarketplaceSale[] {
         .toLowerCase()
         .includes(query);
     });
+}
+
+function browsePage(items: MarketplaceSale[]): { items: MarketplaceSale[]; page: number; pageCount: number; total: number } {
+  const total = items.length;
+  const pageCount = Math.max(1, Math.ceil(total / BROWSE_PAGE_SIZE));
+  const page = Math.min(Math.max(state.browsePage, 1), pageCount);
+  const start = (page - 1) * BROWSE_PAGE_SIZE;
+  return { items: items.slice(start, start + BROWSE_PAGE_SIZE), page, pageCount, total };
 }
 
 function tagOptions(): string[] {
@@ -250,6 +261,7 @@ function renderBrowse(): string {
   if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
   const current = filteredSales();
+  const page = browsePage(current);
   return renderShell(`
     <section class="toolbar compact">
       <div>
@@ -266,7 +278,10 @@ function renderBrowse(): string {
           .map((tag) => `<button class="filter${state.tag === tag ? " active" : ""}" data-tag="${escapeAttr(tag)}" type="button">${escapeHtml(tag)}</button>`)
           .join("")}
       </aside>
-      <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(current)}</div>
+      <div>
+        <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(page.items)}</div>
+        ${pagination(page.page, page.pageCount, page.total)}
+      </div>
     </section>
   `);
 }
@@ -404,6 +419,22 @@ function assetRows(items: MarketplaceSale[]): string {
     .join("");
 }
 
+function pagination(page: number, pageCount: number, total: number): string {
+  if (total <= BROWSE_PAGE_SIZE) return "";
+  const start = (page - 1) * BROWSE_PAGE_SIZE + 1;
+  const end = Math.min(page * BROWSE_PAGE_SIZE, total);
+  return `
+    <div class="pagination">
+      <span>Showing ${start}-${end} of ${total}</span>
+      <div>
+        <button class="text-button" data-page="${page - 1}" type="button" ${page <= 1 ? "disabled" : ""}>Previous</button>
+        <span>Page ${page} / ${pageCount}</span>
+        <button class="text-button" data-page="${page + 1}" type="button" ${page >= pageCount ? "disabled" : ""}>Next</button>
+      </div>
+    </div>
+  `;
+}
+
 function buyerRecordRows(): string {
   if (state.purchases.length === 0 && state.localThreads.length === 0) return empty("No purchase records.");
   const refundKeys = new Set(state.refunds.map((item) => `${item.channel}:${item.saleId}:${item.buyer}`.toLowerCase()));
@@ -498,6 +529,7 @@ function bindEvents(root: HTMLElement): void {
   root.querySelectorAll<HTMLButtonElement>("[data-tag]").forEach((button) => {
     button.addEventListener("click", () => {
       state.tag = button.dataset.tag ?? "all";
+      state.browsePage = 1;
       render();
     });
   });
@@ -505,6 +537,7 @@ function bindEvents(root: HTMLElement): void {
   root.querySelector<HTMLInputElement>("#search-input")?.addEventListener("input", (event) => {
     const input = event.target as HTMLInputElement;
     state.query = input.value;
+    state.browsePage = 1;
     if (state.route === "home") state.route = "browse";
     render();
     const nextInput = document.querySelector<HTMLInputElement>("#search-input");
@@ -513,6 +546,16 @@ function bindEvents(root: HTMLElement): void {
       const cursor = state.query.length;
       nextInput.setSelectionRange(cursor, cursor);
     }
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-page]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const page = Number(button.dataset.page);
+      if (!Number.isFinite(page)) return;
+      state.browsePage = page;
+      state.message = "";
+      render();
+    });
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
