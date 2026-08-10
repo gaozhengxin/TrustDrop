@@ -180,8 +180,8 @@ pnpm --dir subgraph deploy:studio
 ## 结构风险与待办
 
 1. `drop-script` 仍使用演示固定密钥：
-   - seller VSS secret: `[0x11; 32]`
-   - asset encryption key: `[0x22; 32]`
+   - test fixture seller VSS secret: explicitly configured `OWNER_SECRET_KEY`
+   - test fixture asset encryption key: explicitly configured `ASSET_ENCRYPTION_KEY`
    后续真实流程需要改成可配置或由安全密钥管理生成。
 
 2. `fulfill` 后依赖 Oracle 异步回调：

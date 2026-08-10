@@ -1704,8 +1704,8 @@ async fn main() -> Result<()> {
 
     let seller_ctx = SellerContext {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), seller_wallet)),
-        owner_sk_bytes: [0x11; 32],
-        asset_encryption_key: [0x22; 32],
+        owner_sk_bytes: parse_hex32_env("OWNER_SECRET_KEY")?,
+        asset_encryption_key: parse_hex32_env("ASSET_ENCRYPTION_KEY")?,
         sp1_private_key: required_env("SP1_PRIVATE_KEY")?,
         vss_verifier_address: configured_vss_verifier_address()?,
         vdd_verifier_address: configured_vdd_verifier_address()?,

@@ -862,7 +862,7 @@ thread 和 purchase 的状态同步规则：
 - `drop-sdk` hardcoded ABI 已同步新增 view。
 - `drop-cli purchase show` / `phase respond` 已从 purchase receipt 解析 `PurchaseEvent`，读取 buyer/channel，并按 `needsVSS` 或旧合约 fallback `!isPrivy` 写入 thread。
 - `drop-cli keys check` 已新增，只输出 seller address、owner public key、asset key commitment，不输出私钥。
-- `maenad_v1` nonce domain 已替换为 `trustdrop_asset_v1`，并同步 `drop-cli`、`drop-script` 和 VDD walrus_rslhve host scripts。
+- historical `maenad_v1` nonce domain 已替换为 `trustdrop_asset_v1`，并同步 `drop-cli`、`drop-script` 和 VDD walrus_rslhve host scripts。
 
 仍未完成（历史记录，2026-07-01 batch VSS 更新后下列前两项已完成）：
 
@@ -874,7 +874,7 @@ thread 和 purchase 的状态同步规则：
 
 当前配置缺口：
 
-- `drop-script/.env` 当前缺少 `OWNER_SECRET_KEY` 和/或 `ASSET_ENCRYPTION_KEY` 时，`drop-cli keys check` 会失败；测试脚本可显式设置 `TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1`，但 seller 正式操作不能使用该开关。
+- `drop-script/.env` 缺少 `OWNER_SECRET_KEY` 和/或 `ASSET_ENCRYPTION_KEY` 时，`drop-cli keys check` 会失败；测试脚本也必须显式设置测试 key。
 
 合约部署影响：
 
@@ -1299,8 +1299,8 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
 - `SELLER_KEY` / `PRIVATE_KEY` 直接从明文 `.env` 读取。
 - `ORACLE_WORKER_TOKEN` 直接从明文 `.env` 读取。
 - `test-drop-cli-full-flow.sh` 会把 `.env` 复制到 `/tmp/.../drop-cli.env`，包含私钥和 token。
-- `ASSET_ENCRYPTION_KEY` 缺失时默认 `[0x22; 32]`。
-- `OWNER_SECRET_KEY` 缺失时默认 `[0x11; 32]`。
+- `ASSET_ENCRYPTION_KEY` 必须显式配置；历史默认 key 已移除。
+- `OWNER_SECRET_KEY` 必须显式配置；历史默认 key 已移除。
 - 没有 keystore、系统 keyring、硬件钱包、加密配置文件或权限检查。
 - 没有 key rotation / per-sale data key 生成策略。
 - 没有统一 secret redaction 层。
@@ -1398,8 +1398,8 @@ DROP_CLI_STATE_DIR=$RUN_DIR/state
   - `drop-cli tx resume <sale-id>`: 当前为状态刷新入口提示。
 - `drop-cli asset prepare <file>` 已补齐本地准备逻辑：
   - 按 `SYMBOL_SIZE` padding 原始文件。
-  - 使用开发期默认 `asset_encryption_key = [0x22; 32]`，可由 `ASSET_ENCRYPTION_KEY` 覆盖。
-  - 使用 `derive_rslh_nonce(asset_key, b"maenad_v1")`。
+  - 必须显式设置 `ASSET_ENCRYPTION_KEY`；不再提供开发期默认 asset key。
+  - 使用 `derive_rslh_nonce(asset_key, b"trustdrop_asset_v1")`。
   - 使用 ChaCha8 加密 padded payload。
   - 计算 `original_asset_id` 和 `encrypted_blob_id`。
   - 写入本地密文文件和 sale state。

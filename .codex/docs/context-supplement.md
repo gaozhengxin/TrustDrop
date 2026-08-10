@@ -232,7 +232,7 @@ subgraph deploy key 在 `subgraph/.env`，不能提交。
 这些问题不一定阻止单次调试，但新 context 必须知道：
 
 - `stage_4_recovery` 仍按历史 `DataKeyShared` 事件恢复，单次调试可用，多订单并发不安全。
-- `drop-script` 仍使用演示固定密钥 `[0x11; 32]` 和 `[0x22; 32]`。
+- `drop-script` 不再允许隐式演示固定密钥；`OWNER_SECRET_KEY` 和 `ASSET_ENCRYPTION_KEY` 必须显式配置。
 - listing price 目前没有链上强约束，purchase price 可以由 buyer 传入；如果要固定标价，需要后续修改合约。
 - channel 当前更像单全局 data key 模型，不是多资产独立密钥模型。
 - `settle` 没有 `nonReentrant`，当前状态删除在转账前，直接重入风险较低，但后续应加。

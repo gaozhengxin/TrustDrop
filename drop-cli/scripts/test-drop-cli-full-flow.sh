@@ -85,6 +85,14 @@ fail() {
   exit 1
 }
 
+random_hex32() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  else
+    python3 -c 'import secrets; print(secrets.token_hex(32))'
+  fi
+}
+
 require_gate() {
   local name="$1"
   local value="$2"
@@ -130,7 +138,8 @@ ensure_drop_cli_env_file() {
     printf 'DROP_CLI_BASE_ENV=%s\n' "$TRUSTDROP_ENV"
     printf 'DROP_CLI_STATE_DIR=%s\n' "$DROP_CLI_STATE_DIR"
     printf 'ORACLE_MODE=centralized\n'
-    printf 'TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1\n'
+    printf 'ASSET_ENCRYPTION_KEY=0x%s\n' "$(random_hex32)"
+    printf 'OWNER_SECRET_KEY=0x%s\n' "$(random_hex32)"
   } > "$test_env"
   DROP_CLI_ENV="$test_env"
   export DROP_CLI_ENV DROP_CLI_STATE_DIR ORACLE_MODE

@@ -19,17 +19,12 @@ pub struct DropCliConfig {
     pub state_dir: Option<String>,
     pub asset_encryption_key: Option<[u8; 32]>,
     pub owner_secret_key: Option<[u8; 32]>,
-    pub dev_insecure_default_keys: bool,
     pub base_env_path: Option<String>,
 }
 
 impl DropCliConfig {
     pub fn from_env_file(path: impl AsRef<Path>) -> Result<Self> {
         let vars = parse_env_with_base(path)?;
-        let dev_insecure_default_keys =
-            first_value(&vars, &["TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS"])
-                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
         Ok(Self {
             rpc_url: first_value(&vars, &["ARBITRUM_SEPOLIA_RPC_URL", "ARBITRUM_SEPOLIA_RPC"]),
             chain_id: first_value(&vars, &["CHAIN_ID"])
@@ -57,7 +52,6 @@ impl DropCliConfig {
                 first_value(&vars, &["ASSET_ENCRYPTION_KEY"]).as_deref(),
             ),
             owner_secret_key: parse_hex32(first_value(&vars, &["OWNER_SECRET_KEY"]).as_deref()),
-            dev_insecure_default_keys,
             base_env_path: first_value(&vars, &["DROP_CLI_BASE_ENV"]),
         })
     }
@@ -79,11 +73,8 @@ impl DropCliConfig {
         if let Some(key) = self.asset_encryption_key {
             return Ok(key);
         }
-        if self.dev_insecure_default_keys {
-            return Ok([0x22; 32]);
-        }
         Err(anyhow!(
-            "ASSET_ENCRYPTION_KEY is missing; set it explicitly or set TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1 for prototype testing"
+            "ASSET_ENCRYPTION_KEY is missing; set an explicit 32-byte hex key"
         ))
     }
 
@@ -91,11 +82,8 @@ impl DropCliConfig {
         if let Some(key) = self.owner_secret_key {
             return Ok(key);
         }
-        if self.dev_insecure_default_keys {
-            return Ok([0x11; 32]);
-        }
         Err(anyhow!(
-            "OWNER_SECRET_KEY is missing; set it explicitly or set TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS=1 for prototype testing"
+            "OWNER_SECRET_KEY is missing; set an explicit 32-byte hex key"
         ))
     }
 
@@ -116,7 +104,6 @@ fn parse_env_with_base(path: impl AsRef<Path>) -> Result<BTreeMap<String, String
     }
     for key in [
         "DROP_CLI_STATE_DIR",
-        "TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS",
         "ASSET_ENCRYPTION_KEY",
         "OWNER_SECRET_KEY",
         "SP1_PRIVATE_KEY",

@@ -199,11 +199,6 @@ fn cmd_keys(args: &[String]) -> Result<()> {
             let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
             println!("assetKeyCommitment: 0x{}", hex::encode(commitment));
 
-            if config.dev_insecure_default_keys {
-                println!(
-                    "WARN TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS is enabled; do not use this for seller production operations"
-                );
-            }
             println!("status: ready");
             Ok(())
         }

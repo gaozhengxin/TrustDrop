@@ -70,7 +70,7 @@
 1. 读取 `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile.mp4`。
 2. 按 `SYMBOL_SIZE` 对原文补零。
 3. 调用 `compute_rs_id` 得到 `original_asset_id`。
-4. 使用 `asset_encryption_key` 和 `derive_rslh_nonce(key, b"maenad_v1")` 对补零后的原文做 ChaCha8 加密。
+4. 使用 `asset_encryption_key` 和 `derive_rslh_nonce(key, b"trustdrop_asset_v1")` 对补零后的原文做 ChaCha8 加密。
 5. 调用 `compute_rs_id` 得到 `encrypted_blob_id`。
 6. 上传密文到 Walrus，得到 `walrus_blob_id`。
 7. 调用 `get_or_create_channel` 创建 ExchangeChannel。
@@ -182,7 +182,7 @@ Host 输入：
 - `original_asset_id`
 - `encrypted_blob_id`
 - `c_key_bytes = blake3(asset_encryption_key)`
-- `aux_data = b"maenad_v1"`
+- `aux_data = b"trustdrop_asset_v1"`
 - 私密 `asset_encryption_key`
 - `DEFAULT_SAMPLE_COUNT` 组 RSLH-VE shard proof
 
@@ -286,7 +286,7 @@ VSS 合约会把 `dataKeyCommitment`、每个 audience 的 `vssKeyCommitment` �
 2. 找到当前 buyer 地址对应的位置。
 3. 用 `secret_sharing_key` 解密 `encrypted_data_keys[pos]`，得到 `asset_key`。
 4. 从 Walrus 下载密文。
-5. 用 `derive_rslh_nonce(asset_key, b"maenad_v1")` 解密密文。
+5. 用 `derive_rslh_nonce(asset_key, b"trustdrop_asset_v1")` 解密密文。
 6. 写入 `KSC-19690716-MH-NAS01-0001-Apollo_11_Historical_Footage_and_Broll-DVC_1560~mobile-recovered.mp4`。
 
 当前缺口：
