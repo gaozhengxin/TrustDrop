@@ -88,6 +88,13 @@ type GraphqlResponse<T> = {
   errors?: Array<{ message: string }>;
 };
 
+export type SaleListOptions = {
+  first?: number;
+  skip?: number;
+  minimumListedTimestamp?: string;
+  minimumListedBlock?: string;
+};
+
 export class TrustDropSubgraph {
   readonly endpoint: string;
 
@@ -110,15 +117,35 @@ export class TrustDropSubgraph {
     return payload.data;
   }
 
-  async listSales(first = 24, skip = 0): Promise<MarketplaceSale[]> {
+  async listSales(options: SaleListOptions = {}): Promise<MarketplaceSale[]> {
+    const first = options.first ?? 24;
+    const skip = options.skip ?? 0;
+    const filters = [`status: "LISTED"`];
+    const variables: Record<string, unknown> = { first, skip };
+    if (options.minimumListedTimestamp) {
+      filters.push("listedAtTimestamp_gte: $minimumListedTimestamp");
+      variables.minimumListedTimestamp = decimalGraphValue(options.minimumListedTimestamp, "minimumListedTimestamp");
+    }
+    if (options.minimumListedBlock) {
+      filters.push("listedAtBlock_gte: $minimumListedBlock");
+      variables.minimumListedBlock = decimalGraphValue(options.minimumListedBlock, "minimumListedBlock");
+    }
+    const variableTypes = [
+      "$first: Int!",
+      "$skip: Int!",
+      options.minimumListedTimestamp ? "$minimumListedTimestamp: BigInt!" : "",
+      options.minimumListedBlock ? "$minimumListedBlock: BigInt!" : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
     const result = await this.query<{ sales: MarketplaceSale[] }>(
-      `query Sales($first: Int!, $skip: Int!) {
-        sales(first: $first, skip: $skip, orderBy: listedAtTimestamp, orderDirection: desc, where: { status: "LISTED" }) {
+      `query Sales(${variableTypes}) {
+        sales(first: $first, skip: $skip, orderBy: listedAtTimestamp, orderDirection: desc, where: { ${filters.join(", ")} }) {
           id channel saleId dataCommitment price version info title description fileName fileSize contentType
           tags normalizedTags purchaseCount settlementCount refundCount listedAtBlock listedAtTimestamp updatedAtBlock updatedAtTimestamp status
         }
       }`,
-      { first, skip },
+      variables,
     );
     return result.sales;
   }
@@ -178,4 +205,9 @@ export class TrustDropSubgraph {
       vddProofs: result.vddProofs.filter((proof) => channels.has(proof.channel.toLowerCase())),
     };
   }
+}
+
+function decimalGraphValue(value: string, label: string): string {
+  if (!/^\d+$/.test(value)) throw new Error(`${label} must be a decimal string`);
+  return value;
 }

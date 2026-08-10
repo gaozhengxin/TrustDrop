@@ -75,6 +75,20 @@ export function activeContentRule(): VisionDescriptor {
   return activeVision;
 }
 
+export function featuredAssetRefs(): VisionAssetRef[] {
+  if (!activeVision) throw new Error("Vision descriptor is not loaded");
+  return activeVision.recommendations?.featuredAssets ?? [];
+}
+
+export function marketplaceQueryBounds(): { minimumListedTimestamp?: string; minimumListedBlock?: string } {
+  if (!activeVision) throw new Error("Vision descriptor is not loaded");
+  const moderation = activeVision.moderation ?? {};
+  return {
+    minimumListedTimestamp: Number.isFinite(moderation.startTimestamp) ? String(moderation.startTimestamp) : undefined,
+    minimumListedBlock: moderation.minimumListedBlock,
+  };
+}
+
 export function filterSalesForContentEngine(sales: MarketplaceSale[]): MarketplaceSale[] {
   return sales.filter((sale) => hiddenReasonsForSale(sale).length === 0);
 }
@@ -97,17 +111,6 @@ export function hiddenReasonsForSale(sale: MarketplaceSale): HiddenReason[] {
     reasons.push("seller_blacklisted");
   }
   return reasons;
-}
-
-export function sortSalesForRecommendation(sales: MarketplaceSale[], fallbackScore: (sale: MarketplaceSale) => number): MarketplaceSale[] {
-  if (!activeVision) throw new Error("Vision descriptor is not loaded");
-  const rank = new Map((activeVision.recommendations?.featuredAssets ?? []).map((asset, index) => [assetKey(asset.channel, asset.saleId), index]));
-  return [...sales].sort((a, b) => {
-    const aRank = rank.get(saleKey(a));
-    const bRank = rank.get(saleKey(b));
-    if (aRank !== undefined || bRank !== undefined) return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
-    return fallbackScore(b) - fallbackScore(a);
-  });
 }
 
 async function fetchVision(cid: string): Promise<VisionDescriptor> {

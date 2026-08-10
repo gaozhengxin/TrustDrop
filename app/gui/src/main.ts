@@ -28,7 +28,7 @@ import {
   type MarketplaceSettlement,
   type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
-import { filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, sortSalesForRecommendation } from "./content-engine/engine";
+import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
 
 type Route = "home" | "browse" | "records" | "settings" | "detail";
 
@@ -36,9 +36,9 @@ type UiState = {
   route: Route;
   query: string;
   tag: string;
-  browsePage: number;
   selectedSaleId: string;
   allSales: MarketplaceSale[];
+  recommendedSales: MarketplaceSale[];
   sales: MarketplaceSale[];
   purchases: MarketplacePurchase[];
   settlements: MarketplaceSettlement[];
@@ -49,6 +49,9 @@ type UiState = {
   wallet: BrowserWallet | null;
   loading: boolean;
   loadingMoreSales: boolean;
+  loadingMoreRecommended: boolean;
+  recommendedHasMore: boolean;
+  recommendedLoadedCount: number;
   salesHasMore: boolean;
   salesLoadedCount: number;
   purchaseBusy: boolean;
@@ -64,15 +67,16 @@ type UiState = {
 
 const subgraph = new TrustDropSubgraph();
 const SUBGRAPH_SALES_PAGE_SIZE = 24;
-const BROWSE_PAGE_SIZE = 8;
+const RECOMMENDED_PAGE_SIZE = 2;
+const LATEST_HOME_SIZE = 8;
 
 const state: UiState = {
   route: "home",
   query: "",
   tag: "all",
-  browsePage: 1,
   selectedSaleId: "",
   allSales: [],
+  recommendedSales: [],
   sales: [],
   purchases: [],
   settlements: [],
@@ -83,6 +87,9 @@ const state: UiState = {
   wallet: null,
   loading: true,
   loadingMoreSales: false,
+  loadingMoreRecommended: false,
+  recommendedHasMore: true,
+  recommendedLoadedCount: 0,
   salesHasMore: true,
   salesLoadedCount: 0,
   purchaseBusy: false,
@@ -118,13 +125,17 @@ async function refreshMarketplace(): Promise<void> {
   state.loadingMoreSales = false;
   state.salesHasMore = true;
   state.salesLoadedCount = 0;
+  state.recommendedHasMore = true;
+  state.recommendedLoadedCount = 0;
   state.allSales = [];
+  state.recommendedSales = [];
   state.sales = [];
   render();
   try {
+    await loadMoreRecommendedSales(false);
     await loadMoreMarketplaceSales(false);
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
-      state.selectedSaleId = state.sales[0]?.id || "";
+      state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     }
     state.localThreads = await listLocalThreads();
     if (state.wallet) await refreshBuyerActivity();
@@ -141,14 +152,19 @@ async function loadMoreMarketplaceSales(renderOnFinish = true): Promise<void> {
   state.loadingMoreSales = true;
   if (renderOnFinish) render();
   try {
-    const next = await subgraph.listSales(SUBGRAPH_SALES_PAGE_SIZE, state.salesLoadedCount);
-    const known = new Set(state.allSales.map((sale) => sale.id.toLowerCase()));
-    state.allSales = [...state.allSales, ...next.filter((sale) => !known.has(sale.id.toLowerCase()))];
+    const next = await subgraph.listSales({
+      first: SUBGRAPH_SALES_PAGE_SIZE,
+      skip: state.salesLoadedCount,
+      ...marketplaceQueryBounds(),
+    });
+    upsertAllSales(next);
     state.salesLoadedCount += next.length;
     state.salesHasMore = next.length === SUBGRAPH_SALES_PAGE_SIZE;
-    state.sales = filterSalesForContentEngine(state.allSales);
+    state.sales = filterSalesForContentEngine([...state.sales, ...next])
+      .filter(uniqueSale)
+      .sort((a, b) => Number(b.listedAtTimestamp) - Number(a.listedAtTimestamp));
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
-      state.selectedSaleId = state.sales[0]?.id || "";
+      state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     }
     state.message = "";
   } catch (error) {
@@ -159,6 +175,52 @@ async function loadMoreMarketplaceSales(renderOnFinish = true): Promise<void> {
   }
 }
 
+async function loadMoreRecommendedSales(renderOnFinish = true): Promise<void> {
+  if (state.loadingMoreRecommended || !state.recommendedHasMore) return;
+  const refs = featuredAssetRefs();
+  if (state.recommendedLoadedCount >= refs.length) {
+    state.recommendedHasMore = false;
+    return;
+  }
+  state.loadingMoreRecommended = true;
+  if (renderOnFinish) render();
+  try {
+    const batch = refs.slice(state.recommendedLoadedCount, state.recommendedLoadedCount + RECOMMENDED_PAGE_SIZE);
+    const loaded = (
+      await Promise.all(
+        batch.map((asset) =>
+          subgraph.getSale(asset.channel, asset.saleId).catch((error) => {
+            console.warn(`failed to load recommended sale ${asset.channel}:${asset.saleId}`, error);
+            return null;
+          }),
+        ),
+      )
+    ).filter((sale): sale is MarketplaceSale => Boolean(sale));
+    const visible = filterSalesForContentEngine(loaded).filter((sale) => sale.status === "LISTED");
+    upsertAllSales(visible);
+    state.recommendedSales = [...state.recommendedSales, ...visible].filter(uniqueSale);
+    state.recommendedLoadedCount += batch.length;
+    state.recommendedHasMore = state.recommendedLoadedCount < refs.length;
+    if (!state.selectedSaleId) state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
+    state.message = "";
+  } catch (error) {
+    state.message = errorMessage(error);
+  } finally {
+    state.loadingMoreRecommended = false;
+    if (renderOnFinish) render();
+  }
+}
+
+function upsertAllSales(sales: MarketplaceSale[]): void {
+  const byId = new Map(state.allSales.map((sale) => [sale.id.toLowerCase(), sale]));
+  for (const sale of sales) byId.set(sale.id.toLowerCase(), sale);
+  state.allSales = Array.from(byId.values());
+}
+
+function uniqueSale(sale: MarketplaceSale, index: number, sales: MarketplaceSale[]): boolean {
+  return sales.findIndex((item) => item.id.toLowerCase() === sale.id.toLowerCase()) === index;
+}
+
 async function refreshBuyerActivity(): Promise<void> {
   if (!state.wallet) return;
   const activity = await subgraph.listBuyerActivity(state.wallet.account);
@@ -167,10 +229,6 @@ async function refreshBuyerActivity(): Promise<void> {
   state.refunds = activity.refunds;
   state.dataKeyShares = activity.dataKeyShares;
   state.vddProofs = activity.vddProofs;
-}
-
-function byScore(sale: MarketplaceSale): number {
-  return Number(sale.purchaseCount) * 4 + Number(sale.settlementCount) * 6 + Number(sale.listedAtTimestamp) / 1_000_000_000;
 }
 
 function filteredSales(): MarketplaceSale[] {
@@ -186,14 +244,6 @@ function filteredSales(): MarketplaceSale[] {
         .toLowerCase()
         .includes(query);
     });
-}
-
-function browsePage(items: MarketplaceSale[]): { items: MarketplaceSale[]; page: number; pageCount: number; total: number } {
-  const total = items.length;
-  const pageCount = Math.max(1, Math.ceil(total / BROWSE_PAGE_SIZE));
-  const page = Math.min(Math.max(state.browsePage, 1), pageCount);
-  const start = (page - 1) * BROWSE_PAGE_SIZE;
-  return { items: items.slice(start, start + BROWSE_PAGE_SIZE), page, pageCount, total };
 }
 
 function tagOptions(): string[] {
@@ -267,7 +317,7 @@ function walletMenu(): string {
 function renderHome(): string {
   if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
-  const recommended = sortSalesForRecommendation(state.sales, byScore).slice(0, 2);
+  const latest = state.sales.slice(0, LATEST_HOME_SIZE);
   return renderShell(`
     <section class="toolbar">
       <div>
@@ -280,13 +330,16 @@ function renderHome(): string {
     <section class="section">
       <div class="section-title">
         <h2>Recommended</h2>
-        <button class="text-button" data-route="browse" type="button">View all</button>
+        ${state.recommendedHasMore ? `<button class="text-button" id="load-more-recommended-button" type="button" ${state.loadingMoreRecommended ? "disabled" : ""}>${state.loadingMoreRecommended ? "Loading" : "More"}</button>` : ""}
       </div>
-      <div class="asset-grid">${state.loading ? loadingRows() : recommended.map(assetCard).join("") || empty("No active listings.")}</div>
+      <div class="asset-grid">${state.loading ? loadingRows() : state.recommendedSales.map(assetCard).join("") || empty("No recommended listings.")}</div>
     </section>
     <section class="section">
-      <div class="section-title"><h2>Latest listings</h2></div>
-      <div class="asset-table">${state.loading ? loadingRows() : assetRows([...state.sales].sort((a, b) => Number(b.listedAtTimestamp) - Number(a.listedAtTimestamp)))}</div>
+      <div class="section-title">
+        <h2>Latest listings</h2>
+        <button class="text-button" data-route="browse" type="button">Browse all</button>
+      </div>
+      <div class="asset-table">${state.loading ? loadingRows() : assetRows(latest)}</div>
     </section>
   `);
 }
@@ -295,7 +348,6 @@ function renderBrowse(): string {
   if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
   const current = filteredSales();
-  const page = browsePage(current);
   return renderShell(`
     <section class="toolbar compact">
       <div>
@@ -313,8 +365,7 @@ function renderBrowse(): string {
           .join("")}
       </aside>
       <div>
-        <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(page.items)}</div>
-        ${pagination(page.page, page.pageCount, page.total)}
+        <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(current)}</div>
         ${loadMoreSalesControl()}
       </div>
     </section>
@@ -454,22 +505,6 @@ function assetRows(items: MarketplaceSale[]): string {
     .join("");
 }
 
-function pagination(page: number, pageCount: number, total: number): string {
-  if (total <= BROWSE_PAGE_SIZE) return "";
-  const start = (page - 1) * BROWSE_PAGE_SIZE + 1;
-  const end = Math.min(page * BROWSE_PAGE_SIZE, total);
-  return `
-    <div class="pagination">
-      <span>Showing ${start}-${end} of ${total}</span>
-      <div>
-        <button class="text-button" data-page="${page - 1}" type="button" ${page <= 1 ? "disabled" : ""}>Previous</button>
-        <span>Page ${page} / ${pageCount}</span>
-        <button class="text-button" data-page="${page + 1}" type="button" ${page >= pageCount ? "disabled" : ""}>Next</button>
-      </div>
-    </div>
-  `;
-}
-
 function loadMoreSalesControl(): string {
   if (state.loading) return "";
   if (!state.salesHasMore) return `<p class="load-more-note">All currently indexed listings have been loaded.</p>`;
@@ -478,7 +513,7 @@ function loadMoreSalesControl(): string {
       <button class="text-button" id="load-more-sales-button" type="button" ${state.loadingMoreSales ? "disabled" : ""}>
         ${state.loadingMoreSales ? "Loading..." : "More listings"}
       </button>
-      <span>Loads another ${SUBGRAPH_SALES_PAGE_SIZE} listings from the subgraph, then applies content rules.</span>
+      <span>Loads another ${SUBGRAPH_SALES_PAGE_SIZE} listings after the vision cutoff.</span>
     </div>
   `;
 }
@@ -577,7 +612,6 @@ function bindEvents(root: HTMLElement): void {
   root.querySelectorAll<HTMLButtonElement>("[data-tag]").forEach((button) => {
     button.addEventListener("click", () => {
       state.tag = button.dataset.tag ?? "all";
-      state.browsePage = 1;
       render();
     });
   });
@@ -585,7 +619,6 @@ function bindEvents(root: HTMLElement): void {
   root.querySelector<HTMLInputElement>("#search-input")?.addEventListener("input", (event) => {
     const input = event.target as HTMLInputElement;
     state.query = input.value;
-    state.browsePage = 1;
     if (state.route === "home") state.route = "browse";
     render();
     const nextInput = document.querySelector<HTMLInputElement>("#search-input");
@@ -596,18 +629,11 @@ function bindEvents(root: HTMLElement): void {
     }
   });
 
-  root.querySelectorAll<HTMLButtonElement>("[data-page]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const page = Number(button.dataset.page);
-      if (!Number.isFinite(page)) return;
-      state.browsePage = page;
-      state.message = "";
-      render();
-    });
-  });
-
   root.querySelector<HTMLButtonElement>("#load-more-sales-button")?.addEventListener("click", () => {
     void loadMoreMarketplaceSales();
+  });
+  root.querySelector<HTMLButtonElement>("#load-more-recommended-button")?.addEventListener("click", () => {
+    void loadMoreRecommendedSales();
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
