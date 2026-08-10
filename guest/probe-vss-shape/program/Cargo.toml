@@ -1,8 +1,0 @@
-[package]
-version = "0.1.0"
-name = "probe-vss-shape-program"
-edition = "2021"
-
-[dependencies]
-blake3 = "1.8.2"
-sp1-zkvm = { version = "6.2.4", features = ["blake3"] }

@@ -1,8 +1,0 @@
-[package]
-version = "0.1.0"
-name = "probe-blake3-sha-pv-program"
-edition = "2021"
-
-[dependencies]
-blake3 = "1.8.2"
-sp1-zkvm = "6.2.4"
