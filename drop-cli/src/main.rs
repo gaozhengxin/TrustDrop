@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use drop_lib::rslh_ve::{derive_rslh_nonce, SYMBOL_SIZE};
 use drop_sdk::{
     abi::{exchange_channel_contract as channel_abi, exchange_hub_contract as hub_abi},
@@ -98,7 +98,6 @@ Usage:
   drop-cli channel list|show <channel>|create
   drop-cli sale list [--channel <channel>] | show <sale-id>
   drop-cli sale list <sale-id> --yes
-  drop-cli sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes
   drop-cli sale submit-key-commitment <sale-id>
   drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]
   drop-cli purchase show <purchase-tx>
@@ -723,47 +722,6 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
     Ok(())
 }
 
-async fn sale_update_metadata(sale_id: &str, args: &[String]) -> Result<()> {
-    let config = load_config()?;
-    let channel_address = parse_address(
-        flag_value(args, "--channel").ok_or_else(|| anyhow!("--channel is required"))?,
-    )?;
-    let data = parse_hex32_state(
-        flag_value(args, "--data").ok_or_else(|| anyhow!("--data is required"))?,
-    )?;
-    let price = flag_value(args, "--price")
-        .ok_or_else(|| anyhow!("--price is required"))?
-        .parse::<U256>()?;
-    let info = flag_value(args, "--info")
-        .ok_or_else(|| anyhow!("--info is required"))?
-        .to_string();
-    serde_json::from_str::<serde_json::Value>(&info).context("--info must be valid JSON")?;
-
-    let client = signer_client(&config).await?;
-    let channel = channel_abi::ExchangeChannelContract::new(channel_address, client);
-    let commitment = channel_abi::DataCommitment {
-        data: data.to_vec().into(),
-    };
-
-    println!("sending updateFile transaction...");
-    let call = channel.update_file(parse_hex32_state(sale_id)?, commitment, price, info);
-    let pending = call.send().await?;
-    let tx_hash = pending.tx_hash();
-    println!("txHash: {tx_hash:?}");
-    let receipt = pending
-        .await?
-        .ok_or_else(|| anyhow!("update file receipt missing"))?;
-    if receipt.status != Some(U64::from(1u64)) {
-        bail!(
-            "update file transaction reverted: {:?}",
-            receipt.transaction_hash
-        );
-    }
-    println!("saleId: {sale_id}");
-    println!("block: {}", receipt.block_number.unwrap_or_default());
-    Ok(())
-}
-
 async fn cmd_channel(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("list") => {
@@ -862,19 +820,7 @@ async fn cmd_sale(args: &[String]) -> Result<()> {
             sale_submit_key_commitment(sale_id).await?;
             Ok(())
         }
-        Some("update-metadata") => {
-            let sale_id = require_arg(&args[1..], "sale-id")?;
-            if !has_flag(args, "--yes") {
-                println!(
-                    "sale update-metadata requires --yes to send an Arbitrum Sepolia transaction."
-                );
-                println!("usage: drop-cli sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes");
-                return Ok(());
-            }
-            sale_update_metadata(sale_id, args).await?;
-            Ok(())
-        }
-        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes | sale submit-key-commitment <sale-id> --yes"),
+        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale submit-key-commitment <sale-id> --yes"),
     }
 }
 
