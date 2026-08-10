@@ -36,8 +36,8 @@
     ]
   },
   "moderation": {
-    "startTimestamp": 1784104230,
-    "minimumListedBlock": "287678139",
+    "startTimestamp": 1786291200,
+    "minimumListedBlock": "296399608",
     "blacklistedAssets": [
       {
         "channel": "0xbd075d109ebe4a36909b2056baaa00c86efb9966",
