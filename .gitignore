@@ -3,7 +3,8 @@
 # ============================================================
 target/
 Cargo.lock
-!guest/*/Cargo.lock
+!guest/vss/Cargo.lock
+!guest/vdd/Cargo.lock
 **/target/
 **/*.rs.bk
 
