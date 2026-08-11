@@ -51,6 +51,15 @@ WALRUS_LOCAL_ENDPOINT=http://walrus-publisher:31415
 DROP_CLI_ENV=drop-script/.env
 ```
 
+The Walrus publisher itself is a separate sidecar container with the Walrus binary baked into the image. Host-specific config is mounted read-only:
+
+```text
+TRUSTDROP_WALRUS_CONFIG_DIR=~/walrus
+~/walrus/client_config.yaml -> /home/justin/walrus/client_config.yaml
+```
+
+If your Walrus config folder lives somewhere else, set `TRUSTDROP_WALRUS_CONFIG_DIR` in `docker/seller/seller.env` before running `./docker/seller/run-seller-daemon.sh`.
+
 
 ## Persistent state
 

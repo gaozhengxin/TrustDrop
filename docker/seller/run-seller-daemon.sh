@@ -37,18 +37,31 @@ expand_path() {
 load_env_file "${SCRIPT_DIR}/seller.env"
 
 export TRUSTDROP_SUI_DIR="$(expand_path "${TRUSTDROP_SUI_DIR:-$HOME/.sui}")"
-export TRUSTDROP_WALRUS_DIR="$(expand_path "${TRUSTDROP_WALRUS_DIR:-$HOME/walrus}")"
+if [ -n "${TRUSTDROP_WALRUS_CONFIG_DIR:-}" ]; then
+  export TRUSTDROP_WALRUS_CONFIG_DIR="$(expand_path "$TRUSTDROP_WALRUS_CONFIG_DIR")"
+elif [ -n "${TRUSTDROP_WALRUS_DIR:-}" ]; then
+  # Backward-compatible alias used by older local seller.env files.
+  export TRUSTDROP_WALRUS_CONFIG_DIR="$(expand_path "$TRUSTDROP_WALRUS_DIR")"
+else
+  export TRUSTDROP_WALRUS_CONFIG_DIR="$(expand_path "$HOME/walrus")"
+fi
 export TRUSTDROP_CARGO_HOME="$(expand_path "${TRUSTDROP_CARGO_HOME:-$HOME/.cargo-trustdrop-justin}")"
 export TRUSTDROP_STATE_DIR="$(expand_path "${TRUSTDROP_STATE_DIR:-$HOME/.trustdrop}")"
 export TRUSTDROP_HOST_INPUT_DIR="$(expand_path "${TRUSTDROP_HOST_INPUT_DIR:-$HOME/TrustDrop/TrustDrop/app/gui/demo-assets}")"
 mkdir -p "$TRUSTDROP_STATE_DIR"
 
-for path in "$TRUSTDROP_SUI_DIR/sui_config/client.yaml" "$TRUSTDROP_WALRUS_DIR/client_config.yaml" "$TRUSTDROP_CARGO_HOME" "$TRUSTDROP_STATE_DIR" "$TRUSTDROP_HOST_INPUT_DIR"; do
+for path in "$TRUSTDROP_SUI_DIR/sui_config/client.yaml" "$TRUSTDROP_WALRUS_CONFIG_DIR/client_config.yaml" "$TRUSTDROP_CARGO_HOME" "$TRUSTDROP_STATE_DIR" "$TRUSTDROP_HOST_INPUT_DIR"; do
   if [ ! -e "$path" ]; then
     echo "missing required path: $path" >&2
     exit 2
   fi
 done
+
+echo "Walrus publisher binary: packaged in trustdrop/walrus-publisher image"
+echo "Walrus config mount: ${TRUSTDROP_WALRUS_CONFIG_DIR} -> /home/justin/walrus:ro"
+echo "Sui wallet mount: ${TRUSTDROP_SUI_DIR} -> /home/justin/.sui"
+echo "Seller state mount: ${TRUSTDROP_STATE_DIR} -> /root/.trustdrop"
+echo "Host input mount: ${TRUSTDROP_HOST_INPUT_DIR} -> /host-input:ro"
 
 "${SCRIPT_DIR}/check-elf-hashes.sh"
 

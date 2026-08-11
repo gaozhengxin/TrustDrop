@@ -11,6 +11,22 @@ The compose stack has two containers:
 
 This split is intentional. The Ubuntu `linux/amd64` Walrus binary can crash with `Illegal instruction` under Docker/Rosetta on Apple Silicon, while `drop-cli` currently uses the amd64 SP1/container build path.
 
+## Walrus publisher container
+
+The Walrus publisher node is packaged into its own Docker image:
+
+```text
+trustdrop/walrus-publisher:ubuntu-arm64
+```
+
+`docker/seller/Dockerfile.walrus` copies the host-provided `docker/seller/bin/linux-arm64/walrus` binary into the image as:
+
+```text
+/usr/local/bin/walrus
+```
+
+The image does not contain wallets, private keys, or environment-specific Walrus config. Those files stay on the host and are mounted at runtime.
+
 ## Host wallet/config mounts
 
 The Sui wallet/config directory is supplied by the host and mounted into the Walrus container as `/home/justin/.sui`.
@@ -34,7 +50,7 @@ On the Mac mini, these files were migrated from the Ubuntu reference environment
 Walrus client config is mounted read-only from:
 
 ```text
-TRUSTDROP_WALRUS_DIR=~/walrus
+TRUSTDROP_WALRUS_CONFIG_DIR=~/walrus
 ```
 
 The expected config file is:
@@ -42,6 +58,8 @@ The expected config file is:
 ```text
 ~/walrus/client_config.yaml
 ```
+
+For older local `seller.env` files, `TRUSTDROP_WALRUS_DIR` is still accepted as a backward-compatible alias. New setups should use `TRUSTDROP_WALRUS_CONFIG_DIR`.
 
 ## Local binary artifacts
 
@@ -96,7 +114,7 @@ cp seller.env.example seller.env  # optional; edit paths if not using defaults
 ./run-seller-daemon.sh
 ```
 
-The helper uses Docker Desktop's CLI path automatically when `docker` is not on the non-interactive shell PATH.
+The helper expands `~` paths, checks the required host folders, prints the resolved mounts, validates the committed guest ELF hashes, and uses Docker Desktop's CLI path automatically when `docker` is not on the non-interactive shell PATH.
 
 
 ## Host-side `drop-cli` operations

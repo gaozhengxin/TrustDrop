@@ -1,5 +1,8 @@
 services:
   walrus-publisher:
+    # Walrus publisher is packaged as its own container image. The walrus
+    # executable is copied into the image by docker/seller/Dockerfile.walrus;
+    # only host-local wallet/config directories are mounted at runtime.
     image: trustdrop/walrus-publisher:ubuntu-arm64
     build:
       context: ../..
@@ -19,7 +22,8 @@ services:
       NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost,walrus-publisher}
     volumes:
       - ${TRUSTDROP_SUI_DIR:-/Users/niuniu/.sui}:/home/justin/.sui
-      - ${TRUSTDROP_WALRUS_DIR:-/Users/niuniu/walrus}:/home/justin/walrus:ro
+      # Host Walrus config directory. It must contain client_config.yaml.
+      - ${TRUSTDROP_WALRUS_CONFIG_DIR:-/Users/niuniu/walrus}:/home/justin/walrus:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:31415/v1/api"]
       interval: 10s
