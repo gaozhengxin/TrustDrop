@@ -68,6 +68,24 @@ TRUSTDROP_STATE_DIR=~/.trustdrop
 
 Compose mounts it as `/root/.trustdrop` in every seller CLI container. This is required because host-file commands such as `phase prepare ~/Desktop/file.dat` run in one-off containers, while later commands and the long-running daemon must see the same sale state.
 
+## Host input assets
+
+Prepared sale state stores the asset input path that was used inside the container, for example `/host-input/mars-rotation.jpg`. The long-running daemon must be able to read the same `/host-input/...` path later when it responds to buyer purchases.
+
+By default the Mac mini stack mounts the demo assets directory:
+
+```text
+TRUSTDROP_HOST_INPUT_DIR=~/TrustDrop/TrustDrop/app/gui/demo-assets
+```
+
+Compose mounts it read-only as:
+
+```text
+~/TrustDrop/TrustDrop/app/gui/demo-assets -> /host-input
+```
+
+If you list assets from another host directory, set `TRUSTDROP_HOST_INPUT_DIR` in `docker/seller/seller.env` to that absolute or `~`-relative directory before starting the daemon. The daemon can only auto-fulfill purchases for sales whose stored `/host-input/<name>` file exists inside this mount.
+
 ## Run
 
 From the Mac mini:

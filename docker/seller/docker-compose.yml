@@ -51,4 +51,5 @@ services:
       - ../../:/home/justin/TrustDrop/TrustDrop
       - ${TRUSTDROP_CARGO_HOME:-/Users/niuniu/.cargo-trustdrop-justin}:/home/justin/.cargo
       - ${TRUSTDROP_STATE_DIR:-/Users/niuniu/.trustdrop}:/root/.trustdrop
+      - ${TRUSTDROP_HOST_INPUT_DIR:-/Users/niuniu/TrustDrop/TrustDrop/app/gui/demo-assets}:/host-input:ro
     command: ["bash", "-lc", "rm -f /root/.trustdrop/state/daemon.lock && docker/seller/run-drop-cli-in-container.sh daemon run"]

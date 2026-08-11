@@ -40,9 +40,10 @@ export TRUSTDROP_SUI_DIR="$(expand_path "${TRUSTDROP_SUI_DIR:-$HOME/.sui}")"
 export TRUSTDROP_WALRUS_DIR="$(expand_path "${TRUSTDROP_WALRUS_DIR:-$HOME/walrus}")"
 export TRUSTDROP_CARGO_HOME="$(expand_path "${TRUSTDROP_CARGO_HOME:-$HOME/.cargo-trustdrop-justin}")"
 export TRUSTDROP_STATE_DIR="$(expand_path "${TRUSTDROP_STATE_DIR:-$HOME/.trustdrop}")"
+export TRUSTDROP_HOST_INPUT_DIR="$(expand_path "${TRUSTDROP_HOST_INPUT_DIR:-$HOME/TrustDrop/TrustDrop/app/gui/demo-assets}")"
 mkdir -p "$TRUSTDROP_STATE_DIR"
 
-for path in "$TRUSTDROP_SUI_DIR/sui_config/client.yaml" "$TRUSTDROP_WALRUS_DIR/client_config.yaml" "$TRUSTDROP_CARGO_HOME" "$TRUSTDROP_STATE_DIR"; do
+for path in "$TRUSTDROP_SUI_DIR/sui_config/client.yaml" "$TRUSTDROP_WALRUS_DIR/client_config.yaml" "$TRUSTDROP_CARGO_HOME" "$TRUSTDROP_STATE_DIR" "$TRUSTDROP_HOST_INPUT_DIR"; do
   if [ ! -e "$path" ]; then
     echo "missing required path: $path" >&2
     exit 2

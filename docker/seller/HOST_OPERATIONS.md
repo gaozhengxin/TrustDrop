@@ -68,6 +68,24 @@ Compose mounts it as:
 
 This is important for host-file commands. `phase prepare ~/Desktop/file.dat` runs in a one-off container, but the resulting sale state is persisted on the host and can be used by the long-running daemon or later commands such as `phase publish`, `status`, and `next`.
 
+## Daemon access to listed files
+
+`phase prepare <host-file>` stores the container path for the source file, normally `/host-input/<filename>`. The seller daemon must be started with a matching host directory mounted at `/host-input`; otherwise it can discover a buyer purchase but fail during fulfillment with `No such file or directory`.
+
+For the Mac mini demo assets, the default is:
+
+```text
+TRUSTDROP_HOST_INPUT_DIR=~/TrustDrop/TrustDrop/app/gui/demo-assets
+```
+
+If you list files from another host folder, set this in `docker/seller/seller.env` before starting the daemon:
+
+```text
+TRUSTDROP_HOST_INPUT_DIR=/absolute/path/to/the/listed/files
+```
+
+Only sales whose stored `/host-input/<filename>` exists in that mounted directory can be fulfilled automatically. If assets live in several host folders, either list the current demo batch from one directory or restart the daemon with `TRUSTDROP_HOST_INPUT_DIR` pointing at the directory needed for the batch under test.
+
 ## Command mapping
 
 All commands below are run from the host as:
