@@ -731,9 +731,8 @@ async fn sale_update_metadata(sale_id: &str, args: &[String]) -> Result<()> {
     let data = parse_hex32_state(
         flag_value(args, "--data").ok_or_else(|| anyhow!("--data is required"))?,
     )?;
-    let price = flag_value(args, "--price")
-        .ok_or_else(|| anyhow!("--price is required"))?
-        .parse::<U256>()?;
+    let price =
+        parse_u256_arg(flag_value(args, "--price").ok_or_else(|| anyhow!("--price is required"))?)?;
     let info = flag_value(args, "--info")
         .ok_or_else(|| anyhow!("--info is required"))?
         .to_string();
@@ -3418,6 +3417,14 @@ fn owner_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
 
 fn parse_address(value: &str) -> Result<Address> {
     value.parse::<Address>().map_err(|error| anyhow!("{error}"))
+}
+
+fn parse_u256_arg(value: &str) -> Result<U256> {
+    if let Some(hex) = value.strip_prefix("0x") {
+        U256::from_str_radix(hex, 16).map_err(|error| anyhow!("{error}"))
+    } else {
+        U256::from_dec_str(value).map_err(|error| anyhow!("{error}"))
+    }
 }
 
 fn parse_hex32_state(value: &str) -> Result<[u8; 32]> {
