@@ -41,6 +41,7 @@ export type VisionDescriptor = {
 export type HiddenReason = "before_start_timestamp" | "before_minimum_block" | "asset_blacklisted" | "seller_blacklisted";
 
 const visionRegistryAbi = parseAbi(["function visionCid() view returns (string)"]);
+const DEFAULT_VISION_REGISTRY_ADDRESS = "0x79A070bF4b64f815249F4ac0ea05bdB983b92261";
 const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/";
 const PUBLIC_IPFS_GATEWAYS = ["https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://nftstorage.link/ipfs/"];
 const VISION_FETCH_TIMEOUT_MS = 8_000;
@@ -160,8 +161,7 @@ function validateVision(value: VisionDescriptor): VisionDescriptor {
 }
 
 function visionRegistryAddress(): Hex | null {
-  const raw = (import.meta as ImportMetaWithEnv).env?.VITE_TRUSTDROP_VISION_REGISTRY_ADDRESS;
-  if (!raw) return null;
+  const raw = (import.meta as ImportMetaWithEnv).env?.VITE_TRUSTDROP_VISION_REGISTRY_ADDRESS ?? DEFAULT_VISION_REGISTRY_ADDRESS;
   return isAddress(raw) ? raw : null;
 }
 
