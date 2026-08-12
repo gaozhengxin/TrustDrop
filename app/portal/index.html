@@ -13,7 +13,7 @@
         <span>TrustDrop</span>
       </a>
       <nav class="nav">
-        <a href="https://fair-file-marketplace.pages.dev">App</a>
+        <a href="https://fair-file-marketplace.pages.dev">Demo app</a>
         <a href="/docs/">Docs</a>
         <a href="https://github.com/gaozhengxin/TrustDrop">GitHub</a>
         <a href="./contact.html">Contact</a>
@@ -22,31 +22,42 @@
     <main class="layout">
       <section class="hero">
         <div>
-          <h1>Fair file exchange without blind trust.</h1>
+          <p class="eyebrow">Provable delivery protocol</p>
+          <h1>TrustDrop proves delivery before settlement.</h1>
           <p>
-            TrustDrop coordinates payment, proof, data availability, and key release so a buyer only pays when the protocol can verify the seller has fulfilled the exchange path.
+            TrustDrop binds encrypted delivery, data availability, key release, and settlement into a verifiable protocol flow. Buyers do not need to rely on seller promises, and sellers do not need to expose the asset before payment is locked.
           </p>
           <div class="actions">
-            <a class="button primary" href="https://fair-file-marketplace.pages.dev">Open Fair File Marketplace</a>
-            <a class="button" href="/docs/">Read the docs</a>
+            <a class="button primary" href="/docs/">Read the protocol</a>
+            <a class="button" href="https://fair-file-marketplace.pages.dev">Open demo app</a>
             <a class="button" href="https://github.com/gaozhengxin/TrustDrop">GitHub</a>
           </div>
         </div>
-        <div class="visual" aria-label="Public domain space image"></div>
+        <div class="proof-card" aria-label="TrustDrop protocol flow">
+          <div class="flow-row"><span>1</span><p>Commit encrypted asset and lock payment intent.</p></div>
+          <div class="flow-row"><span>2</span><p>Verify data availability and proof-bound delivery.</p></div>
+          <div class="flow-row"><span>3</span><p>Release recoverable key material to the buyer.</p></div>
+          <div class="flow-row"><span>4</span><p>Settle only after the fulfillment path is provable.</p></div>
+        </div>
+      </section>
+      <section class="section intro">
+        <p>
+          File exchange is one application built on top of TrustDrop. The protocol layer is more general: it is about making delivery itself provable, so an application can reason about whether a seller has fulfilled before funds are released.
+        </p>
       </section>
       <section class="section">
         <div class="grid">
           <article class="item">
-            <h2>Atomic purchase path</h2>
-            <p>Funds are locked on-chain while fulfillment, proof verification, and settlement progress through a single exchange thread.</p>
+            <h2>Provable delivery</h2>
+            <p>Seller fulfillment is tied to commitments, proof verification, data availability, and buyer-recoverable key material.</p>
           </article>
           <article class="item">
-            <h2>Proof-backed delivery</h2>
-            <p>Seller actions are connected to zk verification and data availability checks before settlement can complete.</p>
+            <h2>Settlement gating</h2>
+            <p>Payment release depends on protocol-visible fulfillment evidence, not on a buyer trusting an off-chain promise.</p>
           </article>
           <article class="item">
-            <h2>Buyer protection</h2>
-            <p>If the exchange is not completed before the protocol deadline, the buyer keeps a refund path instead of relying on seller goodwill.</p>
+            <h2>Application layer</h2>
+            <p>Marketplaces, private data sales, and encrypted file delivery are frontends over the same proof-backed delivery core.</p>
           </article>
         </div>
       </section>
