@@ -31,6 +31,11 @@ import {
 import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
 
 type Route = "home" | "browse" | "records" | "settings" | "detail";
+type ImportMetaWithEnv = ImportMeta & {
+  env?: {
+    DEV?: boolean;
+  };
+};
 
 type UiState = {
   route: Route;
@@ -69,6 +74,7 @@ const subgraph = new TrustDropSubgraph();
 const SUBGRAPH_SALES_PAGE_SIZE = 24;
 const RECOMMENDED_PAGE_SIZE = 2;
 const LATEST_HOME_SIZE = 8;
+const ALLOW_MANUAL_SECRET = Boolean((import.meta as ImportMetaWithEnv).env?.DEV);
 
 const state: UiState = {
   route: "home",
@@ -448,7 +454,7 @@ function renderDetail(sale: MarketplaceSale): string {
               <span>Key</span>
               <select id="key-mode-select">
                 <option value="wallet_derived" ${state.keyMode === "wallet_derived" ? "selected" : ""}>Wallet derived</option>
-                <option value="manual_secret" ${state.keyMode === "manual_secret" ? "selected" : ""}>Manual secret</option>
+                ${ALLOW_MANUAL_SECRET ? `<option value="manual_secret" ${state.keyMode === "manual_secret" ? "selected" : ""}>Manual secret (dev)</option>` : ""}
               </select>
             </label>
             <button class="primary" id="purchase-button" type="button" ${state.purchaseBusy ? "disabled" : ""}>
@@ -777,6 +783,9 @@ async function handlePurchase(): Promise<void> {
     await connect();
     return;
   }
+  if (state.keyMode === "manual_secret" && !ALLOW_MANUAL_SECRET) {
+    state.keyMode = "wallet_derived";
+  }
   state.purchaseBusy = true;
   state.message = "";
   render();
@@ -812,6 +821,11 @@ async function handleDownload(txHash: `0x${string}`): Promise<void> {
   const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
   if (!purchase || !state.wallet) return;
   const thread = state.localThreads.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
+  if (thread?.keyMode === "manual_secret" && !ALLOW_MANUAL_SECRET) {
+    state.message = "Manual secret recovery is available only in development mode.";
+    render();
+    return;
+  }
   const manualSecret = thread?.keyMode === "manual_secret" ? promptManualSecret("Recovery secret hex") : undefined;
   state.downloadBusy = txHash;
   state.message = "";

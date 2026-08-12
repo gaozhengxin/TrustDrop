@@ -1,6 +1,7 @@
 pub mod abi;
 pub mod chacha8;
 pub mod config;
+pub mod key_manager;
 pub mod oracle;
 pub mod proof;
 pub mod state;

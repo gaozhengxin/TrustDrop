@@ -22,6 +22,7 @@ mod config_check;
 
 // 重构后的内部模块引用
 use drop_sdk::chacha8::{chacha8_decrypt, chacha8_encrypt};
+use drop_sdk::key_manager::{asset_key_commitment, derive_asset_encryption_key_from_seller_key};
 // use drop_sdk::proof::{run_vdd_proof};
 use drop_lib::rslh_ve::{
     create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT, SYMBOL_SIZE,
@@ -183,7 +184,7 @@ pub fn seller_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
 }
 
 fn data_key_commitment(asset_key: &[u8; 32]) -> [u8; 32] {
-    *blake3::hash(asset_key).as_bytes()
+    asset_key_commitment(asset_key)
 }
 
 fn compute_vss_binding_hash(
@@ -1290,10 +1291,7 @@ pub async fn generate_vdd_proof(
     );
     println!("  - c_key_bytes: 0x{}", hex::encode(c_key_bytes));
     println!("  - aux_data: 0x{}", hex::encode(aux_data));
-    println!(
-        "  - asset_encryption_key: 0x{}",
-        hex::encode(ctx.asset_encryption_key)
-    );
+    println!("  - asset_encryption_key: <redacted>");
 
     // 2. === 构建 SP1 Stdin ===
     let mut stdin = SP1Stdin::new();
@@ -1397,14 +1395,11 @@ pub async fn generate_vss_proof_batch(
     );
     ensure!(v_keys.len() <= u8::MAX as usize, "VSS batch too large");
     println!(">>> [VSS PROOF] zkVM Inputs:");
-    println!("  - d_k (asset_encryption_key): 0x{}", hex::encode(d_k));
+    println!("  - d_k (asset_encryption_key): <redacted>");
     println!("  - key_count: {}", v_keys.len());
     for (index, v_k) in v_keys.iter().enumerate() {
-        println!(
-            "  - v_k[{}] (secret_sharing_key): 0x{}",
-            index,
-            hex::encode(v_k)
-        );
+        let _ = v_k;
+        println!("  - v_k[{}] (secret_sharing_key): <redacted>", index);
     }
     println!("  - nonce[*]: 0x{}", hex::encode(vec![0u8; 12]));
 
@@ -1698,6 +1693,7 @@ async fn main() -> Result<()> {
     let seller_wallet = env::var("SELLER_KEY")?
         .parse::<LocalWallet>()?
         .with_chain_id(ARBITRUM_SEPOLIA_CHAIN_ID);
+    let seller_key = required_env("SELLER_KEY")?;
     let buyer_wallet = env::var("BUYER_KEY")?
         .parse::<LocalWallet>()?
         .with_chain_id(ARBITRUM_SEPOLIA_CHAIN_ID);
@@ -1705,7 +1701,10 @@ async fn main() -> Result<()> {
     let seller_ctx = SellerContext {
         signer: Arc::new(SignerMiddleware::new(provider.clone(), seller_wallet)),
         owner_sk_bytes: parse_hex32_env("OWNER_SECRET_KEY")?,
-        asset_encryption_key: parse_hex32_env("ASSET_ENCRYPTION_KEY")?,
+        asset_encryption_key: derive_asset_encryption_key_from_seller_key(
+            &seller_key,
+            ARBITRUM_SEPOLIA_CHAIN_ID,
+        )?,
         sp1_private_key: required_env("SP1_PRIVATE_KEY")?,
         vss_verifier_address: configured_vss_verifier_address()?,
         vdd_verifier_address: configured_vdd_verifier_address()?,

@@ -4,6 +4,7 @@ use drop_sdk::{
     abi::{exchange_channel_contract as channel_abi, exchange_hub_contract as hub_abi},
     chacha8::chacha8_encrypt,
     config::DropCliConfig,
+    key_manager::asset_key_commitment,
     oracle::OracleWorkerClient,
     state::{
         append_daemon_event, daemon_event_count, database_path, default_state_dir,
@@ -197,7 +198,7 @@ fn cmd_keys(args: &[String]) -> Result<()> {
             println!("ownerPublicKey: 0x{}", hex::encode(owner_pubkey));
 
             let asset_encryption_key = config.require_asset_encryption_key()?;
-            let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
+            let commitment = asset_key_commitment(&asset_encryption_key);
             println!("assetKeyCommitment: 0x{}", hex::encode(commitment));
 
             println!("status: ready");
@@ -671,7 +672,7 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
         anyhow!("state missing channel_address; run drop-cli phase publish <local-sale-id> --yes")
     })?)?;
     let asset_encryption_key = config.require_asset_encryption_key()?;
-    let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
+    let commitment = asset_key_commitment(&asset_encryption_key);
     let client = signer_client(&config).await?;
     let channel = channel_abi::ExchangeChannelContract::new(channel_address, client);
     let current = channel.data_key_commitment().call().await?;

@@ -1,3 +1,4 @@
+use crate::key_manager::derive_asset_encryption_key_from_seller_key;
 use anyhow::{Result, anyhow};
 use std::{collections::BTreeMap, env, fs, path::Path};
 
@@ -17,7 +18,6 @@ pub struct DropCliConfig {
     pub walrus_publisher_url: Option<String>,
     pub walrus_aggregator_url: Option<String>,
     pub state_dir: Option<String>,
-    pub asset_encryption_key: Option<[u8; 32]>,
     pub owner_secret_key: Option<[u8; 32]>,
     pub base_env_path: Option<String>,
 }
@@ -48,9 +48,6 @@ impl DropCliConfig {
                 &["WALRUS_AGGREGATOR_URL", "WALRUS_LOCAL_ENDPOINT"],
             ),
             state_dir: first_value(&vars, &["DROP_CLI_STATE_DIR"]),
-            asset_encryption_key: parse_hex32(
-                first_value(&vars, &["ASSET_ENCRYPTION_KEY"]).as_deref(),
-            ),
             owner_secret_key: parse_hex32(first_value(&vars, &["OWNER_SECRET_KEY"]).as_deref()),
             base_env_path: first_value(&vars, &["DROP_CLI_BASE_ENV"]),
         })
@@ -70,12 +67,12 @@ impl DropCliConfig {
     }
 
     pub fn require_asset_encryption_key(&self) -> Result<[u8; 32]> {
-        if let Some(key) = self.asset_encryption_key {
-            return Ok(key);
-        }
-        Err(anyhow!(
-            "ASSET_ENCRYPTION_KEY is missing; set an explicit 32-byte hex key"
-        ))
+        let seller_key = self
+            .seller_private_key
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("SELLER_KEY is missing; cannot derive asset encryption key"))?;
+        derive_asset_encryption_key_from_seller_key(seller_key, self.chain_id)
     }
 
     pub fn require_owner_secret_key(&self) -> Result<[u8; 32]> {
@@ -104,7 +101,6 @@ fn parse_env_with_base(path: impl AsRef<Path>) -> Result<BTreeMap<String, String
     }
     for key in [
         "DROP_CLI_STATE_DIR",
-        "ASSET_ENCRYPTION_KEY",
         "OWNER_SECRET_KEY",
         "SP1_PRIVATE_KEY",
         "NETWORK_PRIVATE_KEY",
