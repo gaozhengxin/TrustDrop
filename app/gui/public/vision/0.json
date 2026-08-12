@@ -1,53 +1,53 @@
 {
   "schema": "trustdrop.vision.v1",
   "network": "arbitrum-sepolia",
-  "version": 3,
-  "updatedAt": "2026-08-10T00:00:00Z",
+  "version": 4,
+  "updatedAt": "2026-08-12T00:49:00Z",
   "source": {
     "type": "local"
   },
   "recommendations": {
     "featuredAssets": [
       {
-        "channel": "0x1c459b765c3349a123d50010b7933765caf09f91",
-        "saleId": "0x5604dda55e824a6a1ea85bd37832d955276ab3a60ab69fa57333226ed58792e4",
-        "reason": "featured demo asset"
+        "channel": "0x3fe9c4f933a0d0a4b411f4d8b2e2cfb7cad42b8f",
+        "saleId": "0x384e977f8a19b4425714b6e7ec7a92e1f4c45b37711a7b312545b789a437ef53",
+        "reason": "featured public-domain NASA demo asset"
       },
       {
-        "channel": "0x1eff8c2cca8eea4fc9ef2a9fbacc57c067d603b1",
-        "saleId": "0xcfb62aa27b2a0e196013ec5fb31233ad25ea7d8752f6abdc872b00108fddca7d",
-        "reason": "featured demo asset"
+        "channel": "0x88b003446d2ba2c67ba133da0cf4a76a5610d35b",
+        "saleId": "0xfa60b9493850bf7c15445eee61482b528d0d9b81a7fe13f66e88e3585650d313",
+        "reason": "featured public-domain NASA demo asset"
       },
       {
-        "channel": "0xe47f2c121eaf5e6abe8ea4b4aa116c5d10511ded",
-        "saleId": "0x416b3b52e8a43fff9946423e6b7ee8a2f8e9ed98616ee007f6fd318949be9960",
-        "reason": "featured demo asset"
+        "channel": "0x0cc7ffe173b520491d38883226a5bf351efd3cd4",
+        "saleId": "0x038f5634e3f5debe813c7437607de07ee490a7d405093e68a275d0af0945c802",
+        "reason": "featured public-domain NASA demo asset"
       },
       {
-        "channel": "0x154132ff160d507e145b868f239b80035cdfb856",
-        "saleId": "0x685a9feaf22ade03ae7cc5de8cc06394a01046d7e9ae277a87b97e2cc37fce90",
-        "reason": "featured demo asset"
+        "channel": "0x81a34a940004b62de7370d0e5557b35566c6dda4",
+        "saleId": "0x9b0423e5fada5defba4f083fe55bc2f5436dc4365185b7bde6f2e4a1edfe10bd",
+        "reason": "featured public-domain NASA demo asset"
       },
       {
-        "channel": "0xd280b5beea2d01d6319565262e9e17f063390543",
-        "saleId": "0x5b1ac911550edb74f37cf8d5c274e09e0894945b808c424dba7c5a938c1c5b67",
-        "reason": "featured demo asset"
+        "channel": "0x904483caa48dd1224686e4afd3fceb85a2865542",
+        "saleId": "0x27131cc940f058058d30e3d2224bd033b8d53c08a59389062f7e4791ff421976",
+        "reason": "featured public-domain NASA demo asset"
       }
     ]
   },
   "moderation": {
-    "startTimestamp": 1786291200,
-    "minimumListedBlock": "296399608",
+    "startTimestamp": 1786507268,
+    "minimumListedBlock": "297231540",
     "blacklistedAssets": [
       {
-        "channel": "0xbd075d109ebe4a36909b2056baaa00c86efb9966",
-        "saleId": "0xaed833798cdce6710c599e21f731cf909407f87a4599f48b92465a471fc97926",
-        "reason": "restricted placeholder"
+        "channel": "0x32e4d9ce01b4d4552d4003f0a5ff1940f9aa91f8",
+        "saleId": "0xada3ca44e34bcce7edf9ab206b4062891b6f2bc6c894f4eb79a4b81879cee7cf",
+        "reason": "restricted public-domain demo asset"
       },
       {
-        "channel": "0xa13ff5c5a68b45669a546e0a68138c0c532d0459",
-        "saleId": "0x903fefff97afa74271bd613fe6e91eb59654800e5719cc8afadeb20074f7ee2b",
-        "reason": "restricted placeholder"
+        "channel": "0xeb5410fddf8788902b846b3557a35de7793a46db",
+        "saleId": "0xeb3f17e97c20a13bb230e981e08b702830038a1cdbda17f1421438793849131a",
+        "reason": "restricted public-domain demo asset"
       }
     ],
     "blacklistedSellers": []
