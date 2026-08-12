@@ -138,8 +138,8 @@ async function refreshMarketplace(): Promise<void> {
   state.sales = [];
   render();
   try {
-    await loadMoreRecommendedSales(false);
     await loadMoreMarketplaceSales(false);
+    await loadMoreRecommendedSales(false);
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
       state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     }
@@ -192,16 +192,11 @@ async function loadMoreRecommendedSales(renderOnFinish = true): Promise<void> {
   if (renderOnFinish) render();
   try {
     const batch = refs.slice(state.recommendedLoadedCount, state.recommendedLoadedCount + RECOMMENDED_PAGE_SIZE);
-    const loaded = (
-      await Promise.all(
-        batch.map((asset) =>
-          subgraph.getSale(asset.channel, asset.saleId).catch((error) => {
-            console.warn(`failed to load recommended sale ${asset.channel}:${asset.saleId}`, error);
-            return null;
-          }),
-        ),
-      )
-    ).filter((sale): sale is MarketplaceSale => Boolean(sale));
+    await loadMarketplaceUntilRecommendedRefsAreAvailable(batch);
+    const loaded = batch.flatMap((asset) => {
+      const sale = state.sales.find((item) => sameSaleRef(item, asset.channel, asset.saleId));
+      return sale ? [sale] : [];
+    });
     const visible = filterSalesForContentEngine(loaded).filter((sale) => sale.status === "LISTED");
     upsertAllSales(visible);
     state.recommendedSales = [...state.recommendedSales, ...visible].filter(uniqueSale);
@@ -217,6 +212,12 @@ async function loadMoreRecommendedSales(renderOnFinish = true): Promise<void> {
   }
 }
 
+async function loadMarketplaceUntilRecommendedRefsAreAvailable(refs: Array<{ channel: `0x${string}`; saleId: `0x${string}` }>): Promise<void> {
+  while (state.salesHasMore && refs.some((ref) => !state.sales.some((sale) => sameSaleRef(sale, ref.channel, ref.saleId)))) {
+    await loadMoreMarketplaceSales(false);
+  }
+}
+
 function upsertAllSales(sales: MarketplaceSale[]): void {
   const byId = new Map(state.allSales.map((sale) => [sale.id.toLowerCase(), sale]));
   for (const sale of sales) byId.set(sale.id.toLowerCase(), sale);
@@ -225,6 +226,10 @@ function upsertAllSales(sales: MarketplaceSale[]): void {
 
 function uniqueSale(sale: MarketplaceSale, index: number, sales: MarketplaceSale[]): boolean {
   return sales.findIndex((item) => item.id.toLowerCase() === sale.id.toLowerCase()) === index;
+}
+
+function sameSaleRef(sale: MarketplaceSale, channel: string, saleId: string): boolean {
+  return sale.channel.toLowerCase() === channel.toLowerCase() && sale.saleId.toLowerCase() === saleId.toLowerCase();
 }
 
 async function refreshBuyerActivity(): Promise<void> {
