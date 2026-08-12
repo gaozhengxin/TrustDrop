@@ -191,16 +191,20 @@ async function loadMoreRecommendedSales(renderOnFinish = true): Promise<void> {
   state.loadingMoreRecommended = true;
   if (renderOnFinish) render();
   try {
-    const batch = refs.slice(state.recommendedLoadedCount, state.recommendedLoadedCount + RECOMMENDED_PAGE_SIZE);
-    await loadMarketplaceUntilRecommendedRefsAreAvailable(batch);
-    const loaded = batch.flatMap((asset) => {
-      const sale = state.sales.find((item) => sameSaleRef(item, asset.channel, asset.saleId));
-      return sale ? [sale] : [];
-    });
-    const visible = filterSalesForContentEngine(loaded).filter((sale) => sale.status === "LISTED");
+    const visible: MarketplaceSale[] = [];
+    let cursor = state.recommendedLoadedCount;
+    while (cursor < refs.length && visible.length < RECOMMENDED_PAGE_SIZE) {
+      const ref = refs[cursor];
+      await loadMarketplaceUntilRecommendedRefsAreAvailable([ref]);
+      const sale = state.sales.find((item) => sameSaleRef(item, ref.channel, ref.saleId));
+      if (sale && sale.status === "LISTED" && hiddenReasonsForSale(sale).length === 0) {
+        visible.push(sale);
+      }
+      cursor += 1;
+    }
     upsertAllSales(visible);
     state.recommendedSales = [...state.recommendedSales, ...visible].filter(uniqueSale);
-    state.recommendedLoadedCount += batch.length;
+    state.recommendedLoadedCount = cursor;
     state.recommendedHasMore = state.recommendedLoadedCount < refs.length;
     if (!state.selectedSaleId) state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     state.message = "";
