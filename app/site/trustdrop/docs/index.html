@@ -28,33 +28,33 @@
       </aside>
       <article class="doc">
         <p class="eyebrow">TrustDrop Protocol</p>
-        <h1>Fair exchange for encrypted files</h1>
+        <h1>Provable delivery before settlement</h1>
         <p class="lead">
-          TrustDrop is a protocol for exchanging encrypted files without relying on seller promises. It combines on-chain escrow, zero-knowledge proof verification, data availability checks, and buyer recovery logic into one exchange flow.
+          TrustDrop is a protocol for making delivery verifiable before funds are released. It combines on-chain escrow, zero-knowledge proof verification, data availability checks, and buyer-recoverable key release into one settlement-gated delivery flow.
         </p>
         <div class="callout">
           <strong>Current prototype:</strong> contracts run on Arbitrum Sepolia, encrypted assets are stored on Walrus Mainnet, and proofs are generated with SP1 Prove Network.
         </div>
 
-        <h2>Guarantees</h2>
+        <h2>Protocol Guarantees</h2>
         <div class="card-grid">
           <section class="doc-card">
-            <h3>Escrowed payment</h3>
-            <p>Buyer payment is locked in an exchange channel until the exchange reaches a valid closing path.</p>
+            <h3>Locked payment intent</h3>
+            <p>Buyer payment is locked in a channel while the seller completes a protocol-visible delivery path.</p>
           </section>
           <section class="doc-card">
-            <h3>Proof-backed fulfillment</h3>
-            <p>Seller fulfillment is tied to VSS and VDD verifier contracts rather than a plain off-chain claim.</p>
+            <h3>Proof-backed delivery</h3>
+            <p>Seller fulfillment is tied to VSS and VDD verifier contracts rather than an off-chain promise.</p>
           </section>
           <section class="doc-card">
-            <h3>Buyer recovery</h3>
-            <p>The buyer can recover the encrypted asset using wallet-derived or manually supplied purchase secrets.</p>
+            <h3>Recoverable key release</h3>
+            <p>The buyer receives key material that is checked against commitments before the seller can settle.</p>
           </section>
         </div>
 
         <h2>Applications</h2>
         <p>
-          Fair File Marketplace is the first buyer-facing application built on TrustDrop. It is an application of the protocol, not the protocol itself.
+          Fair File Marketplace is the first buyer-facing application built on TrustDrop. It demonstrates a file-sale workflow, but the protocol itself is the lower-level provable delivery and settlement layer.
         </p>
         <nav class="page-nav">
           <a href="./protocol.html">Read protocol details</a>
