@@ -983,7 +983,7 @@ contract WalrusFunctionsConsumer is FunctionsClient, ConfirmedOwner {
         0x66756e2d617262697472756d2d7365706f6c69612d3100000000000000000000;
     uint32 public gasLimit = 300000;
     address public proxy;
-    string public apiKey = "eNx0cS4PemfQtVaArXbRbHcyJTnP0l"; // 默认 Key
+    string public apiKey = ""; // Set by owner after deployment if this consumer path is used.
 
     // JavaScript Source - 从 args[1] 获取 API Key
     string source =

@@ -155,12 +155,13 @@ async fn main() {
 
 /// Default client config used by demo CLI
 fn default_config() -> WalrusConfig {
+    let api_key = std::env::var("BLOCKBERRY_API_KEY").unwrap_or_default();
     WalrusConfig {
         publisher_url: "http://127.0.0.1:31415".into(),
         aggregator_url: "http://127.0.0.1:31415".into(),
         //aggregator_url: "https://walrus.blockscope.net".into(),
         blockberry_base: "https://api.blockberry.one/walrus-mainnet".into(),
-        api_key: "eNx0cS4PemfQtVaArXbRbHcyJTnP0l".into(),
+        api_key,
         send_object_to: None,
     }
 }
