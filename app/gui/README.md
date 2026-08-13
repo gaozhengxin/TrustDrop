@@ -39,3 +39,13 @@ Vision files describe externally updated content rules:
 - `moderation.blacklistedSellers`: hide all assets from a seller once seller ownership is indexed.
 
 Buyer records are product behavior, not vision configuration: purchased assets remain visible in records and hidden assets are marked there.
+
+### Publishing content-rule changes
+
+`app/gui/public/vision/0.json` is the local descriptor template used for demo content rules. The production frontend reads the descriptor CID from `VisionRegistry.visionCid()`, then fetches that JSON through the configured IPFS gateway. After changing the local descriptor:
+
+1. Pin or publish `app/gui/public/vision/0.json` to IPFS.
+2. Update `VisionRegistry` with the new CID using `contracts/script/SetVisionCid.s.sol` and the registry owner key.
+3. Refresh the marketplace after the subgraph has indexed any newly listed sales.
+
+The committed descriptor currently gates out listings before `minimumListedBlock` and `startTimestamp`, so old demo listings encrypted with retired seller data keys stay hidden while newer listings remain eligible.

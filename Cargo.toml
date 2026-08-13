@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "drop-lib",
+    "guest/*/script",
+    "guest/*/program",
+    "sdk",
+    "storage",
+    "walrus-core",
+    "drop-script",
+    "drop-cli",
+]
+
+[workspace.dependencies]
+alloy-sol-types = "1.0"

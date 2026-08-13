@@ -1,20 +1,140 @@
-PUBLIC_EXPORT.md
-.env
+# ============================================================
+# RUST & CARGO
+# ============================================================
 target/
-cache/
-out/
-broadcast/
+Cargo.lock
+!guest/vss/Cargo.lock
+!guest/vdd/Cargo.lock
+**/target/
+**/*.rs.bk
+
+sp1/
+
+# SP1 guest build outputs
+**/guest/**/sp1-build/
+**/guest/**/program/elf/
+**/guest/**/program/target/
+
+# Rust toolchains
+rust-toolchain.toml
+rust-toolchain
+
+# Core dump
+core
+
+
+# ============================================================
+# FORGE (foundry)
+# ============================================================
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/artifacts/
+**/*.sol.json
+
+
+# ============================================================
+# NPM / PNPM / JS / TS
+# ============================================================
 node_modules/
+**/node_modules/
+npm-debug.log*
+pnpm-lock.yaml
+yarn.lock
 dist/
-.wrangler/
-contracts/--broadcast
-contracts/--rpc-url
-contracts/bin/
-contracts/lib/
-*.pem
-*.key
-*.mp4
-*-recovered.*
-listing_result.txt
 build/
-generated/
+.cache/
+.next/
+out/
+
+
+# ============================================================
+# TAURI (GUI / TUI)
+# ============================================================
+src-tauri/target/
+src-tauri/.cargo/
+src-tauri/gen/
+**/src-tauri/target/
+**/src-tauri/gen/
+
+# Desktop bundle & release artifacts
+*.dmg
+*.app
+*.deb
+*.rpm
+*.AppImage
+**/bundle/
+
+
+# ============================================================
+# DART / FLUTTER (如果有)
+# ============================================================
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub-cache/
+.pub/
+
+
+# ============================================================
+# MAC / LINUX / EDITORS
+# ============================================================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.zed/
+*.swp
+*.swo
+
+# ============================================================
+# LOG / TEMP / MISC
+# ============================================================
+*.log
+*.tmp
+*-recovered.mp4
+.tmp/
+temp/
+.cache/
+.wrangler/
+test-assets/
+.env
+.env.*
+!.env.example
+
+# ============================================================
+# LOCAL CONFIGS
+# ============================================================
+*.local
+*.secret
+*.bak
+**/*.iml
+
+# ============================================================
+# BINARY / EXECUTABLES
+# ============================================================
+*.exe
+*.bin
+*.o
+*.so
+*.a
+
+# ============================================================
+# SP1 PROVER OUTPUTS
+# ============================================================
+**/proofs/
+**/*.proof
+**/*.vk
+**/*.pk
+**/*.zkey
+**/*.r1cs
+
+# ============================================================
+# GEMINI DOCS
+# ============================================================
+**/GEMINI_DOCS/
+
+# Local seller runtime binary artifacts copied from the Ubuntu reference.
+docker/seller/bin/
+docker/seller/seller.env

@@ -402,6 +402,37 @@ p {
   border-color: #8ca49a;
 }
 
+.pagination {
+  align-items: center;
+  color: #626259;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.pagination div {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.load-more {
+  align-items: center;
+  color: #626259;
+  display: flex;
+  font-size: 13px;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.load-more-note {
+  font-size: 13px;
+  margin-top: 12px;
+  text-align: center;
+}
+
 .detail {
   display: grid;
   gap: 18px;

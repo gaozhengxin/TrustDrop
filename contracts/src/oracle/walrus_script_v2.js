@@ -81,5 +81,5 @@ return (Functions.encodeString(blob_id_hex));
 args[0] 4c605762bd249b798bbf2347b7a6d05db2c7b25051e4703057c98043e1c5248a // TGBXYr0km3mLvyNHt6bQXbLHslBR5HAwV8mAQ-HFJIo
 args[1] 2
 args[2] 98
-secrets.apiKey secrets eNx0cS4PemfQtVaArXbRbHcyJTnP0l
+secrets.apiKey is supplied by Chainlink Functions secrets and must not be committed.
  */

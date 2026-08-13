@@ -28,9 +28,14 @@ import {
   type MarketplaceSettlement,
   type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
-import { filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, sortSalesForRecommendation } from "./content-engine/engine";
+import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
 
 type Route = "home" | "browse" | "records" | "settings" | "detail";
+type ImportMetaWithEnv = ImportMeta & {
+  env?: {
+    DEV?: boolean;
+  };
+};
 
 type UiState = {
   route: Route;
@@ -38,6 +43,7 @@ type UiState = {
   tag: string;
   selectedSaleId: string;
   allSales: MarketplaceSale[];
+  recommendedSales: MarketplaceSale[];
   sales: MarketplaceSale[];
   purchases: MarketplacePurchase[];
   settlements: MarketplaceSettlement[];
@@ -47,6 +53,12 @@ type UiState = {
   localThreads: BuyerThread[];
   wallet: BrowserWallet | null;
   loading: boolean;
+  loadingMoreSales: boolean;
+  loadingMoreRecommended: boolean;
+  recommendedHasMore: boolean;
+  recommendedLoadedCount: number;
+  salesHasMore: boolean;
+  salesLoadedCount: number;
   purchaseBusy: boolean;
   downloadBusy: string;
   refundBusy: string;
@@ -59,6 +71,10 @@ type UiState = {
 };
 
 const subgraph = new TrustDropSubgraph();
+const SUBGRAPH_SALES_PAGE_SIZE = 24;
+const RECOMMENDED_PAGE_SIZE = 2;
+const LATEST_HOME_SIZE = 8;
+const ALLOW_MANUAL_SECRET = Boolean((import.meta as ImportMetaWithEnv).env?.DEV);
 
 const state: UiState = {
   route: "home",
@@ -66,6 +82,7 @@ const state: UiState = {
   tag: "all",
   selectedSaleId: "",
   allSales: [],
+  recommendedSales: [],
   sales: [],
   purchases: [],
   settlements: [],
@@ -75,6 +92,12 @@ const state: UiState = {
   localThreads: [],
   wallet: null,
   loading: true,
+  loadingMoreSales: false,
+  loadingMoreRecommended: false,
+  recommendedHasMore: true,
+  recommendedLoadedCount: 0,
+  salesHasMore: true,
+  salesLoadedCount: 0,
   purchaseBusy: false,
   downloadBusy: "",
   refundBusy: "",
@@ -105,12 +128,20 @@ async function boot(): Promise<void> {
 
 async function refreshMarketplace(): Promise<void> {
   state.loading = true;
+  state.loadingMoreSales = false;
+  state.salesHasMore = true;
+  state.salesLoadedCount = 0;
+  state.recommendedHasMore = true;
+  state.recommendedLoadedCount = 0;
+  state.allSales = [];
+  state.recommendedSales = [];
+  state.sales = [];
   render();
   try {
-    state.allSales = await subgraph.listSales();
-    state.sales = filterSalesForContentEngine(state.allSales);
+    await loadMoreMarketplaceSales(false);
+    await loadMoreRecommendedSales(false);
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
-      state.selectedSaleId = state.sales[0]?.id || "";
+      state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     }
     state.localThreads = await listLocalThreads();
     if (state.wallet) await refreshBuyerActivity();
@@ -122,6 +153,89 @@ async function refreshMarketplace(): Promise<void> {
   }
 }
 
+async function loadMoreMarketplaceSales(renderOnFinish = true): Promise<void> {
+  if (state.loadingMoreSales || !state.salesHasMore) return;
+  state.loadingMoreSales = true;
+  if (renderOnFinish) render();
+  try {
+    const next = await subgraph.listSales({
+      first: SUBGRAPH_SALES_PAGE_SIZE,
+      skip: state.salesLoadedCount,
+      ...marketplaceQueryBounds(),
+    });
+    upsertAllSales(next);
+    state.salesLoadedCount += next.length;
+    state.salesHasMore = next.length === SUBGRAPH_SALES_PAGE_SIZE;
+    state.sales = filterSalesForContentEngine([...state.sales, ...next])
+      .filter(uniqueSale)
+      .sort((a, b) => Number(b.listedAtTimestamp) - Number(a.listedAtTimestamp));
+    if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
+      state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
+    }
+    state.message = "";
+  } catch (error) {
+    state.message = errorMessage(error);
+  } finally {
+    state.loadingMoreSales = false;
+    if (renderOnFinish) render();
+  }
+}
+
+async function loadMoreRecommendedSales(renderOnFinish = true): Promise<void> {
+  if (state.loadingMoreRecommended || !state.recommendedHasMore) return;
+  const refs = featuredAssetRefs();
+  if (state.recommendedLoadedCount >= refs.length) {
+    state.recommendedHasMore = false;
+    return;
+  }
+  state.loadingMoreRecommended = true;
+  if (renderOnFinish) render();
+  try {
+    const visible: MarketplaceSale[] = [];
+    let cursor = state.recommendedLoadedCount;
+    while (cursor < refs.length && visible.length < RECOMMENDED_PAGE_SIZE) {
+      const ref = refs[cursor];
+      await loadMarketplaceUntilRecommendedRefsAreAvailable([ref]);
+      const sale = state.sales.find((item) => sameSaleRef(item, ref.channel, ref.saleId));
+      if (sale && sale.status === "LISTED" && hiddenReasonsForSale(sale).length === 0) {
+        visible.push(sale);
+      }
+      cursor += 1;
+    }
+    upsertAllSales(visible);
+    state.recommendedSales = [...state.recommendedSales, ...visible].filter(uniqueSale);
+    state.recommendedLoadedCount = cursor;
+    state.recommendedHasMore = state.recommendedLoadedCount < refs.length;
+    if (!state.selectedSaleId) state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
+    state.message = "";
+  } catch (error) {
+    state.message = errorMessage(error);
+  } finally {
+    state.loadingMoreRecommended = false;
+    if (renderOnFinish) render();
+  }
+}
+
+async function loadMarketplaceUntilRecommendedRefsAreAvailable(refs: Array<{ channel: `0x${string}`; saleId: `0x${string}` }>): Promise<void> {
+  while (state.salesHasMore && refs.some((ref) => !state.sales.some((sale) => sameSaleRef(sale, ref.channel, ref.saleId)))) {
+    await loadMoreMarketplaceSales(false);
+  }
+}
+
+function upsertAllSales(sales: MarketplaceSale[]): void {
+  const byId = new Map(state.allSales.map((sale) => [sale.id.toLowerCase(), sale]));
+  for (const sale of sales) byId.set(sale.id.toLowerCase(), sale);
+  state.allSales = Array.from(byId.values());
+}
+
+function uniqueSale(sale: MarketplaceSale, index: number, sales: MarketplaceSale[]): boolean {
+  return sales.findIndex((item) => item.id.toLowerCase() === sale.id.toLowerCase()) === index;
+}
+
+function sameSaleRef(sale: MarketplaceSale, channel: string, saleId: string): boolean {
+  return sale.channel.toLowerCase() === channel.toLowerCase() && sale.saleId.toLowerCase() === saleId.toLowerCase();
+}
+
 async function refreshBuyerActivity(): Promise<void> {
   if (!state.wallet) return;
   const activity = await subgraph.listBuyerActivity(state.wallet.account);
@@ -130,10 +244,6 @@ async function refreshBuyerActivity(): Promise<void> {
   state.refunds = activity.refunds;
   state.dataKeyShares = activity.dataKeyShares;
   state.vddProofs = activity.vddProofs;
-}
-
-function byScore(sale: MarketplaceSale): number {
-  return Number(sale.purchaseCount) * 4 + Number(sale.settlementCount) * 6 + Number(sale.listedAtTimestamp) / 1_000_000_000;
 }
 
 function filteredSales(): MarketplaceSale[] {
@@ -222,7 +332,7 @@ function walletMenu(): string {
 function renderHome(): string {
   if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
-  const recommended = sortSalesForRecommendation(state.sales, byScore).slice(0, 2);
+  const latest = state.sales.slice(0, LATEST_HOME_SIZE);
   return renderShell(`
     <section class="toolbar">
       <div>
@@ -235,13 +345,16 @@ function renderHome(): string {
     <section class="section">
       <div class="section-title">
         <h2>Recommended</h2>
-        <button class="text-button" data-route="browse" type="button">View all</button>
+        ${state.recommendedHasMore ? `<button class="text-button" id="load-more-recommended-button" type="button" ${state.loadingMoreRecommended ? "disabled" : ""}>${state.loadingMoreRecommended ? "Loading" : "More"}</button>` : ""}
       </div>
-      <div class="asset-grid">${state.loading ? loadingRows() : recommended.map(assetCard).join("") || empty("No active listings.")}</div>
+      <div class="asset-grid">${state.loading ? loadingRows() : state.recommendedSales.map(assetCard).join("") || empty("No recommended listings.")}</div>
     </section>
     <section class="section">
-      <div class="section-title"><h2>Latest listings</h2></div>
-      <div class="asset-table">${state.loading ? loadingRows() : assetRows([...state.sales].sort((a, b) => Number(b.listedAtTimestamp) - Number(a.listedAtTimestamp)))}</div>
+      <div class="section-title">
+        <h2>Latest listings</h2>
+        <button class="text-button" data-route="browse" type="button">Browse all</button>
+      </div>
+      <div class="asset-table">${state.loading ? loadingRows() : assetRows(latest)}</div>
     </section>
   `);
 }
@@ -266,7 +379,10 @@ function renderBrowse(): string {
           .map((tag) => `<button class="filter${state.tag === tag ? " active" : ""}" data-tag="${escapeAttr(tag)}" type="button">${escapeHtml(tag)}</button>`)
           .join("")}
       </aside>
-      <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(current)}</div>
+      <div>
+        <div class="asset-table wide">${state.loading ? loadingRows() : assetRows(current)}</div>
+        ${loadMoreSalesControl()}
+      </div>
     </section>
   `);
 }
@@ -347,7 +463,7 @@ function renderDetail(sale: MarketplaceSale): string {
               <span>Key</span>
               <select id="key-mode-select">
                 <option value="wallet_derived" ${state.keyMode === "wallet_derived" ? "selected" : ""}>Wallet derived</option>
-                <option value="manual_secret" ${state.keyMode === "manual_secret" ? "selected" : ""}>Manual secret</option>
+                ${ALLOW_MANUAL_SECRET ? `<option value="manual_secret" ${state.keyMode === "manual_secret" ? "selected" : ""}>Manual secret (dev)</option>` : ""}
               </select>
             </label>
             <button class="primary" id="purchase-button" type="button" ${state.purchaseBusy ? "disabled" : ""}>
@@ -402,6 +518,19 @@ function assetRows(items: MarketplaceSale[]): string {
       `;
     })
     .join("");
+}
+
+function loadMoreSalesControl(): string {
+  if (state.loading) return "";
+  if (!state.salesHasMore) return `<p class="load-more-note">All currently indexed listings have been loaded.</p>`;
+  return `
+    <div class="load-more">
+      <button class="text-button" id="load-more-sales-button" type="button" ${state.loadingMoreSales ? "disabled" : ""}>
+        ${state.loadingMoreSales ? "Loading..." : "More listings"}
+      </button>
+      <span>Loads another ${SUBGRAPH_SALES_PAGE_SIZE} listings after the vision cutoff.</span>
+    </div>
+  `;
 }
 
 function buyerRecordRows(): string {
@@ -513,6 +642,13 @@ function bindEvents(root: HTMLElement): void {
       const cursor = state.query.length;
       nextInput.setSelectionRange(cursor, cursor);
     }
+  });
+
+  root.querySelector<HTMLButtonElement>("#load-more-sales-button")?.addEventListener("click", () => {
+    void loadMoreMarketplaceSales();
+  });
+  root.querySelector<HTMLButtonElement>("#load-more-recommended-button")?.addEventListener("click", () => {
+    void loadMoreRecommendedSales();
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
@@ -656,6 +792,9 @@ async function handlePurchase(): Promise<void> {
     await connect();
     return;
   }
+  if (state.keyMode === "manual_secret" && !ALLOW_MANUAL_SECRET) {
+    state.keyMode = "wallet_derived";
+  }
   state.purchaseBusy = true;
   state.message = "";
   render();
@@ -691,6 +830,11 @@ async function handleDownload(txHash: `0x${string}`): Promise<void> {
   const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
   if (!purchase || !state.wallet) return;
   const thread = state.localThreads.find((item) => item.txHash.toLowerCase() === txHash.toLowerCase());
+  if (thread?.keyMode === "manual_secret" && !ALLOW_MANUAL_SECRET) {
+    state.message = "Manual secret recovery is available only in development mode.";
+    render();
+    return;
+  }
   const manualSecret = thread?.keyMode === "manual_secret" ? promptManualSecret("Recovery secret hex") : undefined;
   state.downloadBusy = txHash;
   state.message = "";

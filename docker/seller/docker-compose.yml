@@ -1,0 +1,59 @@
+services:
+  walrus-publisher:
+    # Walrus publisher is packaged as its own container image. The walrus
+    # executable is copied into the image by docker/seller/Dockerfile.walrus;
+    # only host-local wallet/config directories are mounted at runtime.
+    image: trustdrop/walrus-publisher:ubuntu-arm64
+    build:
+      context: ../..
+      dockerfile: docker/seller/Dockerfile.walrus
+    platform: linux/arm64
+    container_name: trustdrop-walrus-publisher
+    environment:
+      WALRUS_HOME: /home/justin/walrus
+      WALRUS_CONFIG: /home/justin/walrus/client_config.yaml
+      WALRUS_WALLET: /home/justin/.sui/sui_config/client.yaml
+      WALRUS_SUB_WALLETS_DIR: /home/justin/.sui/sui_config
+      WALRUS_BIND_ADDRESS: 0.0.0.0:31415
+      WALRUS_N_CLIENTS: ${WALRUS_N_CLIENTS:-1}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost,walrus-publisher}
+    volumes:
+      - ${TRUSTDROP_SUI_DIR:-/Users/niuniu/.sui}:/home/justin/.sui
+      # Host Walrus config directory. It must contain client_config.yaml.
+      - ${TRUSTDROP_WALRUS_CONFIG_DIR:-/Users/niuniu/walrus}:/home/justin/walrus:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:31415/v1/api"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  seller-daemon:
+    image: trustdrop/elf-repro-runner:ubuntu-amd64
+    platform: linux/amd64
+    container_name: trustdrop-seller-daemon
+    depends_on:
+      walrus-publisher:
+        condition: service_healthy
+    working_dir: /home/justin/TrustDrop/TrustDrop
+    environment:
+      RUSTUP_TOOLCHAIN: stable-x86_64-unknown-linux-gnu
+      LC_ALL: C
+      LANG: C
+      CARGO_HOME: /home/justin/.cargo
+      DROP_CLI_BASE_ENV_FILE: drop-script/.env
+      TRUSTDROP_CONTAINER_WALRUS_ENDPOINT: http://walrus-publisher:31415
+      SP1_CORE_RUNNER_OVERRIDE_BINARY: /home/justin/.cargo/sp1-native-bins/debug/sp1-core-executor-runner-binary
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-127.0.0.1,localhost,walrus-publisher}
+    volumes:
+      - ../../:/home/justin/TrustDrop/TrustDrop
+      - ${TRUSTDROP_CARGO_HOME:-/Users/niuniu/.cargo-trustdrop-justin}:/home/justin/.cargo
+      - ${TRUSTDROP_STATE_DIR:-/Users/niuniu/.trustdrop}:/root/.trustdrop
+      - ${TRUSTDROP_HOST_INPUT_DIR:-/Users/niuniu/TrustDrop/TrustDrop/app/gui/demo-assets}:/host-input:ro
+    command: ["bash", "-lc", "rm -f /root/.trustdrop/state/daemon.lock && docker/seller/run-drop-cli-in-container.sh daemon run"]

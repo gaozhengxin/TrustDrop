@@ -41,6 +41,7 @@ export type VisionDescriptor = {
 export type HiddenReason = "before_start_timestamp" | "before_minimum_block" | "asset_blacklisted" | "seller_blacklisted";
 
 const visionRegistryAbi = parseAbi(["function visionCid() view returns (string)"]);
+const DEFAULT_VISION_REGISTRY_ADDRESS = "0x79A070bF4b64f815249F4ac0ea05bdB983b92261";
 const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/";
 const PUBLIC_IPFS_GATEWAYS = ["https://gateway.pinata.cloud/ipfs/", "https://dweb.link/ipfs/", "https://nftstorage.link/ipfs/"];
 const VISION_FETCH_TIMEOUT_MS = 8_000;
@@ -75,6 +76,20 @@ export function activeContentRule(): VisionDescriptor {
   return activeVision;
 }
 
+export function featuredAssetRefs(): VisionAssetRef[] {
+  if (!activeVision) throw new Error("Vision descriptor is not loaded");
+  return activeVision.recommendations?.featuredAssets ?? [];
+}
+
+export function marketplaceQueryBounds(): { minimumListedTimestamp?: string; minimumListedBlock?: string } {
+  if (!activeVision) throw new Error("Vision descriptor is not loaded");
+  const moderation = activeVision.moderation ?? {};
+  return {
+    minimumListedTimestamp: Number.isFinite(moderation.startTimestamp) ? String(moderation.startTimestamp) : undefined,
+    minimumListedBlock: moderation.minimumListedBlock,
+  };
+}
+
 export function filterSalesForContentEngine(sales: MarketplaceSale[]): MarketplaceSale[] {
   return sales.filter((sale) => hiddenReasonsForSale(sale).length === 0);
 }
@@ -97,17 +112,6 @@ export function hiddenReasonsForSale(sale: MarketplaceSale): HiddenReason[] {
     reasons.push("seller_blacklisted");
   }
   return reasons;
-}
-
-export function sortSalesForRecommendation(sales: MarketplaceSale[], fallbackScore: (sale: MarketplaceSale) => number): MarketplaceSale[] {
-  if (!activeVision) throw new Error("Vision descriptor is not loaded");
-  const rank = new Map((activeVision.recommendations?.featuredAssets ?? []).map((asset, index) => [assetKey(asset.channel, asset.saleId), index]));
-  return [...sales].sort((a, b) => {
-    const aRank = rank.get(saleKey(a));
-    const bRank = rank.get(saleKey(b));
-    if (aRank !== undefined || bRank !== undefined) return (aRank ?? Number.MAX_SAFE_INTEGER) - (bRank ?? Number.MAX_SAFE_INTEGER);
-    return fallbackScore(b) - fallbackScore(a);
-  });
 }
 
 async function fetchVision(cid: string): Promise<VisionDescriptor> {
@@ -157,8 +161,7 @@ function validateVision(value: VisionDescriptor): VisionDescriptor {
 }
 
 function visionRegistryAddress(): Hex | null {
-  const raw = (import.meta as ImportMetaWithEnv).env?.VITE_TRUSTDROP_VISION_REGISTRY_ADDRESS;
-  if (!raw) return null;
+  const raw = (import.meta as ImportMetaWithEnv).env?.VITE_TRUSTDROP_VISION_REGISTRY_ADDRESS ?? DEFAULT_VISION_REGISTRY_ADDRESS;
   return isAddress(raw) ? raw : null;
 }
 

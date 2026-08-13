@@ -1,76 +1,98 @@
 [
   {
     "slug": "trojan-asteroids-osiris-rex",
-    "channel": "0xa33f0e76f0e5ad1164ac6cb5cca2d34092f479e8",
-    "saleId": "0x8313812a57553b39412362c051ff695379c01c65fa206c56e53bfefe1b76c694",
-    "mode": "published"
+    "channel": "0xa1aca892a92031dca5018b2ad040ec39dd280366",
+    "saleId": "0x1c56da3248fd78678bf7b6e2cfecec58d447e04ab9f9e56cdcba85052da14152",
+    "mode": "published",
+    "recommended": true,
+    "restricted": false
   },
   {
     "slug": "mars-landing-science-live",
-    "channel": "0x1389676eec6c0211bde8727959228d22110e8553",
-    "saleId": "0xce69914519358cf649030efc9471f69d934c72a0879dd0f62e9e85c1a53a78ba",
-    "mode": "published"
+    "channel": "0x2a1b4999ecae6b85203262f977b53a4a63a4a39c",
+    "saleId": "0xd2fbb96e596c55207362b1746d25a5aa7d8f01311669cda592960403f54df8ab",
+    "mode": "published",
+    "recommended": true,
+    "restricted": false
   },
   {
     "slug": "webb-shipping-container",
-    "channel": "0x85a49648b21af4df68cb66ab4372a837cdc13a3b",
-    "saleId": "0x09ef6ccfa628f1fd5505446488b3468255a521fffce0f2b6b571e84195612b36",
-    "mode": "published"
+    "channel": "0xe5a01a06c7adf07e8d0b2152da86960aede83fb6",
+    "saleId": "0xe43e4569c998fb2e6c21e225151cba82e9e9d928af5f48c9f533c0116078eb9c",
+    "mode": "published",
+    "recommended": true,
+    "restricted": false
   },
   {
     "slug": "landsat-earth-space",
-    "channel": "0xe6e4b3806a13e5992380eadb943267b86c7b4c12",
-    "saleId": "0xb03b57b0db9dd310da91c7506e0c27b14af90e5eafef0dedc9d09bc1a97c0431",
-    "mode": "published"
+    "channel": "0x30e5a5b8e762160941aabf5f67d7cd2fd28cb7e2",
+    "saleId": "0x45cf4faee7faebed93506bdcb1ad85d7b8ec53847ab20c40670c568a0047966c",
+    "mode": "published",
+    "recommended": true,
+    "restricted": false
   },
   {
     "slug": "hubble-deep-field",
-    "channel": "0xcc30f774e4b2e173368407fc811d5b4d4326f842",
-    "saleId": "0x6332a667f519080b88efbbc455be82121627409dcddfa42773eb59da36657857",
-    "mode": "listed"
+    "channel": "0x1511f705a7185b85385ead7df37e6e117cd048d3",
+    "saleId": "0x3096b8d97039cb654c18773aa5e61736ab0fa3616a01649b68d4f891acd3299d",
+    "mode": "published",
+    "recommended": true,
+    "restricted": false
   },
   {
     "slug": "jupiter-storms",
-    "channel": "0x7fc12f63f9e370c22fc4bafcb6cbe5c814d341ff",
-    "saleId": "0x15e088f8ee27a6c3bda0cf4d22e12ff9405576e1a58e11c53a0abac1d0b8017d",
-    "mode": "listed"
+    "channel": "0x2e5f0192a1993823c4dc160e050e01a23a46baa7",
+    "saleId": "0x7089bac05e3e3c06c49fa0d701779ec2d87ec61d3bd5f2ee3355f5793b801ff5",
+    "mode": "published",
+    "recommended": false,
+    "restricted": false
   },
   {
     "slug": "titan-surface",
-    "channel": "0xd11cabd2fe4b311fe94994fdd5f8205693045882",
-    "saleId": "0x3e6bcf08c78864ee728d30c92007ffdba3363586734468b03f07d6fe3ac6dbc8",
-    "mode": "listed"
+    "channel": "0x27762072e7c843cbaf150c6dea7ea4badb756195",
+    "saleId": "0xd7154d3442b98293e8c2cd146db16ae7067ffd0d0619b4d387fc188876a00d74",
+    "mode": "published",
+    "recommended": false,
+    "restricted": false
   },
   {
     "slug": "mars-sharpest-view",
-    "channel": "0x14b25799f34f36d0584c1b45a94272445fc386bc",
-    "saleId": "0x2644d0d89bc7f7a081b301c2a2512e707eb573c14cabbe73b83c593a18591c27",
-    "mode": "listed"
+    "channel": "0xca95800176f045109ad007d9e7be4cc31c21bf24",
+    "saleId": "0x72b1f893962a01d19230badb95bace0375a1b12ceb108e10b0416fda8b179ab9",
+    "mode": "published",
+    "recommended": false,
+    "restricted": false
   },
   {
     "slug": "mars-tharsis",
-    "channel": "0xc176c6977e9c9c7ebe09e24bfc687cf602df3e2f",
-    "saleId": "0xde807122cdb407b3aa723852a306d1fefe07b0e19bafae68bb7c4aba3a1ec087",
-    "mode": "listed",
+    "channel": "0xc54a0e06a1feb4171a6fd6e771d8c795910706bc",
+    "saleId": "0x076263a3a761de016875e8575358a42e9d3776a2066113130e1384e81bd135c9",
+    "mode": "published",
+    "recommended": false,
     "restricted": true
   },
   {
     "slug": "io-and-jupiter",
-    "channel": "0xccd8797c4c7cdd54e2abe625dcd3845639c0ba4f",
-    "saleId": "0x25a3745e99e08b3a2e619cbdb2279da9ea6d32cdd15095ec393f25a3285f5313",
-    "mode": "listed"
+    "channel": "0x5ac0ee5d5b688db46c7b037b9359b3b026128af8",
+    "saleId": "0xa6a4c9f26a89f500c3e6163a04c3104e69abadb4436ddb8eae72422de366ef12",
+    "mode": "published",
+    "recommended": false,
+    "restricted": false
   },
   {
     "slug": "jupiter-auroras",
-    "channel": "0x76060b7a3b7ec296ff82733d1839bb59da8fce90",
-    "saleId": "0x4b4c93de0b07ad79956632f8b715705828f9eb1d438cb932c49f1462864bcec5",
-    "mode": "listed",
+    "channel": "0xc58de10a4d53a0a4085e2bf856a41d24c81e7e85",
+    "saleId": "0x6e0c518304674c981292f5c4a0f5f9af4333f5240e7b4c3a9c136c388bed1c45",
+    "mode": "published",
+    "recommended": false,
     "restricted": true
   },
   {
     "slug": "mars-rotation",
-    "channel": "0x46072e7cdf813e4f076313c31ed1e72f6947ee7d",
-    "saleId": "0x6cd95deff2a06ee4de8efe84e3c9a7bce6363fba3fd6e02272bf152ecc44e6bd",
-    "mode": "listed"
+    "channel": "0xfd492d6289558cc9d277bc9fe4e3e851ab19ef30",
+    "saleId": "0x8f0dbaa476b5072f3899b0a1c31d1eefb5c91424d22d816f374cfc7a964d4e4f",
+    "mode": "published",
+    "recommended": false,
+    "restricted": false
   }
 ]

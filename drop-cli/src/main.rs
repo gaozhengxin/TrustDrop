@@ -1,9 +1,10 @@
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use drop_lib::rslh_ve::{derive_rslh_nonce, SYMBOL_SIZE};
 use drop_sdk::{
     abi::{exchange_channel_contract as channel_abi, exchange_hub_contract as hub_abi},
     chacha8::chacha8_encrypt,
     config::DropCliConfig,
+    key_manager::asset_key_commitment,
     oracle::OracleWorkerClient,
     state::{
         append_daemon_event, daemon_event_count, database_path, default_state_dir,
@@ -98,6 +99,7 @@ Usage:
   drop-cli channel list|show <channel>|create
   drop-cli sale list [--channel <channel>] | show <sale-id>
   drop-cli sale list <sale-id> --yes
+  drop-cli sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes
   drop-cli sale submit-key-commitment <sale-id>
   drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]
   drop-cli purchase show <purchase-tx>
@@ -196,14 +198,9 @@ fn cmd_keys(args: &[String]) -> Result<()> {
             println!("ownerPublicKey: 0x{}", hex::encode(owner_pubkey));
 
             let asset_encryption_key = config.require_asset_encryption_key()?;
-            let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
+            let commitment = asset_key_commitment(&asset_encryption_key);
             println!("assetKeyCommitment: 0x{}", hex::encode(commitment));
 
-            if config.dev_insecure_default_keys {
-                println!(
-                    "WARN TRUSTDROP_DEV_INSECURE_DEFAULT_KEYS is enabled; do not use this for seller production operations"
-                );
-            }
             println!("status: ready");
             Ok(())
         }
@@ -675,7 +672,7 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
         anyhow!("state missing channel_address; run drop-cli phase publish <local-sale-id> --yes")
     })?)?;
     let asset_encryption_key = config.require_asset_encryption_key()?;
-    let commitment = *blake3::hash(&asset_encryption_key).as_bytes();
+    let commitment = asset_key_commitment(&asset_encryption_key);
     let client = signer_client(&config).await?;
     let channel = channel_abi::ExchangeChannelContract::new(channel_address, client);
     let current = channel.data_key_commitment().call().await?;
@@ -724,6 +721,46 @@ async fn sale_submit_key_commitment(sale_id: &str) -> Result<()> {
     save_sale_state(&state_dir, &state)?;
     println!("dataKeyCommitment: 0x{}", hex::encode(commitment));
     println!("state updated");
+    Ok(())
+}
+
+async fn sale_update_metadata(sale_id: &str, args: &[String]) -> Result<()> {
+    let config = load_config()?;
+    let channel_address = parse_address(
+        flag_value(args, "--channel").ok_or_else(|| anyhow!("--channel is required"))?,
+    )?;
+    let data = parse_hex32_state(
+        flag_value(args, "--data").ok_or_else(|| anyhow!("--data is required"))?,
+    )?;
+    let price =
+        parse_u256_arg(flag_value(args, "--price").ok_or_else(|| anyhow!("--price is required"))?)?;
+    let info = flag_value(args, "--info")
+        .ok_or_else(|| anyhow!("--info is required"))?
+        .to_string();
+    serde_json::from_str::<serde_json::Value>(&info).context("--info must be valid JSON")?;
+
+    let client = signer_client(&config).await?;
+    let channel = channel_abi::ExchangeChannelContract::new(channel_address, client);
+    let commitment = channel_abi::DataCommitment {
+        data: data.to_vec().into(),
+    };
+
+    println!("sending updateFile transaction...");
+    let call = channel.update_file(parse_hex32_state(sale_id)?, commitment, price, info);
+    let pending = call.send().await?;
+    let tx_hash = pending.tx_hash();
+    println!("txHash: {tx_hash:?}");
+    let receipt = pending
+        .await?
+        .ok_or_else(|| anyhow!("update file receipt missing"))?;
+    if receipt.status != Some(U64::from(1u64)) {
+        bail!(
+            "update file transaction reverted: {:?}",
+            receipt.transaction_hash
+        );
+    }
+    println!("saleId: {sale_id}");
+    println!("block: {}", receipt.block_number.unwrap_or_default());
     Ok(())
 }
 
@@ -825,7 +862,19 @@ async fn cmd_sale(args: &[String]) -> Result<()> {
             sale_submit_key_commitment(sale_id).await?;
             Ok(())
         }
-        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale submit-key-commitment <sale-id> --yes"),
+        Some("update-metadata") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            if !has_flag(args, "--yes") {
+                println!(
+                    "sale update-metadata requires --yes to send an Arbitrum Sepolia transaction."
+                );
+                println!("usage: drop-cli sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes");
+                return Ok(());
+            }
+            sale_update_metadata(sale_id, args).await?;
+            Ok(())
+        }
+        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes | sale submit-key-commitment <sale-id> --yes"),
     }
 }
 
@@ -3369,6 +3418,14 @@ fn owner_public_key_bytes(sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
 
 fn parse_address(value: &str) -> Result<Address> {
     value.parse::<Address>().map_err(|error| anyhow!("{error}"))
+}
+
+fn parse_u256_arg(value: &str) -> Result<U256> {
+    if let Some(hex) = value.strip_prefix("0x") {
+        U256::from_str_radix(hex, 16).map_err(|error| anyhow!("{error}"))
+    } else {
+        U256::from_dec_str(value).map_err(|error| anyhow!("{error}"))
+    }
 }
 
 fn parse_hex32_state(value: &str) -> Result<[u8; 32]> {

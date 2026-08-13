@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fair File Marketplace - TrustDrop Docs</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">TD</span>
+        <span>TrustDrop Docs</span>
+      </a>
+      <nav class="nav">
+        <a href="/">Portal</a>
+        <a href="https://fair-file-marketplace.pages.dev">App</a>
+        <a href="https://github.com/gaozhengxin/TrustDrop">GitHub</a>
+      </nav>
+    </header>
+    <main class="layout">
+      <aside class="sidebar">
+        <span class="sidebar-title">TrustDrop</span>
+        <a href="/docs/">Overview</a>
+        <a href="./protocol.html">Protocol</a>
+        <a class="active" href="./ffm.html">Fair File Marketplace</a>
+        <a href="./integration.html">Deployment & SDK</a>
+      </aside>
+      <article class="doc">
+        <p class="eyebrow">Application</p>
+        <h1>Fair File Marketplace</h1>
+        <p class="lead">
+          Fair File Marketplace is the first application built on TrustDrop. It gives buyers a web interface for browsing listed files, purchasing, and recovering delivered assets.
+        </p>
+
+        <h2>Where FFM Fits</h2>
+        <p>
+          FFM is not the protocol itself. It is a marketplace frontend that uses TrustDrop contracts, proof flows, subgraph data, and the buyer-side SDK.
+        </p>
+
+        <h2>Vision-Based Content Management</h2>
+        <p>
+          A frontend operator can use a vision file to control what the marketplace shows. The vision file is a signed or externally published content descriptor referenced by the on-chain <code>VisionRegistry</code>.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Rule</th><th>Effect</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Featured assets</td><td>Choose assets that appear as recommendations.</td></tr>
+            <tr><td>Blacklisted assets</td><td>Hide specific sales from public discovery.</td></tr>
+            <tr><td>Blacklisted sellers</td><td>Hide all public listings from selected seller channels.</td></tr>
+            <tr><td>Start timestamp</td><td>Ignore listings before a chosen time.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Content Boundary</h2>
+        <p>
+          Content rules only affect what Fair File Marketplace shows in browsing and search. The exchange itself is recorded on-chain, including purchases, fulfillment, and settlement, so anyone can index and look up the transaction history.
+        </p>
+
+        <h2>Current App</h2>
+        <p>
+          The current FFM prototype runs as a buyer-facing web app on Arbitrum Sepolia with Walrus Mainnet storage.
+        </p>
+        <nav class="page-nav">
+          <a href="https://fair-file-marketplace.pages.dev">Open FFM</a>
+          <a href="./integration.html">Deployment and SDK</a>
+        </nav>
+      </article>
+    </main>
+  </body>
+</html>
