@@ -36,28 +36,42 @@ origin_shard XOR encoded_keystream == cipher_shard
 
 ## Current Parameters
 
-The current constants are:
+The grid constants are:
 
 ```text
 ROW_WIDTH_PRIMARY = 334
 COL_HEIGHT_SECONDARY = 667
-SYMBOL_SIZE = 1024
 DEFAULT_SAMPLE_COUNT = 15
 ```
 
-Each sample is a column-style linear constraint. One sampled column combines `667` logical symbols, so one sample checks a relation over many original symbols rather than one standalone file chunk.
-
-The currently covered logical data window is:
+The logical symbol size is dynamic and equals the Walrus RS2 symbol size for the committed blob:
 
 ```text
-334 * 667 * 1024 = 228124672 bytes
+symbol_size = walrus_symbol_size(blob_len)
+            = max(1, ceil(blob_len / (334 * 667))) rounded up to even bytes
 ```
 
-That is about `228.1 MB` decimal, or `217.6 MiB`.
+Layout rule (transposed Walrus-matrix mapping so that one sampled column
+exactly covers one Walrus message-matrix row):
 
-The current implementation should therefore be treated as fully covering only the first `228124672` bytes of the padded payload. If a payload is larger than this window, bytes after this range are not sampled by the current column proof construction.
+- RSLH column `c` (0..334) = Walrus message-matrix row `c` (primary sliver `c`)
+- RSLH row `r` (0..667) = Walrus message-matrix column `r`
+- logical symbol `(row r, col c)` covers flat bytes `[(c*667+r)*s, +(s))`
+- keystream cells are read at these same flat offsets (ChaCha8 byte-seek)
 
-For the current prototype and File Mall use case, this `228124672` byte covered window is an acceptable product limit. Assets larger than this should be rejected before listing or split into multiple proof-covered assets.
+Each sample is a column-style linear constraint. One sampled column combines
+`667` logical symbols (one Walrus message row), so one sample checks a relation
+over many original symbols rather than one standalone file chunk.
+
+The covered data window is exactly the Walrus message matrix area of the blob:
+`334 * 667 * symbol_size` bytes, which equals `228124672` bytes when the
+symbol size reaches the maximum 1024 multiple; smaller blobs use smaller
+symbols and the window shrinks accordingly.
+
+Assets whose committed blob exceeds the Walrus message matrix are rejected by
+Walrus encoding itself. For the current prototype and File Mall use case this
+is an acceptable product limit; larger assets should be rejected before
+listing or split into multiple proof-covered segments.
 
 The script derives sample indices as:
 
@@ -144,7 +158,24 @@ So a modest increase from `15` to `32`, `64`, or `128` samples can sharply reduc
 
 The current design has practical value because it turns a small number of zkVM checks into wide linear constraints over the encoded data. This is especially useful for proving large Walrus assets where full byte-level encryption verification would be too expensive.
 
-However, the current implementation should be treated as a probabilistic sampling proof, not a complete proof over every byte. It is strong against random or broad corruption, but the current version only samples column constraints and does not include independent membership proofs that the supplied sampled shards are opened from the committed Walrus blobs.
+The current implementation binds the sampled column proofs to the committed ciphertext:
+
+- `verify_walrus_blob_opening` verifies Merkle openings of the sampled shards up to
+  the per-shard pair roots, the pair root tree, and the Walrus blob id (`c_cipher`).
+- `verify_cipher_column_bound` opens, for each sampled column `c`, the data-region
+  leaves of primary sliver `c` (Walrus row `c`) and recomputes the column GF
+  aggregate from the real ciphertext symbols, then compares it byte-for-byte with
+  the supplied `cipher_shard`.
+- Because the opened symbols are Merkle-bound to `c_cipher`, tampering with the
+  ciphertext changes the blob id (and therefore `c_cipher`) or is detected by the
+  aggregate comparison; the proof therefore cannot be recomputed for a different
+  ciphertext than the one that was committed.
+
+It is still a probabilistic sampling proof, not a complete proof over every
+byte. The column constraints are strong against random or broad corruption, but
+out-of-blob bytes are covered by keystream cells only, and the origin side
+(`origin_shard`) is bound through the homomorphism relation rather than through
+independent Walrus openings.
 
 The current implementation also has an effective file-size caveat: its sampled column construction only covers about `228.1 MB`. Larger files may still produce Walrus blob IDs, but the VDD proof does not currently constrain the tail beyond that covered window.
 

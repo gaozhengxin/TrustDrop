@@ -30,7 +30,7 @@ use crate::{
         blob_encoding::OwnedOrBorrowedBlob,
         common::ConsistencyCheckType,
     },
-    merkle::DIGEST_LEN,
+    merkle::{DIGEST_LEN, Node},
     metadata::{BlobMetadataApi as _, VerifiedBlobMetadataWithId},
 };
 
@@ -103,6 +103,13 @@ pub trait EncodingFactory {
         &self,
         blob: &[u8],
     ) -> Result<VerifiedBlobMetadataWithId, DataTooLargeError>;
+
+    /// Computes the blob metadata together with the leaf hashes of all symbols of the fully
+    /// expanded encoding matrix.
+    fn compute_metadata_with_symbol_hashes(
+        &self,
+        blob: &[u8],
+    ) -> Result<(VerifiedBlobMetadataWithId, Vec<Node>), DataTooLargeError>;
 
     /// Computes the blob ID for the provided blob.
     fn compute_blob_id(&self, blob: &[u8]) -> Result<BlobId, DataTooLargeError> {
@@ -601,6 +608,15 @@ impl EncodingFactory for ReedSolomonEncodingConfig {
         blob: &[u8],
     ) -> Result<VerifiedBlobMetadataWithId, DataTooLargeError> {
         Ok(self.get_blob_encoder(blob)?.compute_metadata())
+    }
+
+    fn compute_metadata_with_symbol_hashes(
+        &self,
+        blob: &[u8],
+    ) -> Result<(VerifiedBlobMetadataWithId, Vec<Node>), DataTooLargeError> {
+        Ok(self
+            .get_blob_encoder(blob)?
+            .compute_metadata_with_symbol_hashes())
     }
 
     fn decode<S, E>(&self, blob_size: u64, slivers: S) -> Result<Vec<u8>, DecodeError>

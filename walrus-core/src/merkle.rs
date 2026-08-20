@@ -120,6 +120,13 @@ where
             path: path.into(),
         }
     }
+
+    /// Returns the sibling hashes on the path from the leaf to the root.
+    ///
+    /// The returned nodes are ordered from the leaf level up to (but excluding) the root.
+    pub fn path(&self) -> &[Node] {
+        &self.path
+    }
 }
 
 // Cannot be derived as many hash functions don't implement `Clone` and the derive is not smart
