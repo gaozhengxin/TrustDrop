@@ -17,6 +17,7 @@ use storage::{BlobId, StorageNetwork, WalrusClient, WalrusConfig};
 use dotenv::dotenv;
 use drop_lib::ecies;
 use drop_lib::kdf::key_derive;
+use drop_lib::walrus_open::build_cipher_blob_opening;
 
 mod config_check;
 
@@ -25,7 +26,7 @@ use drop_sdk::chacha8::{chacha8_decrypt, chacha8_encrypt};
 use drop_sdk::key_manager::{asset_key_commitment, derive_asset_encryption_key_from_seller_key};
 // use drop_sdk::proof::{run_vdd_proof};
 use drop_lib::rslh_ve::{
-    create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT, SYMBOL_SIZE,
+    create_honest_proof, derive_rslh_nonce, walrus_symbol_size, DEFAULT_SAMPLE_COUNT,
 };
 use drop_sdk::walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch};
 use sha2::{Digest, Sha256};
@@ -636,10 +637,8 @@ pub async fn stage_1_listing(
     original_asset_path: &Path,
 ) -> Result<ListingState> {
     println!(">>> [STAGE 1] LISTING...");
-    let mut file_payload = fs::read(original_asset_path)?;
+    let file_payload = fs::read(original_asset_path)?;
     let original_len = file_payload.len();
-    let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
-    file_payload.resize(padded_len, 0);
 
     let original_asset_id = compute_rs_id(&file_payload)?;
 
@@ -656,7 +655,6 @@ pub async fn stage_1_listing(
         hex::encode(encrypted_blob_id)
     );
     println!("  - original_len: {}", original_len);
-    println!("  - padded_len: {}", padded_len);
 
     let (walrus_blob_id, walrus_end_epoch) =
         upload_data_idempotent_with_end_epoch(walrus, encrypted_asset_data).await?;
@@ -1258,55 +1256,66 @@ pub async fn trigger_centralized_oracle_worker_if_enabled(
 /// - `(Bytes, Bytes)`: ZK 证明和公开值。
 pub async fn generate_vdd_proof(
     _walrus_client: &WalrusClient,
-    _walrus_blob_id: &str,
+    walrus_blob_id: &str,
     ctx: &SellerContext,
     original_asset_path: &Path,
     original_asset_id: [u8; 32],
     encrypted_blob_id: [u8; 32],
 ) -> Result<(Bytes, Bytes, String)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
-    let mut origin_data = fs::read(original_asset_path)?;
-    let original_len = origin_data.len();
-    let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
-    origin_data.resize(padded_len, 0);
+    let origin_data = fs::read(original_asset_path)?;
+    ensure!(!origin_data.is_empty(), "asset/data must not be empty");
 
     let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
+    let symbol_size = walrus_symbol_size(origin_data.len() as u64);
     let cipher_data = chacha8_encrypt(&origin_data, &ctx.asset_encryption_key, &nonce, 0)?;
     ensure!(
         compute_rs_id(&cipher_data)? == encrypted_blob_id,
         "locally reconstructed ciphertext does not match listing encrypted_blob_id"
     );
 
+    let c_origin_bytes = original_asset_id;
+    let c_cipher_bytes = encrypted_blob_id;
     let c_key_bytes = data_key_commitment(&ctx.asset_encryption_key);
 
     println!(">>> [VDD PROOF] zkVM Inputs:");
     println!(
         "  - original_asset_id: 0x{}",
-        hex::encode(original_asset_id)
+        hex::encode(c_origin_bytes)
     );
     println!(
         "  - encrypted_blob_id: 0x{}",
-        hex::encode(encrypted_blob_id)
+        hex::encode(c_cipher_bytes)
     );
     println!("  - c_key_bytes: 0x{}", hex::encode(c_key_bytes));
     println!("  - aux_data: 0x{}", hex::encode(aux_data));
+    println!("  - symbol_size: {}", symbol_size);
+    println!("  - walrus_blob_id: {}", walrus_blob_id);
     println!("  - asset_encryption_key: <redacted>");
+
+    // 与 RSLH-VE 采样相同种子
+    let mut seed_h = Sha256::new();
+    seed_h.update(&c_origin_bytes);
+    seed_h.update(&c_cipher_bytes);
+    seed_h.update(&c_key_bytes);
+    let seed: [u8; 32] = seed_h.finalize().into();
+
+    // Walrus 承诺打开（基于真实密文本地重构，blob id 必须等于 cCipher）
+    let cipher_opening = build_cipher_blob_opening(&cipher_data, &seed, symbol_size)
+        .map_err(|e| anyhow!("cipher blob opening construction failed: {e}"))?;
+    ensure!(
+        &cipher_opening.blob_id[..] == c_cipher_bytes.as_slice(),
+        "opening blob id must match c_cipher"
+    );
 
     // 2. === 构建 SP1 Stdin ===
     let mut stdin = SP1Stdin::new();
-    stdin.write(&original_asset_id);
-    stdin.write(&encrypted_blob_id);
+    stdin.write(&c_origin_bytes);
+    stdin.write(&c_cipher_bytes);
     stdin.write(&c_key_bytes);
     stdin.write(&aux_data.to_vec());
     stdin.write(&ctx.asset_encryption_key);
-
-    // 生成 RSLH-VE 协议所需的诚实性采样证明
-    let mut seed_h = Sha256::new();
-    seed_h.update(&original_asset_id);
-    seed_h.update(&encrypted_blob_id);
-    seed_h.update(&c_key_bytes);
-    let seed = seed_h.finalize();
 
     for i in 0..DEFAULT_SAMPLE_COUNT {
         let mut h = Sha256::new();
@@ -1318,6 +1327,7 @@ pub async fn generate_vdd_proof(
             &ctx.asset_encryption_key,
             &nonce,
             idx,
+            symbol_size,
             &origin_data,
             &cipher_data,
         );
@@ -1325,6 +1335,8 @@ pub async fn generate_vdd_proof(
         stdin.write(&proof.origin_shard);
         stdin.write(&proof.cipher_shard);
     }
+
+    stdin.write(&cipher_opening);
 
     // 3. === 设置并运行 Prover ===
     let client = ProverClient::builder()

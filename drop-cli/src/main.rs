@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use drop_lib::rslh_ve::{derive_rslh_nonce, SYMBOL_SIZE};
+use drop_lib::rslh_ve::derive_rslh_nonce;
 use drop_sdk::{
     abi::{exchange_channel_contract as channel_abi, exchange_hub_contract as hub_abi},
     chacha8::chacha8_encrypt,
@@ -3315,10 +3315,8 @@ async fn complete_test_flow(sale_id: &str) -> Result<()> {
 
 fn asset_prepare(file: &str) -> Result<()> {
     let config = load_config()?;
-    let mut payload = fs::read(file)?;
+    let payload = fs::read(file)?;
     let original_len = payload.len();
-    let padded_len = (original_len + SYMBOL_SIZE - 1) / SYMBOL_SIZE * SYMBOL_SIZE;
-    payload.resize(padded_len, 0);
 
     let original_asset_id = compute_rs_id(&payload)?;
     let asset_encryption_key = config.require_asset_encryption_key()?;
@@ -3347,7 +3345,6 @@ fn asset_prepare(file: &str) -> Result<()> {
     println!("saleId: {sale_id}");
     println!("inputAsset: {file}");
     println!("originalLength: {original_len}");
-    println!("paddedLength: {padded_len}");
     println!("originalAssetId: 0x{}", hex::encode(original_asset_id));
     println!("encryptedBlobId: 0x{}", hex::encode(encrypted_blob_id));
     println!("encryptedAsset: {}", encrypted_asset_path.display());
