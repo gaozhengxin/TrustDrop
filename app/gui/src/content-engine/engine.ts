@@ -118,7 +118,8 @@ async function fetchVision(cid: string): Promise<VisionDescriptor> {
   const cleanCid = cid.replace(/^ipfs:\/\//, "");
   const env = (import.meta as ImportMetaWithEnv).env ?? {};
   const gateway = (env.VITE_TRUSTDROP_IPFS_GATEWAY || DEFAULT_IPFS_GATEWAY).replace(/\/?$/, "/");
-  const urls = Array.from(new Set([gateway, ...PUBLIC_IPFS_GATEWAYS].map((item) => item.replace(/\/?$/, "/")))).map((item) => `${item}${cleanCid}`);
+  const gatewayUrls = Array.from(new Set([gateway, ...PUBLIC_IPFS_GATEWAYS].map((item) => item.replace(/\/?$/, "/")))).map((item) => `${item}${cleanCid}`);
+  const urls = [...gatewayUrls, "/vision/0.json"];
   return firstSuccessfulVision(urls);
 }
 
