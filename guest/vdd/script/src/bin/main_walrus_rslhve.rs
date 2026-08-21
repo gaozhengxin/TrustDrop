@@ -5,8 +5,11 @@ use rand::{rng, RngCore};
 use sha2::{Digest, Sha256};
 use sp1_sdk::{include_elf, Elf, Prover, ProverClient, ProvingKey, SP1Stdin};
 
-use drop_lib::rslh_ve::{create_honest_proof, derive_rslh_nonce, DEFAULT_SAMPLE_COUNT};
+use drop_lib::rslh_ve::{
+    create_honest_proof, derive_rslh_nonce, walrus_symbol_size, DEFAULT_SAMPLE_COUNT,
+};
 use drop_lib::walrus_address::compute_blob_id_default;
+use drop_lib::walrus_open::build_cipher_blob_opening;
 
 pub const VDD_WALRUS_RSLHVE_ELF: Elf = include_elf!("program-vdd-walrus-rslhve");
 
@@ -55,6 +58,7 @@ async fn main() {
 
     let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&key, aux_data);
+    let symbol_size = walrus_symbol_size(origin_data.len() as u64);
 
     // 线性加密生成密文
     let mut cipher_data = origin_data.clone();
@@ -87,7 +91,7 @@ async fn main() {
     seed_h.update(&c_origin_bytes);
     seed_h.update(&c_cipher_bytes);
     seed_h.update(&c_key_bytes);
-    let seed = seed_h.finalize();
+    let seed: [u8; 32] = seed_h.finalize().into();
 
     for i in 0..DEFAULT_SAMPLE_COUNT {
         let mut h = Sha256::new();
@@ -95,11 +99,21 @@ async fn main() {
         h.update(&(i as u32).to_le_bytes());
         let idx = u32::from_le_bytes(h.finalize()[0..4].try_into().unwrap()) % 1000;
 
-        let proof = create_honest_proof(&key, &nonce, idx, &origin_data, &cipher_data);
+        let proof = create_honest_proof(&key, &nonce, idx, symbol_size, &origin_data, &cipher_data);
         stdin.write(&proof.global_index);
         stdin.write(&proof.origin_shard);
         stdin.write(&proof.cipher_shard);
     }
+
+    // Walrus 承诺打开（guest 现在要求该输入）
+    let cipher_opening = build_cipher_blob_opening(&cipher_data, &seed, symbol_size)
+        .expect("cipher blob opening construction failed");
+    assert_eq!(
+        &cipher_opening.blob_id[..],
+        c_cipher.as_ref(),
+        "opening blob id must match c_cipher"
+    );
+    stdin.write(&cipher_opening);
 
     if args.execute {
         // --- 模式 A: Execute (模拟) ---

@@ -2437,6 +2437,7 @@ dependencies = [
  "k256",
  "light-poseidon",
  "rand 0.9.4",
+ "serde",
  "sha2 0.10.9",
  "sha256",
  "sp1-lib",

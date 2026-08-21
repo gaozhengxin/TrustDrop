@@ -405,6 +405,17 @@ impl<'a> BlobEncoder<'a> {
 
     /// Computes the metadata (blob ID, hashes) for the blob, without returning the slivers.
     pub fn compute_metadata(&self) -> VerifiedBlobMetadataWithId {
+        self.compute_metadata_with_symbol_hashes().0
+    }
+
+    /// Computes the metadata (blob ID, hashes) together with the leaf hashes of all symbols of
+    /// the fully expanded encoding matrix.
+    ///
+    /// The returned vector is the encoding matrix in row-major order with `n_shards * n_shards`
+    /// entries; the entry at `row * n_shards + col` is the leaf hash
+    /// `blake2b(0x00 || symbol(primary = row, secondary = col))`, i.e., the same hashes used to
+    /// derive the per-shard Merkle roots of the metadata.
+    pub fn compute_metadata_with_symbol_hashes(&self) -> (VerifiedBlobMetadataWithId, Vec<Node>) {
         let _guard = self.inner.span.enter();
         tracing::debug!("starting to compute metadata");
         let unencoded_length =
@@ -479,11 +490,12 @@ impl<'a> BlobEncoder<'a> {
 
         drop(primary_encoder);
 
-        BlobEncoderData::compute_metadata_from_symbol_hashes(
+        let metadata = BlobEncoderData::compute_metadata_from_symbol_hashes(
             self.inner.config,
             &symbol_hashes,
             unencoded_length,
-        )
+        );
+        (metadata, symbol_hashes)
     }
 
     /// Returns a reference to the blob data.

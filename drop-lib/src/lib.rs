@@ -6,6 +6,8 @@ pub mod poseidon;
 pub mod common;
 pub mod merkle;
 pub mod walrus_address;
+pub mod walrus_blob_id;
+pub mod walrus_open;
 pub mod cid;
 pub mod rslh_ve;
 pub mod ecies;

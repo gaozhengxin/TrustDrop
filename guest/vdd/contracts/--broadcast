@@ -1,0 +1,26 @@
+Compiling 19 files with Solc 0.8.27
+Solc 0.8.27 finished in 1.30s
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+  --> src/VDD_RSLH.sol:63:5:
+   |
+63 |     function verifyVDD(
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+  --> src/VDD_filecoin.sol:67:5:
+   |
+67 |     function verifyVDD(
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Script ran successfully.
+Gas used: 616740
+
+== Logs ==
+  Extracted VDD VKey: 0x008c8e9290900f68e2386dbb59f40bfe4253660d8fa900efd7b4f991c9f4628b
+  -----------------------------------------
+  VDD_RSLH deployed successfully!
+  Address: 0xaA4Fecf5A840Dcf2Af31681460A794210dd40C36
+  -----------------------------------------
+
+If you wish to simulate on-chain transactions pass a RPC URL.
