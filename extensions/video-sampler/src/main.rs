@@ -54,15 +54,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start_seconds = plan.decode_start_time as f64 / track.timescale as f64;
         let duration_seconds = (plan.presentation_end_time - plan.decode_start_time) as f64
             / track.timescale as f64;
-        let status = Command::new("/usr/bin/avconvert")
-            .args(["--source", input.to_str().ok_or("non-UTF8 input path")?])
-            .args(["--output", preview_path.to_str().ok_or("non-UTF8 output path")?])
-            .args(["--preset", "PresetPassthrough", "--replace"])
-            .args(["--start", &format!("{start_seconds:.6}")])
-            .args(["--duration", &format!("{duration_seconds:.6}")])
+        let status = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y"])
+            .args(["-ss", &format!("{start_seconds:.6}")])
+            .args(["-i", input.to_str().ok_or("non-UTF8 input path")?])
+            .args(["-t", &format!("{duration_seconds:.6}")])
+            .args(["-map", "0:v:0", "-c:v", "copy", "-an"])
+            .args(["-avoid_negative_ts", "make_zero", "-movflags", "+faststart"])
+            .arg(preview_path.to_str().ok_or("non-UTF8 output path")?)
             .status()?;
         if !status.success() {
-            return Err(format!("avconvert failed for bucket {}", plan.bucket_index).into());
+            return Err(format!("ffmpeg failed for bucket {}", plan.bucket_index).into());
         }
 
         preview_files.push(preview_name.clone());
