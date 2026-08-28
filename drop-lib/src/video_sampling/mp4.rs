@@ -153,6 +153,15 @@ pub fn parse_mp4_video_track(data: &[u8]) -> Result<VideoTrack, Mp4Error> {
         }
     }
     let moov = moov.ok_or(Mp4Error::MissingMoov)?;
+    parse_mp4_video_track_from_moov(moov, data.len() as u64)
+}
+
+/// Parses a video index from an already authenticated `moov` payload.
+/// `file_len` is still checked against every sample byte range.
+pub fn parse_mp4_video_track_from_moov(
+    moov: &[u8],
+    file_len: u64,
+) -> Result<VideoTrack, Mp4Error> {
 
     let mut video = None;
     let mut audio_tracks = 0usize;
@@ -177,7 +186,6 @@ pub fn parse_mp4_video_track(data: &[u8]) -> Result<VideoTrack, Mp4Error> {
         }
     }
     let video = video.ok_or(Mp4Error::MissingVideoTrack)?;
-    let file_len = data.len() as u64;
     for sample in &video.samples {
         let end = sample
             .byte_offset
