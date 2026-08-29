@@ -1,3 +1,5 @@
+#[cfg(feature = "chain-verify")]
+use alloy_sol_types::{sol, SolCall};
 #[cfg(any(feature = "execute", feature = "network"))]
 use alloy_sol_types::SolValue;
 use drop_lib::{
@@ -102,7 +104,7 @@ struct SaleContext {
     external_randomness: [u8; 32],
 }
 
-#[cfg(not(any(feature = "execute", feature = "network")))]
+#[cfg(not(any(feature = "execute", feature = "network", feature = "chain-verify")))]
 fn main() {
     let asset = PathBuf::from(
         env::args()
@@ -178,8 +180,12 @@ fn main() {
     println!("witness: {}", witness_path.display());
 }
 
-#[cfg(all(feature = "execute", feature = "network"))]
-compile_error!("features `execute` and `network` are mutually exclusive");
+#[cfg(any(
+    all(feature = "execute", feature = "network"),
+    all(feature = "execute", feature = "chain-verify"),
+    all(feature = "network", feature = "chain-verify")
+))]
+compile_error!("features `execute`, `network`, and `chain-verify` are mutually exclusive");
 
 #[cfg(feature = "execute")]
 #[tokio::main]
@@ -295,6 +301,74 @@ fn network_private_key() -> String {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .expect("SP1_PRIVATE_KEY is missing from key file")
+}
+
+#[cfg(feature = "chain-verify")]
+sol! {
+    function verifyProof(
+        bytes32 programVKey,
+        bytes calldata publicValues,
+        bytes calldata proofBytes
+    ) external view;
+}
+
+#[cfg(feature = "chain-verify")]
+#[tokio::main]
+async fn main() {
+    let fixture_path = PathBuf::from(
+        env::args()
+            .nth(1)
+            .expect("usage: video-sampling-client <proof.json>"),
+    );
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture_path).expect("read video-sampling proof fixture"))
+            .expect("decode video-sampling proof fixture");
+    let decode_hex = |field: &str| {
+        hex::decode(
+            fixture[field]
+                .as_str()
+                .unwrap_or_else(|| panic!("missing fixture field: {field}"))
+                .strip_prefix("0x")
+                .expect("fixture hex must start with 0x"),
+        )
+        .expect("invalid fixture hex")
+    };
+    let vkey: [u8; 32] = decode_hex("programVKey")
+        .try_into()
+        .expect("programVKey must be 32 bytes");
+    let call = verifyProofCall {
+        programVKey: vkey.into(),
+        publicValues: decode_hex("publicValues").into(),
+        proofBytes: decode_hex("proof").into(),
+    };
+    let gateway = env::var("SP1_VERIFIER_GATEWAY")
+        .unwrap_or_else(|_| "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_owned());
+    let rpc = env::var("ARBITRUM_SEPOLIA_RPC_URL")
+        .unwrap_or_else(|_| "https://sepolia-rollup.arbitrum.io/rpc".to_owned());
+    let response: serde_json::Value = reqwest::Client::new()
+        .post(rpc)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [{
+                "to": gateway,
+                "data": format!("0x{}", hex::encode(call.abi_encode())),
+            }, "latest"],
+        }))
+        .send()
+        .await
+        .expect("send verifier eth_call")
+        .error_for_status()
+        .expect("verifier RPC HTTP error")
+        .json()
+        .await
+        .expect("decode verifier RPC response");
+    if let Some(error) = response.get("error") {
+        panic!("SP1 gateway rejected proof: {error}");
+    }
+    assert_eq!(response["result"], "0x", "unexpected verifier return data");
+    println!("chainVerification: accepted by {gateway}");
 }
 
 fn build_opening_from_slivers(
