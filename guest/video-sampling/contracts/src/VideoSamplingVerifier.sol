@@ -7,12 +7,12 @@ import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 /// @notice Verifies an SP1 proof and binds its six fixed public values to a certificate hash.
 contract VideoSamplingVerifier {
     struct PublicValues {
-        bytes32 sourceCommitment;
+        bytes32 originBlobId;
         bytes32 specHash;
         bytes32 samplingSeed;
-        bytes32 evidenceCidDigest0;
-        bytes32 evidenceCidDigest1;
-        bytes32 evidenceCidDigest2;
+        bytes32 previewCidDigest0;
+        bytes32 previewCidDigest1;
+        bytes32 previewCidDigest2;
     }
 
     ISP1Verifier public immutable verifier;

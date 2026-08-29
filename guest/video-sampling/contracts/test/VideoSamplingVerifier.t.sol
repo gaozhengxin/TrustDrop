@@ -32,8 +32,8 @@ contract VideoSamplingVerifierTest is Test {
         bytes32 binding = verifier.certificateHash(values);
         VideoSamplingVerifier.PublicValues memory decoded =
             verifier.verifyVideoSamplingProof(bytes("valid-proof"), encoded, binding);
-        assertEq(decoded.sourceCommitment, values.sourceCommitment);
-        assertEq(decoded.evidenceCidDigest2, values.evidenceCidDigest2);
+        assertEq(decoded.originBlobId, values.originBlobId);
+        assertEq(decoded.previewCidDigest2, values.previewCidDigest2);
     }
 
     function testRejectsWrongCertificateBinding() public {
@@ -42,14 +42,25 @@ contract VideoSamplingVerifierTest is Test {
         verifier.verifyVideoSamplingProof(bytes("valid-proof"), encoded, bytes32(uint256(9)));
     }
 
+    function testRejectsWrongPublicValuesLength() public {
+        vm.expectRevert("invalid public values length");
+        verifier.verifyVideoSamplingProof(bytes("valid-proof"), new bytes(32 * 5), bytes32(0));
+    }
+
+    function testRejectsWrongProgramProof() public {
+        bytes memory encoded = abi.encode(sampleValues());
+        vm.expectRevert("invalid proof");
+        verifier.verifyVideoSamplingProof(bytes("wrong-proof"), encoded, bytes32(0));
+    }
+
     function sampleValues() private pure returns (VideoSamplingVerifier.PublicValues memory values) {
         values = VideoSamplingVerifier.PublicValues({
-            sourceCommitment: bytes32(uint256(1)),
+            originBlobId: bytes32(uint256(1)),
             specHash: bytes32(uint256(2)),
             samplingSeed: bytes32(uint256(3)),
-            evidenceCidDigest0: bytes32(uint256(4)),
-            evidenceCidDigest1: bytes32(uint256(5)),
-            evidenceCidDigest2: bytes32(uint256(6))
+            previewCidDigest0: bytes32(uint256(4)),
+            previewCidDigest1: bytes32(uint256(5)),
+            previewCidDigest2: bytes32(uint256(6))
         });
     }
 }
