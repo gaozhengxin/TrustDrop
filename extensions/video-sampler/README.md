@@ -1,6 +1,23 @@
 # Video sampler extension
 
-This extension parses one MP4 video track, derives three deterministic sample windows, writes their evidence CIDs to `manifest.json`, and uses `ffmpeg` stream copy to create three playable MP4 previews.
+This extension parses one MP4 video track, derives three deterministic sample windows, uses `ffmpeg` stream copy to create three playable MP4 previews, and uploads those previews to public IPFS through Pinata. It checks every CID returned by Pinata against the locally computed CID before writing `manifest.json`.
+
+## Pinata credentials
+
+Keep credentials outside the repository. Point `PINATA_CONFIG_FILE` at a mounted file containing either a JWT:
+
+```text
+PINATA_JWT=...
+```
+
+or a legacy key pair:
+
+```text
+PINATA_API_KEY=...
+PINATA_SECRET_API_KEY=...
+```
+
+Uploading is enabled by default. Set `PINATA_UPLOAD=0` only for an explicit local-only run.
 
 The commands below assume they are run from the repository root. The input fixture can be replaced with another supported MP4 file.
 
@@ -29,6 +46,8 @@ docker run --rm \
   --platform linux/amd64 \
   --volume "$PWD:/workspace:ro" \
   --volume /tmp/trustdrop-video-sampler-output:/output \
+  --volume /absolute/path/pinata.env:/run/secrets/pinata.env:ro \
+  --env PINATA_CONFIG_FILE=/run/secrets/pinata.env \
   --workdir /workspace/extensions/video-sampler \
   trustdrop/video-sampler-dev:ubuntu-amd64 \
   bash -lc 'cargo run --release -- \
@@ -59,6 +78,8 @@ cargo run --release -- \
   /tmp/how-a-mosquito-operates-1912
 ```
 
+For Linux, set `PINATA_CONFIG_FILE` to the credential file path before running the command.
+
 ## Expected output
 
 Both commands create the same output layout:
@@ -72,4 +93,4 @@ how-a-mosquito-operates-1912/
 └── preview-2.mp4
 ```
 
-`manifest.json` records the deterministic sampling seed, source binding placeholder, sample ranges, and evidence CID for each window. `preview.html` is only a local viewer for the three generated previews.
+`manifest.json` records the deterministic sampling seed, source binding placeholder, sample ranges, preview CID, `ipfs://` URL, and evidence CID for each window. `preview.html` is only a local viewer for the three generated previews.
