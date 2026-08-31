@@ -29,7 +29,7 @@ import {
   type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
 import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
-import { loadVideoProof, verifyVideoProof, videoProofCid, type LoadedVideoProof } from "./video-proof";
+import { loadVideoProof, verifyVideoProof, videoProofCalldata, videoProofCid, videoProofCurlCommand, type LoadedVideoProof } from "./video-proof";
 
 type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate";
 type ImportMetaWithEnv = ImportMeta & {
@@ -603,6 +603,17 @@ function renderCertificate(): string {
           <div><dt>Proof system</dt><dd>${escapeHtml(certificate.proof.system)}</dd></div>
           <div><dt>Program vkey</dt><dd><code>${escapeHtml(certificate.proof.programVKey)}</code></dd></div>
         </dl>
+        <details class="verification-reproduce">
+          <summary>Reproduce this verification</summary>
+          <div class="verification-code-heading"><strong>Calldata</strong></div>
+          <pre><code>${escapeHtml(videoProofCalldata(certificate))}</code></pre>
+          <div class="verification-code-heading">
+            <strong>Terminal command</strong>
+            <button class="text-button" id="copy-verification-command-button" type="button">Copy</button>
+          </div>
+          <p>Paste this command into Terminal. A valid proof prints <code>Verified</code>.</p>
+          <pre><code id="verification-command">${escapeHtml(videoProofCurlCommand(certificate))}</code></pre>
+        </details>
       </section>
       <section class="certificate-panel">
         <h2>Claimed content</h2>
@@ -804,6 +815,16 @@ function bindEvents(root: HTMLElement): void {
     anchor.download = `trustdrop-video-certificate-${state.videoProof.certificateCid}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
+  });
+  root.querySelector<HTMLButtonElement>("#copy-verification-command-button")?.addEventListener("click", async (event) => {
+    if (!state.videoProof) return;
+    const button = event.currentTarget as HTMLButtonElement;
+    try {
+      await navigator.clipboard.writeText(videoProofCurlCommand(state.videoProof.certificate));
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Copy failed";
+    }
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {

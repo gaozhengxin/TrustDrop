@@ -81,14 +81,33 @@ export async function loadVideoProof(certificateCid: string, sale: MarketplaceSa
 }
 
 export async function verifyVideoProof(certificate: VideoSamplingCertificate): Promise<void> {
-  const data = encodeFunctionData({
+  const data = videoProofCalldata(certificate);
+  const client = createPublicClient({ chain: arbitrumSepolia, transport: http(DEFAULT_RPC_URL) });
+  const result = await client.call({ to: certificate.verifier.address, data });
+  if (result.data !== undefined && result.data !== "0x") throw new Error("Verifier returned unexpected data");
+}
+
+export function videoProofCalldata(certificate: VideoSamplingCertificate): Hex {
+  return encodeFunctionData({
     abi: verifierAbi,
     functionName: "verifyProof",
     args: [certificate.proof.programVKey, certificate.proof.publicValues, certificate.proof.proofBytes],
   });
-  const client = createPublicClient({ chain: arbitrumSepolia, transport: http(DEFAULT_RPC_URL) });
-  const result = await client.call({ to: certificate.verifier.address, data });
-  if (result.data !== undefined && result.data !== "0x") throw new Error("Verifier returned unexpected data");
+}
+
+export function videoProofCurlCommand(certificate: VideoSamplingCertificate): string {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_call",
+    params: [{ to: certificate.verifier.address, data: videoProofCalldata(certificate) }, "latest"],
+  });
+  return [
+    `curl -sS '${DEFAULT_RPC_URL}' \\`,
+    `  -H 'content-type: application/json' \\`,
+    `  --data '${body}' \\`,
+    `| python3 -c 'import json,sys; r=json.load(sys.stdin); print("Verified" if r.get("result") == "0x" else "Verification failed: " + str(r.get("error", r)))'`,
+  ].join("\n");
 }
 
 function validateCertificate(value: unknown, sale: MarketplaceSale): VideoSamplingCertificate {

@@ -176,6 +176,43 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.verification-reproduce {
+  border-top: 1px solid #deded8;
+  margin-top: 18px;
+  padding-top: 14px;
+}
+
+.verification-reproduce summary {
+  color: #19332e;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.verification-code-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.verification-reproduce pre {
+  background: #171b1a;
+  border-radius: 8px;
+  color: #dff3e8;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 8px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.verification-reproduce p {
+  margin-top: 8px;
+}
+
 @media (max-width: 820px) {
   .certificate-heading {
     display: grid;
