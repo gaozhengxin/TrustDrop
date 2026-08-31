@@ -748,6 +748,8 @@ async fn sale_update_metadata(sale_id: &str, args: &[String]) -> Result<()> {
 
     println!("sending updateFile transaction...");
     let call = channel.update_file(parse_hex32_state(sale_id)?, commitment, price, info);
+    let estimated_gas = call.estimate_gas().await?;
+    let call = call.gas(estimated_gas * U256::from(120u64) / U256::from(100u64));
     let pending = call.send().await?;
     let tx_hash = pending.tx_hash();
     println!("txHash: {tx_hash:?}");
