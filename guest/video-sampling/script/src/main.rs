@@ -106,18 +106,57 @@ struct SaleContext {
     external_randomness: [u8; 32],
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SellerContext {
+    sale: SaleContext,
+    random_source: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaleContextFile {
+    chain_id: u64,
+    sale_contract: String,
+    sale_id: String,
+    external_randomness: String,
+    random_source: String,
+}
+
+impl SaleContextFile {
+    fn into_seller_context(self) -> Result<SellerContext, String> {
+        let sale = SaleContext {
+            chain_id: self.chain_id,
+            sale_contract: decode_hex_array(&self.sale_contract, "saleContract")?,
+            sale_id: decode_hex_array(&self.sale_id, "saleId")?,
+            external_randomness: decode_hex_array(&self.external_randomness, "externalRandomness")?,
+        };
+        if sale.chain_id == 0
+            || sale.sale_contract == [0; 20]
+            || sale.sale_id == [0; 32]
+            || sale.external_randomness == [0; 32]
+            || self.random_source.trim().is_empty()
+        {
+            return Err("sale context cannot contain placeholder values".to_owned());
+        }
+        Ok(SellerContext {
+            sale,
+            random_source: self.random_source,
+        })
+    }
+}
+
 #[cfg(not(any(feature = "execute", feature = "network", feature = "chain-verify")))]
 fn main() {
-    let asset = PathBuf::from(
-        env::args()
-            .nth(1)
-            .expect("usage: video-sampling-script <input.mp4> <output-dir>"),
-    );
-    let output_dir = PathBuf::from(
-        env::args()
-            .nth(2)
-            .expect("usage: video-sampling-script <input.mp4> <output-dir>"),
-    );
+    let usage = "usage: video-sampling-client <input.mp4> <output-dir> <sale-context.json>";
+    let asset = PathBuf::from(env::args().nth(1).expect(usage));
+    let output_dir = PathBuf::from(env::args().nth(2).expect(usage));
+    let context_path = PathBuf::from(env::args().nth(3).expect(usage));
+    let seller_context = serde_json::from_slice::<SaleContextFile>(
+        &fs::read(context_path).expect("read sale context JSON"),
+    )
+    .expect("decode sale context JSON")
+    .into_seller_context()
+    .expect("validate sale context");
     fs::create_dir_all(&output_dir).expect("create output directory");
     let mp4 = fs::read(&asset).expect("read source MP4");
     let source_len = mp4.len();
@@ -130,12 +169,7 @@ fn main() {
     let (slivers, metadata) = config.encode_with_metadata(mp4).expect("Walrus encoding");
     let origin_blob_id: [u8; 32] = metadata.blob_id().as_ref().try_into().unwrap();
 
-    let sale = SaleContext {
-        chain_id: 0,
-        sale_contract: [0; 20],
-        sale_id: [0; 32],
-        external_randomness: [0; 32],
-    };
+    let sale = &seller_context.sale;
     let spec_hash = sampling_spec_hash(PREVIEW_DURATION_MS).unwrap();
     let seed = derive_sampling_seed(&SamplingSeedInput {
         chain_id: sale.chain_id,
@@ -178,7 +212,11 @@ fn main() {
         previews,
     };
     let witness_path = output_dir.join("video-sampling-witness.bin");
-    fs::write(&witness_path, bincode::serialize(&(witness, sale)).unwrap()).unwrap();
+    fs::write(
+        &witness_path,
+        bincode::serialize(&(witness, seller_context)).unwrap(),
+    )
+    .unwrap();
     println!("witness: {}", witness_path.display());
 }
 
@@ -199,8 +237,9 @@ async fn main() {
             .expect("usage: video-sampling-script <witness.bin>"),
     );
     let encoded = fs::read(&witness_path).expect("read witness");
-    let (witness, sale): (VideoSamplingWitness, SaleContext) =
+    let (witness, seller_context): (VideoSamplingWitness, SellerContext) =
         bincode::deserialize(&encoded).expect("decode witness");
+    let sale = seller_context.sale;
     let origin_blob_id = witness.origin.blob_id;
     let mut stdin = SP1Stdin::new();
     stdin.write(&witness);
@@ -245,8 +284,9 @@ async fn main() {
             .expect("usage: video-sampling-script <witness.bin> <proof.json>"),
     );
     let encoded = fs::read(&witness_path).expect("read witness");
-    let (witness, sale): (VideoSamplingWitness, SaleContext) =
+    let (witness, seller_context): (VideoSamplingWitness, SellerContext) =
         bincode::deserialize(&encoded).expect("decode witness");
+    let sale = seller_context.sale;
     let origin_blob_id = witness.origin.blob_id;
 
     let mut stdin = SP1Stdin::new();
@@ -571,6 +611,16 @@ fn mark_range(
         let leaf = (flat % COL_HEIGHT_SECONDARY as u64) as u32;
         needed.entry(shard).or_default().insert(leaf);
     }
+}
+
+fn decode_hex_array<const N: usize>(value: &str, field: &str) -> Result<[u8; N], String> {
+    let raw = value
+        .strip_prefix("0x")
+        .ok_or_else(|| format!("{field} must start with 0x"))?;
+    let bytes = hex::decode(raw).map_err(|_| format!("{field} must be valid hex"))?;
+    bytes
+        .try_into()
+        .map_err(|_| format!("{field} must contain exactly {N} bytes"))
 }
 
 fn parse_top_level_boxes(data: &[u8]) -> Vec<TopLevelBox> {
