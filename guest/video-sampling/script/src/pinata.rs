@@ -2,7 +2,8 @@ use drop_lib::cid::compute_ipfs_cid;
 use reqwest::multipart::{Form, Part};
 use std::{collections::HashMap, env, fs};
 
-const PINATA_UPLOAD_URL: &str = "https://api.pinata.cloud/pinning/pinFileToIPFS";
+const PINATA_V3_UPLOAD_URL: &str = "https://uploads.pinata.cloud/v3/files";
+const PINATA_LEGACY_UPLOAD_URL: &str = "https://api.pinata.cloud/pinning/pinFileToIPFS";
 
 #[derive(Debug)]
 pub enum PinataAuth {
@@ -45,24 +46,41 @@ pub async fn upload_bytes(
         .file_name(name.to_owned())
         .mime_str(mime)
         .map_err(|error| error.to_string())?;
-    let form = Form::new()
-        .part("file", file)
-        .text(
-            "pinataMetadata",
-            serde_json::json!({ "name": name }).to_string(),
-        )
-        .text(
-            "pinataOptions",
-            serde_json::json!({ "cidVersion": 1 }).to_string(),
-        );
-    let request = reqwest::Client::new()
-        .post(PINATA_UPLOAD_URL)
-        .multipart(form);
-    let request = match auth {
-        PinataAuth::Jwt(jwt) => request.bearer_auth(jwt),
-        PinataAuth::ApiKey { key, secret } => request
-            .header("pinata_api_key", key)
-            .header("pinata_secret_api_key", secret),
+    let client = reqwest::Client::new();
+    let (request, cid_path): (_, &[&str]) = match auth {
+        PinataAuth::Jwt(jwt) => {
+            let form = Form::new()
+                .part("file", file)
+                .text("network", "public")
+                .text("name", name.to_owned());
+            (
+                client
+                    .post(PINATA_V3_UPLOAD_URL)
+                    .bearer_auth(jwt)
+                    .multipart(form),
+                &["data", "cid"],
+            )
+        }
+        PinataAuth::ApiKey { key, secret } => {
+            let form = Form::new()
+                .part("file", file)
+                .text(
+                    "pinataMetadata",
+                    serde_json::json!({ "name": name }).to_string(),
+                )
+                .text(
+                    "pinataOptions",
+                    serde_json::json!({ "cidVersion": 1 }).to_string(),
+                );
+            (
+                client
+                    .post(PINATA_LEGACY_UPLOAD_URL)
+                    .header("pinata_api_key", key)
+                    .header("pinata_secret_api_key", secret)
+                    .multipart(form),
+                &["IpfsHash"],
+            )
+        }
     };
     let body: serde_json::Value = request
         .send()
@@ -73,9 +91,11 @@ pub async fn upload_bytes(
         .json()
         .await
         .map_err(|error| error.to_string())?;
-    let returned_cid = body["IpfsHash"]
-        .as_str()
-        .ok_or_else(|| "Pinata response is missing IpfsHash".to_owned())?;
+    let returned_cid = cid_path
+        .iter()
+        .try_fold(&body, |value, key| value.get(key))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Pinata response is missing the uploaded CID".to_owned())?;
     if returned_cid != local_cid {
         return Err(format!(
             "Pinata CID mismatch for {name}: local={local_cid}, returned={returned_cid}"
