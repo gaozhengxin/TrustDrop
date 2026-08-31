@@ -88,7 +88,7 @@ export async function verifyVideoProof(certificate: VideoSamplingCertificate): P
   });
   const client = createPublicClient({ chain: arbitrumSepolia, transport: http(DEFAULT_RPC_URL) });
   const result = await client.call({ to: certificate.verifier.address, data });
-  if (result.data !== "0x") throw new Error("Verifier returned unexpected data");
+  if (result.data !== undefined && result.data !== "0x") throw new Error("Verifier returned unexpected data");
 }
 
 function validateCertificate(value: unknown, sale: MarketplaceSale): VideoSamplingCertificate {
