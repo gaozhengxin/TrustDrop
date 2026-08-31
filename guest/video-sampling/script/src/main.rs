@@ -1,4 +1,5 @@
 mod certificate;
+mod pinata;
 
 #[cfg(any(feature = "execute", feature = "network"))]
 use alloy_sol_types::SolValue;
