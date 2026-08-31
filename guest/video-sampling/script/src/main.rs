@@ -1,7 +1,9 @@
-#[cfg(feature = "chain-verify")]
-use alloy_sol_types::{sol, SolCall};
+mod certificate;
+
 #[cfg(any(feature = "execute", feature = "network"))]
 use alloy_sol_types::SolValue;
+#[cfg(feature = "chain-verify")]
+use alloy_sol_types::{sol, SolCall};
 use drop_lib::{
     rslh_ve::{walrus_symbol_size, COL_HEIGHT_SECONDARY},
     video_sampling::{
