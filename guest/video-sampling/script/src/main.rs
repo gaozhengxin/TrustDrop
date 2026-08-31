@@ -1,10 +1,15 @@
 mod certificate;
 mod pinata;
 
-#[cfg(any(feature = "execute", feature = "network"))]
+#[cfg(any(feature = "execute", feature = "network", feature = "publish"))]
 use alloy_sol_types::SolValue;
 #[cfg(feature = "chain-verify")]
 use alloy_sol_types::{sol, SolCall};
+#[cfg(feature = "publish")]
+use certificate::{
+    CertificateOrigin, CertificatePreview, CertificateProof, CertificateSale, CertificateSampling,
+    CertificateVerifier, VideoSamplingCertificate,
+};
 use drop_lib::{
     rslh_ve::{walrus_symbol_size, COL_HEIGHT_SECONDARY},
     video_sampling::{
@@ -13,6 +18,8 @@ use drop_lib::{
     },
     walrus_blob_id::SliverPairRoots,
 };
+#[cfg(feature = "publish")]
+use pinata::{upload_bytes, PinataAuth};
 use serde::{Deserialize, Serialize};
 #[cfg(any(feature = "execute", feature = "network"))]
 use sp1_sdk::{include_elf, Prover, ProverClient, SP1Stdin};
@@ -25,7 +32,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-#[cfg(any(feature = "execute", feature = "network"))]
+#[cfg(any(feature = "execute", feature = "network", feature = "publish"))]
 use video_sampling_lib::VideoSamplingPublicValues;
 use walrus_core::{
     encoding::{EncodingConfig, EncodingFactory as _, SliverPair},
@@ -146,7 +153,12 @@ impl SaleContextFile {
     }
 }
 
-#[cfg(not(any(feature = "execute", feature = "network", feature = "chain-verify")))]
+#[cfg(not(any(
+    feature = "execute",
+    feature = "network",
+    feature = "chain-verify",
+    feature = "publish"
+)))]
 fn main() {
     let usage = "usage: video-sampling-client <input.mp4> <output-dir> <sale-context.json>";
     let asset = PathBuf::from(env::args().nth(1).expect(usage));
@@ -224,9 +236,12 @@ fn main() {
 #[cfg(any(
     all(feature = "execute", feature = "network"),
     all(feature = "execute", feature = "chain-verify"),
-    all(feature = "network", feature = "chain-verify")
+    all(feature = "network", feature = "chain-verify"),
+    all(feature = "publish", feature = "execute"),
+    all(feature = "publish", feature = "network"),
+    all(feature = "publish", feature = "chain-verify")
 ))]
-compile_error!("features `execute`, `network`, and `chain-verify` are mutually exclusive");
+compile_error!("runtime features are mutually exclusive");
 
 #[cfg(feature = "execute")]
 #[tokio::main]
@@ -326,6 +341,128 @@ async fn main() {
     fs::write(&proof_path, serde_json::to_vec_pretty(&fixture).unwrap())
         .expect("write proof fixture");
     println!("networkProof: {}", proof_path.display());
+}
+
+#[cfg(feature = "publish")]
+#[tokio::main]
+async fn main() {
+    let usage = "usage: video-sampling-client <witness.bin> <proof.json> <certificate.json>";
+    let witness_path = PathBuf::from(env::args().nth(1).expect(usage));
+    let proof_path = PathBuf::from(env::args().nth(2).expect(usage));
+    let certificate_path = PathBuf::from(env::args().nth(3).expect(usage));
+    let (witness, seller_context): (VideoSamplingWitness, SellerContext) =
+        bincode::deserialize(&fs::read(&witness_path).expect("read witness"))
+            .expect("decode witness");
+    let fixture: serde_json::Value =
+        serde_json::from_slice(&fs::read(proof_path).expect("read proof fixture"))
+            .expect("decode proof fixture");
+    let public_values = decode_fixture_hex(&fixture, "publicValues");
+    let values = VideoSamplingPublicValues::abi_decode(&public_values)
+        .expect("decode video sampling public values");
+    let origin_blob_id = witness.origin.blob_id;
+    assert_eq!(<[u8; 32]>::from(values.originBlobId), origin_blob_id);
+    assert_eq!(
+        fixture_string(&fixture, "originBlobId"),
+        format!("0x{}", hex::encode(origin_blob_id)),
+        "proof fixture origin does not match witness"
+    );
+
+    let output_dir = witness_path
+        .parent()
+        .expect("witness must have a parent directory");
+    let expected_digests = [
+        <[u8; 32]>::from(values.previewCidDigest0),
+        <[u8; 32]>::from(values.previewCidDigest1),
+        <[u8; 32]>::from(values.previewCidDigest2),
+    ];
+    let auth = PinataAuth::load().expect("load Pinata credentials");
+    let mut previews = Vec::with_capacity(3);
+    for bucket in 0..3u8 {
+        let name = format!("preview-{bucket}.mp4");
+        let bytes = fs::read(output_dir.join(&name)).expect("read preview MP4");
+        let local_cid = drop_lib::cid::compute_ipfs_cid(&bytes);
+        let cid = cid::Cid::try_from(local_cid.as_str()).expect("parse local preview CID");
+        assert_eq!(
+            cid.hash().digest(),
+            expected_digests[bucket as usize],
+            "preview CID digest does not match guest public values"
+        );
+        let uploaded_cid = upload_bytes(&auth, &name, "video/mp4", bytes)
+            .await
+            .expect("upload preview to Pinata");
+        previews.push(CertificatePreview {
+            bucket,
+            cid: uploaded_cid,
+        });
+    }
+
+    let sale = seller_context.sale;
+    let verifier_address = env::var("SP1_VERIFIER_GATEWAY")
+        .unwrap_or_else(|_| "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_owned());
+    let verifier_version =
+        env::var("SP1_VERIFIER_VERSION").unwrap_or_else(|_| "sp1-groth16-gateway".to_owned());
+    let certificate = VideoSamplingCertificate::new(
+        CertificateSale {
+            chain_id: sale.chain_id,
+            contract: format!("0x{}", hex::encode(sale.sale_contract)),
+            sale_id: format!("0x{}", hex::encode(sale.sale_id)),
+        },
+        CertificateOrigin {
+            walrus_blob_id: walrus_core::BlobId(origin_blob_id).to_string(),
+        },
+        CertificateSampling {
+            spec_hash: format!("0x{}", hex::encode(<[u8; 32]>::from(values.specHash))),
+            seed: format!("0x{}", hex::encode(<[u8; 32]>::from(values.samplingSeed))),
+            external_randomness: format!("0x{}", hex::encode(sale.external_randomness)),
+            random_source: seller_context.random_source,
+        },
+        previews.try_into().expect("exactly three previews"),
+        CertificateProof {
+            system: "sp1-groth16".to_owned(),
+            program_vkey: fixture_string(&fixture, "programVKey"),
+            public_values: fixture_string(&fixture, "publicValues"),
+            proof_bytes: fixture_string(&fixture, "proof"),
+        },
+        CertificateVerifier {
+            chain_id: sale.chain_id,
+            address: verifier_address,
+            version: verifier_version,
+        },
+    );
+    let mut certificate_bytes = serde_json::to_vec_pretty(&certificate).unwrap();
+    certificate_bytes.push(b'\n');
+    fs::write(&certificate_path, &certificate_bytes).expect("write certificate JSON");
+    let certificate_cid = upload_bytes(
+        &auth,
+        certificate_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("video-sampling-certificate.json"),
+        "application/json",
+        certificate_bytes,
+    )
+    .await
+    .expect("upload certificate to Pinata");
+    println!("certificateCid: {certificate_cid}");
+    println!("saleTag: trustdrop:video-sampling:v1:{certificate_cid}");
+}
+
+#[cfg(feature = "publish")]
+fn fixture_string(fixture: &serde_json::Value, field: &str) -> String {
+    fixture[field]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing proof fixture field: {field}"))
+        .to_owned()
+}
+
+#[cfg(feature = "publish")]
+fn decode_fixture_hex(fixture: &serde_json::Value, field: &str) -> Vec<u8> {
+    hex::decode(
+        fixture_string(fixture, field)
+            .strip_prefix("0x")
+            .unwrap_or_else(|| panic!("proof fixture field {field} must start with 0x")),
+    )
+    .unwrap_or_else(|_| panic!("proof fixture field {field} must be valid hex"))
 }
 
 #[cfg(feature = "network")]
