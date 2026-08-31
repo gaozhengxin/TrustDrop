@@ -89,12 +89,27 @@ Build the seller client and guest ELF:
 cargo build --release -p video-sampling-script --bin video-sampling-client
 ```
 
-Generate previews and the witness:
+After the sale is listed, write `/output/sale-context.json`. The external
+randomness is the listing block hash; `randomSource` records the chain and block
+number so anyone can retrieve and verify that hash.
+
+```json
+{
+  "chainId": 421614,
+  "saleContract": "0x...20 bytes...",
+  "saleId": "0x...32 bytes...",
+  "externalRandomness": "0x...listing block hash...",
+  "randomSource": "arbitrum-sepolia:blockHash:<listing-block-number>"
+}
+```
+
+Generate previews and the witness. Placeholder sale values are rejected:
 
 ```bash
 cargo run --release -p video-sampling-script --bin video-sampling-client -- \
   /workspace/drop-lib/tests/fixtures/how-a-mosquito-operates-1912.mp4 \
-  /output/execute
+  /output/execute \
+  /output/sale-context.json
 ```
 
 Request a Groth16 proof from the Succinct Prover Network without a local
@@ -118,6 +133,34 @@ Verify the returned proof through the official Groth16 gateway using `eth_call`:
 cargo run --release -p video-sampling-script --bin video-sampling-client \
   --features chain-verify -- \
   /output/execute/video-sampling-proof.json
+```
+
+Publish the three previews and certificate through Pinata without requesting a
+second proof:
+
+```bash
+PINATA_CONFIG_FILE=/run/secrets/pinata.env \
+cargo run --release -p video-sampling-script --bin video-sampling-client \
+  --features publish -- \
+  /output/execute/video-sampling-witness.bin \
+  /output/execute/video-sampling-proof.json \
+  /output/execute/video-sampling-certificate.json
+```
+
+The publisher checks each local preview CID against the digest committed by the
+guest, checks each Pinata response against the locally computed CID, uploads the
+certificate last, and prints one tag:
+
+```text
+trustdrop:video-sampling:v1:<certificate-cid>
+```
+
+Attach that tag while preserving the sale's current price, data commitment,
+metadata, and unrelated tags:
+
+```bash
+drop-cli sale attach-video-proof <sale-id> \
+  --certificate-cid <certificate-cid> --yes
 ```
 
 The client ABI-encodes `verifyProof(bytes32,bytes,bytes)` and sends an `eth_call`
