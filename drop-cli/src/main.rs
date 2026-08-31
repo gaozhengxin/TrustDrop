@@ -100,6 +100,7 @@ Usage:
   drop-cli sale list [--channel <channel>] | show <sale-id>
   drop-cli sale list <sale-id> --yes
   drop-cli sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes
+  drop-cli sale attach-video-proof <sale-id> --certificate-cid <cid> --yes
   drop-cli sale submit-key-commitment <sale-id>
   drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]
   drop-cli purchase show <purchase-tx>
@@ -747,6 +748,8 @@ async fn sale_update_metadata(sale_id: &str, args: &[String]) -> Result<()> {
 
     println!("sending updateFile transaction...");
     let call = channel.update_file(parse_hex32_state(sale_id)?, commitment, price, info);
+    let estimated_gas = call.estimate_gas().await?;
+    let call = call.gas(estimated_gas * U256::from(120u64) / U256::from(100u64));
     let pending = call.send().await?;
     let tx_hash = pending.tx_hash();
     println!("txHash: {tx_hash:?}");
@@ -762,6 +765,90 @@ async fn sale_update_metadata(sale_id: &str, args: &[String]) -> Result<()> {
     println!("saleId: {sale_id}");
     println!("block: {}", receipt.block_number.unwrap_or_default());
     Ok(())
+}
+
+async fn sale_attach_video_proof(sale_id: &str, args: &[String]) -> Result<()> {
+    const TAG_PREFIX: &str = "trustdrop:video-sampling:v1:";
+    let certificate_cid = flag_value(args, "--certificate-cid")
+        .ok_or_else(|| anyhow!("--certificate-cid is required"))?;
+    let parsed_cid =
+        cid::Cid::try_from(certificate_cid).context("--certificate-cid must be a valid CID")?;
+    ensure!(
+        parsed_cid.version() == cid::Version::V1,
+        "certificate CID must be CIDv1"
+    );
+    ensure!(
+        parsed_cid.to_string() == certificate_cid,
+        "certificate CID must use canonical lowercase encoding"
+    );
+
+    let config = load_config()?;
+    let state = load_sale_state(state_dir(&config)?, sale_id)?;
+    let channel = state
+        .channel_address
+        .as_deref()
+        .ok_or_else(|| anyhow!("sale state is missing channel_address"))?;
+    let sale = fetch_subgraph_sale(&config, channel, sale_id).await?;
+    let updated_info = attach_video_sampling_tag(&sale.info, certificate_cid)?;
+
+    let update_args = vec![
+        "--channel".to_owned(),
+        sale.channel,
+        "--data".to_owned(),
+        sale.data_commitment,
+        "--price".to_owned(),
+        sale.price,
+        "--info".to_owned(),
+        updated_info,
+    ];
+    sale_update_metadata(sale_id, &update_args).await?;
+    println!("certificateCid: {certificate_cid}");
+    println!("saleTag: {TAG_PREFIX}{certificate_cid}");
+    Ok(())
+}
+
+fn attach_video_sampling_tag(info: &str, certificate_cid: &str) -> Result<String> {
+    const TAG_PREFIX: &str = "trustdrop:video-sampling:v1:";
+    let mut info: serde_json::Value =
+        serde_json::from_str(info).context("current sale info must be a JSON object")?;
+    let object = info
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("current sale info must be a JSON object"))?;
+    let tags = object
+        .entry("tags")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| anyhow!("current sale info tags must be an array"))?;
+    tags.retain(|tag| {
+        tag.as_str()
+            .map(|value| !value.starts_with(TAG_PREFIX))
+            .unwrap_or(true)
+    });
+    tags.push(serde_json::Value::String(format!(
+        "{TAG_PREFIX}{certificate_cid}"
+    )));
+    Ok(serde_json::to_string(&info)?)
+}
+
+async fn fetch_subgraph_sale(
+    config: &DropCliConfig,
+    channel: &str,
+    sale_id: &str,
+) -> Result<SubgraphSaleMetadata> {
+    let endpoint = config
+        .subgraph_query_url
+        .as_deref()
+        .unwrap_or(DEFAULT_SUBGRAPH_QUERY_URL);
+    let query = format!(
+        r#"{{ sales(first: 1, where: {{ channel: "{}", saleId: "{}" }}) {{ channel saleId dataCommitment price info }} }}"#,
+        normalize_graph_hex(channel, "channel")?,
+        normalize_graph_hex(sale_id, "sale id")?,
+    );
+    let data: SubgraphSalesData = post_graphql(&reqwest::Client::new(), endpoint, &query).await?;
+    data.sales
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("sale is not indexed by the configured subgraph"))
 }
 
 async fn cmd_channel(args: &[String]) -> Result<()> {
@@ -874,7 +961,18 @@ async fn cmd_sale(args: &[String]) -> Result<()> {
             sale_update_metadata(sale_id, args).await?;
             Ok(())
         }
-        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes | sale submit-key-commitment <sale-id> --yes"),
+        Some("attach-video-proof") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            if !has_flag(args, "--yes") {
+                println!(
+                    "sale attach-video-proof requires --yes to send an Arbitrum Sepolia transaction."
+                );
+                println!("usage: drop-cli sale attach-video-proof <sale-id> --certificate-cid <cid> --yes");
+                return Ok(());
+            }
+            sale_attach_video_proof(sale_id, args).await
+        }
+        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes | sale attach-video-proof <sale-id> --certificate-cid <cid> --yes | sale submit-key-commitment <sale-id> --yes"),
     }
 }
 
@@ -2043,6 +2141,22 @@ struct SubgraphPurchase {
     sale_id: String,
     buyer: String,
     tx_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubgraphSalesData {
+    sales: Vec<SubgraphSaleMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubgraphSaleMetadata {
+    channel: String,
+    #[allow(dead_code)]
+    sale_id: String,
+    data_commitment: String,
+    price: String,
+    info: String,
 }
 
 async fn fetch_subgraph_purchases(
@@ -3755,4 +3869,39 @@ fn require_arg<'a>(args: &'a [String], name: &str) -> Result<&'a str> {
     args.first()
         .map(String::as_str)
         .ok_or_else(|| anyhow!("missing {name}"))
+}
+
+#[cfg(test)]
+mod video_sampling_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn attach_tag_preserves_metadata_and_other_tags() {
+        let updated = attach_video_sampling_tag(
+            r#"{"title":"asset","description":"kept","tags":["space","archive"]}"#,
+            "bafynew",
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&updated).unwrap();
+        assert_eq!(value["title"], "asset");
+        assert_eq!(value["description"], "kept");
+        assert_eq!(
+            value["tags"],
+            serde_json::json!(["space", "archive", "trustdrop:video-sampling:v1:bafynew"])
+        );
+    }
+
+    #[test]
+    fn attach_tag_replaces_previous_video_certificate() {
+        let updated = attach_video_sampling_tag(
+            r#"{"tags":["trustdrop:video-sampling:v1:bafyold","other"]}"#,
+            "bafynew",
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&updated).unwrap();
+        assert_eq!(
+            value["tags"],
+            serde_json::json!(["other", "trustdrop:video-sampling:v1:bafynew"])
+        );
+    }
 }

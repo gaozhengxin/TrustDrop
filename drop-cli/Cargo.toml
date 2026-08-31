@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.100"
 blake3 = "1.8.2"
+cid = "0.11.3"
 drop-lib = { path = "../drop-lib" }
 drop-sdk = { path = "../sdk" }
 drop-script = { path = "../drop-script" }
