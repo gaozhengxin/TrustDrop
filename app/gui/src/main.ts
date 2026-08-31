@@ -29,8 +29,9 @@ import {
   type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
 import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
+import { loadVideoProof, verifyVideoProof, videoProofCid, type LoadedVideoProof } from "./video-proof";
 
-type Route = "home" | "browse" | "records" | "settings" | "detail";
+type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate";
 type ImportMetaWithEnv = ImportMeta & {
   env?: {
     DEV?: boolean;
@@ -67,6 +68,11 @@ type UiState = {
   aggregatorStatus: string;
   visionReady: boolean;
   walletMenuOpen: boolean;
+  videoProof: LoadedVideoProof | null;
+  videoProofLoading: boolean;
+  videoProofError: string;
+  videoProofVerification: "idle" | "checking" | "accepted" | "rejected";
+  videoProofVerificationDetail: string;
   message: string;
 };
 
@@ -106,10 +112,16 @@ const state: UiState = {
   aggregatorStatus: "",
   visionReady: false,
   walletMenuOpen: false,
+  videoProof: null,
+  videoProofLoading: false,
+  videoProofError: "",
+  videoProofVerification: "idle",
+  videoProofVerificationDetail: "",
   message: "",
 };
 
 async function boot(): Promise<void> {
+  if (proofRequestFromUrl()) state.route = "certificate";
   installWalletListeners();
   render();
   try {
@@ -140,6 +152,7 @@ async function refreshMarketplace(): Promise<void> {
   try {
     await loadMoreMarketplaceSales(false);
     await loadMoreRecommendedSales(false);
+    if (state.route === "certificate") await loadRequestedVideoProof();
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
       state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     }
@@ -268,7 +281,71 @@ function tagOptions(): string[] {
 
 function selectedSale(): MarketplaceSale | null {
   if (!state.visionReady) return null;
-  return state.sales.find((sale) => sale.id === state.selectedSaleId) ?? state.sales[0] ?? null;
+  return state.allSales.find((sale) => sale.id === state.selectedSaleId) ?? state.sales[0] ?? null;
+}
+
+function proofRequestFromUrl(): { cid: string; channel: `0x${string}`; saleId: `0x${string}` } | null {
+  const params = new URLSearchParams(window.location.search);
+  const cid = params.get("proof") ?? "";
+  const channel = params.get("channel") ?? "";
+  const saleId = params.get("saleId") ?? "";
+  if (!cid || !/^0x[0-9a-fA-F]{40}$/.test(channel) || !/^0x[0-9a-fA-F]{64}$/.test(saleId)) return null;
+  return { cid, channel: channel as `0x${string}`, saleId: saleId as `0x${string}` };
+}
+
+async function loadRequestedVideoProof(): Promise<void> {
+  const request = proofRequestFromUrl();
+  if (!request) {
+    state.videoProofError = "The certificate URL is incomplete.";
+    return;
+  }
+  state.videoProof = null;
+  state.videoProofLoading = true;
+  state.videoProofError = "";
+  state.videoProofVerification = "idle";
+  state.videoProofVerificationDetail = "";
+  render();
+  try {
+    let sale = state.allSales.find((item) => sameSaleRef(item, request.channel, request.saleId));
+    if (!sale) {
+      sale = await subgraph.getSale(request.channel, request.saleId) ?? undefined;
+      if (sale) upsertAllSales([sale]);
+    }
+    if (!sale) throw new Error("The sale referenced by this certificate is not indexed.");
+    if (videoProofCid(sale.tags) !== request.cid) throw new Error("The sale does not reference this certificate CID.");
+    state.selectedSaleId = sale.id;
+    state.videoProof = await loadVideoProof(request.cid, sale);
+    state.videoProofVerification = "checking";
+    render();
+    try {
+      await verifyVideoProof(state.videoProof.certificate);
+      state.videoProofVerification = "accepted";
+      state.videoProofVerificationDetail = "The SP1 Groth16 verifier accepted this proof on Arbitrum Sepolia.";
+    } catch (error) {
+      state.videoProofVerification = "rejected";
+      state.videoProofVerificationDetail = errorMessage(error);
+    }
+  } catch (error) {
+    state.videoProofError = errorMessage(error);
+  } finally {
+    state.videoProofLoading = false;
+    render();
+  }
+}
+
+function proofPageUrl(sale: MarketplaceSale, cid: string): string {
+  const url = new URL(window.location.href);
+  url.search = new URLSearchParams({ proof: cid, channel: sale.channel, saleId: sale.saleId }).toString();
+  url.hash = "";
+  return url.toString();
+}
+
+function clearProofUrl(): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("proof");
+  url.searchParams.delete("channel");
+  url.searchParams.delete("saleId");
+  window.history.replaceState(null, "", url);
 }
 
 function renderShell(content: string): string {
@@ -435,6 +512,7 @@ function renderSettings(): string {
 function renderDetail(sale: MarketplaceSale): string {
   if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
+  const certificateCid = videoProofCid(sale.tags);
   return renderShell(`
     <section class="detail">
       <button class="text-button" data-route="browse" type="button">Back to browse</button>
@@ -446,6 +524,7 @@ function renderDetail(sale: MarketplaceSale): string {
           <h1>${escapeHtml(saleDisplayTitle(sale))}</h1>
           <p>${escapeHtml(sale.description || sale.info || "No description")}</p>
           <div class="tag-row">${sale.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("") || `<span>untagged</span>`}</div>
+          ${certificateCid ? `<a class="proof-link" href="${escapeAttr(proofPageUrl(sale, certificateCid))}" target="_blank" rel="noreferrer">View video sampling certificate</a>` : ""}
           <dl class="facts">
             <div><dt>Price</dt><dd>${salePriceEth(sale)} ETH</dd></div>
             <div><dt>Size</dt><dd>${formatBytes(sale.fileSize)}</dd></div>
@@ -472,6 +551,69 @@ function renderDetail(sale: MarketplaceSale): string {
           </div>
         </div>
       </div>
+    </section>
+  `);
+}
+
+function renderCertificate(): string {
+  const sale = selectedSale();
+  const proof = state.videoProof;
+  if (state.videoProofLoading && !proof) {
+    return renderShell(`<section class="certificate-page">${loadingRows()}</section>`);
+  }
+  if (state.videoProofError || !proof || !sale) {
+    return renderShell(`
+      <section class="certificate-page">
+        <button class="text-button" data-route="detail" type="button">Back to listing</button>
+        <div class="notice">${escapeHtml(state.videoProofError || "Certificate unavailable")}</div>
+      </section>
+    `);
+  }
+  const certificate = proof.certificate;
+  const verifierUrl = `https://sepolia.arbiscan.io/address/${certificate.verifier.address}`;
+  const verificationLabel = state.videoProofVerification === "accepted" ? "Verified" : state.videoProofVerification === "rejected" ? "Verification failed" : "Verifying";
+  return renderShell(`
+    <section class="certificate-page">
+      <div class="certificate-heading">
+        <div>
+          <span class="eyebrow">Video sampling certificate</span>
+          <h1>${escapeHtml(saleDisplayTitle(sale))}</h1>
+          <p>Three sale-derived previews are bound to the plaintext Walrus blob by an SP1 proof.</p>
+        </div>
+        <div class="certificate-actions">
+          <span class="verification-badge ${state.videoProofVerification}">${escapeHtml(verificationLabel)}</span>
+          <button class="text-button" id="download-certificate-button" type="button">Download certificate</button>
+        </div>
+      </div>
+      <div class="preview-grid">
+        ${proof.previewUrls.map((url, index) => `
+          <article class="preview-card">
+            <video controls playsinline preload="metadata" src="${escapeAttr(url)}"></video>
+            <div><strong>Preview ${index + 1}</strong><span>Bucket ${certificate.previews[index].bucket}</span></div>
+            <code>${escapeHtml(certificate.previews[index].cid)}</code>
+          </article>
+        `).join("")}
+      </div>
+      <section class="certificate-panel">
+        <div class="section-title"><h2>Proof verification</h2><span class="verification-badge ${state.videoProofVerification}">${escapeHtml(verificationLabel)}</span></div>
+        <p>${escapeHtml(state.videoProofVerificationDetail || "Calling the verifier contract…")}</p>
+        <dl class="certificate-facts">
+          <div><dt>Verifier</dt><dd><a href="${escapeAttr(verifierUrl)}" target="_blank" rel="noreferrer">${escapeHtml(certificate.verifier.address)}</a></dd></div>
+          <div><dt>Verifier version</dt><dd>${escapeHtml(certificate.verifier.version)}</dd></div>
+          <div><dt>Proof system</dt><dd>${escapeHtml(certificate.proof.system)}</dd></div>
+          <div><dt>Program vkey</dt><dd><code>${escapeHtml(certificate.proof.programVKey)}</code></dd></div>
+        </dl>
+      </section>
+      <section class="certificate-panel">
+        <h2>Claimed content</h2>
+        <dl class="certificate-facts">
+          <div><dt>Plaintext Walrus blob ID</dt><dd><code>${escapeHtml(certificate.origin.walrusBlobId)}</code></dd></div>
+          <div><dt>Sale contract</dt><dd><code>${escapeHtml(certificate.sale.contract)}</code></dd></div>
+          <div><dt>Sale ID</dt><dd><code>${escapeHtml(certificate.sale.saleId)}</code></dd></div>
+          <div><dt>Randomness source</dt><dd>${escapeHtml(certificate.sampling.randomSource)}</dd></div>
+          <div><dt>Sampling seed</dt><dd><code>${escapeHtml(certificate.sampling.seed)}</code></dd></div>
+        </dl>
+      </section>
     </section>
   `);
 }
@@ -594,6 +736,8 @@ function render(): void {
     root.innerHTML = renderRecords();
   } else if (state.route === "settings") {
     root.innerHTML = renderSettings();
+  } else if (state.route === "certificate") {
+    root.innerHTML = renderCertificate();
   } else if (state.route === "detail") {
     const sale = selectedSale();
     root.innerHTML = sale ? renderDetail(sale) : renderShell(empty("No listing selected."));
@@ -608,6 +752,7 @@ function bindEvents(root: HTMLElement): void {
   root.querySelectorAll<HTMLButtonElement>("[data-route]").forEach((button) => {
     button.addEventListener("click", () => {
       state.route = (button.dataset.route as Route) ?? "home";
+      if (state.route !== "certificate") clearProofUrl();
       state.message = "";
       state.walletMenuOpen = false;
       render();
@@ -649,6 +794,16 @@ function bindEvents(root: HTMLElement): void {
   });
   root.querySelector<HTMLButtonElement>("#load-more-recommended-button")?.addEventListener("click", () => {
     void loadMoreRecommendedSales();
+  });
+  root.querySelector<HTMLButtonElement>("#download-certificate-button")?.addEventListener("click", () => {
+    if (!state.videoProof) return;
+    const bytes = JSON.stringify(state.videoProof.certificate, null, 2);
+    const url = URL.createObjectURL(new Blob([`${bytes}\n`], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `trustdrop-video-certificate-${state.videoProof.certificateCid}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
