@@ -2,6 +2,10 @@ import { createPublicClient, encodeAbiParameters, encodeFunctionData, http, isAd
 import { arbitrumSepolia } from "viem/chains";
 import { DEFAULT_RPC_URL, type MarketplaceSale } from "../../../packages/drop-ts-sdk/src";
 
+type ImportMetaWithEnv = ImportMeta & {
+  env?: Record<string, string | undefined>;
+};
+
 const VIDEO_PROOF_TAG_PREFIX = "trustdrop:video-sampling:v1:";
 const CERTIFICATE_TYPE = "trustdrop.video-sampling";
 const CERTIFICATE_VERSION = 1;
@@ -17,7 +21,9 @@ const verifierAbi = parseAbi([
 const samplingVrfAbi = parseAbi([
   "function latestChallenges(address requester, bytes32 challengeKey) external view returns (address storedRequester, bytes32 seed, bytes32 requestId, uint64 requestCount, uint64 blockNumber)",
 ]);
+const channelOwnerAbi = parseAbi(["function owner() external view returns (address)"]);
 const VIDEO_SAMPLING_DOMAIN = keccak256(toHex("trustdrop.video-sampling.v1"));
+const TRUSTED_SAMPLING_VRF_ADDRESS = (import.meta as ImportMetaWithEnv).env?.VITE_SAMPLING_VRF_ADDRESS;
 
 export type VideoSamplingCertificate = {
   type: typeof CERTIFICATE_TYPE;
@@ -103,6 +109,9 @@ export async function verifyVideoProof(certificate: VideoSamplingCertificate): P
 export async function verifyVideoSamplingSeed(certificate: VideoSamplingCertificate): Promise<void> {
   const challenge = certificate.sampling.challenge;
   if (!challenge) throw new Error("Certificate predates on-chain sampling seed commitments");
+  const trustedVrfAddress = TRUSTED_SAMPLING_VRF_ADDRESS;
+  if (!trustedVrfAddress || !isAddress(trustedVrfAddress)) throw new Error("Trusted sampling VRF contract is not configured");
+  if (!sameHex(challenge.contract, trustedVrfAddress)) throw new Error("Certificate references an untrusted sampling VRF contract");
   const expectedKey = keccak256(encodeAbiParameters(
     [{ type: "uint256" }, { type: "address" }, { type: "bytes32" }, { type: "bytes32" }],
     [BigInt(certificate.sale.chainId), certificate.sale.contract, certificate.sale.saleId, VIDEO_SAMPLING_DOMAIN],
@@ -110,13 +119,22 @@ export async function verifyVideoSamplingSeed(certificate: VideoSamplingCertific
   if (!sameHex(challenge.challengeKey, expectedKey)) throw new Error("Challenge key is not bound to this sale and proof type");
 
   const client = createPublicClient({ chain: arbitrumSepolia, transport: http(DEFAULT_RPC_URL) });
-  const [requester, seed, requestId, requestCount, blockNumber] = await client.readContract({
-    address: challenge.contract,
-    abi: samplingVrfAbi,
-    functionName: "latestChallenges",
-    args: [challenge.requester, challenge.challengeKey],
-  });
-  if (!sameHex(requester, challenge.requester)
+  const [seller, latestChallenge] = await Promise.all([
+    client.readContract({
+      address: certificate.sale.contract,
+      abi: channelOwnerAbi,
+      functionName: "owner",
+    }),
+    client.readContract({
+      address: trustedVrfAddress,
+      abi: samplingVrfAbi,
+      functionName: "latestChallenges",
+      args: [challenge.requester, expectedKey],
+    }),
+  ]);
+  if (!sameHex(seller, challenge.requester)) throw new Error("Sampling seed requester is not the current seller of this sale");
+  const [requester, seed, requestId, requestCount, blockNumber] = latestChallenge;
+  if (!sameHex(requester, seller)
     || !sameHex(seed, certificate.sampling.externalRandomness)
     || !sameHex(requestId, challenge.requestId)
     || requestCount !== BigInt(challenge.requestCount)
