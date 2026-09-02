@@ -28,6 +28,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 video-sampling-lib = { path = "../lib" }
 drop-lib = { path = "../../../drop-lib" }
 walrus_core = { path = "../../../walrus-core" }
+sampling-challenge-client = { path = "../../../extensions/sampling-challenge-client" }
 
 [build-dependencies]
 sp1-build = "=6.2.4"

@@ -11,7 +11,7 @@ seller-facing binary is `video-sampling-client`.
 ## Binding chain
 
 ```text
-sale context + external randomness + origin blob ID + sampling spec
+sale context + on-chain challenge seed + origin blob ID + sampling spec
                               |
                               v
                     deterministic sample plans
@@ -45,8 +45,10 @@ The private witness contains:
 - three preview templates containing the file length and all non-video-sample
   byte ranges, with the duplicated video sample payloads removed.
 
-The sale context contains `chain_id`, `sale_contract`, `sale_id`, and
-`external_randomness`. The host never supplies final sample positions directly.
+The sale context identifies `chain_id`, `sale_contract`, and `sale_id`. Before
+building previews, the seller client automatically requests a seed from the
+shared sampling challenge contract, reads the stored seed back, and places it in
+the guest sale context. The host never supplies final sample positions directly.
 
 ## Guest verification
 
@@ -89,9 +91,9 @@ Build the seller client and guest ELF:
 cargo build --release -p video-sampling-script --bin video-sampling-client
 ```
 
-After the sale is listed, write `/output/sale-context.json`. The external
-randomness is the listing block hash; `randomSource` records the chain and block
-number so anyone can retrieve and verify that hash.
+After the sale is listed, write `/output/sale-context.json` as before. The two
+legacy randomness fields may remain in existing E2E fixtures, but the client
+replaces them with a freshly requested on-chain challenge.
 
 ```json
 {
@@ -106,11 +108,20 @@ number so anyone can retrieve and verify that hash.
 Generate previews and the witness. Placeholder sale values are rejected:
 
 ```bash
+SAMPLING_VRF_ADDRESS=0x... \
+SAMPLING_VRF_PRIVATE_KEY_FILE=/run/secrets/seller.env \
 cargo run --release -p video-sampling-script --bin video-sampling-client -- \
   /workspace/drop-lib/tests/fixtures/how-a-mosquito-operates-1912.mp4 \
   /output/execute \
   /output/sale-context.json
 ```
+
+The command first sends `requestSeed(challengeKey)`, waits for the transaction,
+reads `latestChallenges(seller, challengeKey)`, and only then derives sample
+positions. `challengeKey` is domain-separated by proof type, so video sampling,
+flow-graph sampling, and future plugins can share the contract without sharing
+challenge records. Repeating the request is allowed, but only the latest record
+passes the certificate check.
 
 Request a Groth16 proof from the Succinct Prover Network without a local
 simulation:

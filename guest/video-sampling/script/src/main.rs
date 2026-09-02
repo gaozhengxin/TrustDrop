@@ -7,8 +7,8 @@ use alloy_sol_types::SolValue;
 use alloy_sol_types::{sol, SolCall};
 #[cfg(feature = "publish")]
 use certificate::{
-    CertificateOrigin, CertificatePreview, CertificateProof, CertificateSale, CertificateSampling,
-    CertificateVerifier, VideoSamplingCertificate,
+    CertificateChallenge, CertificateOrigin, CertificatePreview, CertificateProof, CertificateSale,
+    CertificateSampling, CertificateVerifier, VideoSamplingCertificate,
 };
 use drop_lib::{
     rslh_ve::{walrus_symbol_size, COL_HEIGHT_SECONDARY},
@@ -20,6 +20,15 @@ use drop_lib::{
 };
 #[cfg(feature = "publish")]
 use pinata::{upload_bytes, PinataAuth};
+#[cfg(not(any(
+    feature = "execute",
+    feature = "network",
+    feature = "chain-verify",
+    feature = "publish"
+)))]
+use sampling_challenge_client::{
+    challenge_key, proof_domain, request_and_read_seed, VIDEO_SAMPLING_DOMAIN,
+};
 use serde::{Deserialize, Serialize};
 #[cfg(any(feature = "execute", feature = "network"))]
 use sp1_sdk::{include_elf, Prover, ProverClient, SP1Stdin};
@@ -118,6 +127,18 @@ struct SaleContext {
 struct SellerContext {
     sale: SaleContext,
     random_source: String,
+    challenge: SamplingChallengeEvidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SamplingChallengeEvidence {
+    contract: String,
+    challenge_key: [u8; 32],
+    request_id: [u8; 32],
+    requester: String,
+    request_count: u64,
+    block_number: u64,
+    transaction_hash: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,30 +147,24 @@ struct SaleContextFile {
     chain_id: u64,
     sale_contract: String,
     sale_id: String,
-    external_randomness: String,
-    random_source: String,
+    #[serde(rename = "externalRandomness", default)]
+    _external_randomness: String,
+    #[serde(rename = "randomSource", default)]
+    _random_source: String,
 }
 
 impl SaleContextFile {
-    fn into_seller_context(self) -> Result<SellerContext, String> {
+    fn into_sale_context(self) -> Result<SaleContext, String> {
         let sale = SaleContext {
             chain_id: self.chain_id,
             sale_contract: decode_hex_array(&self.sale_contract, "saleContract")?,
             sale_id: decode_hex_array(&self.sale_id, "saleId")?,
-            external_randomness: decode_hex_array(&self.external_randomness, "externalRandomness")?,
+            external_randomness: [0; 32],
         };
-        if sale.chain_id == 0
-            || sale.sale_contract == [0; 20]
-            || sale.sale_id == [0; 32]
-            || sale.external_randomness == [0; 32]
-            || self.random_source.trim().is_empty()
-        {
+        if sale.chain_id == 0 || sale.sale_contract == [0; 20] || sale.sale_id == [0; 32] {
             return Err("sale context cannot contain placeholder values".to_owned());
         }
-        Ok(SellerContext {
-            sale,
-            random_source: self.random_source,
-        })
+        Ok(sale)
     }
 }
 
@@ -159,17 +174,56 @@ impl SaleContextFile {
     feature = "chain-verify",
     feature = "publish"
 )))]
-fn main() {
+#[tokio::main]
+async fn main() {
     let usage = "usage: video-sampling-client <input.mp4> <output-dir> <sale-context.json>";
     let asset = PathBuf::from(env::args().nth(1).expect(usage));
     let output_dir = PathBuf::from(env::args().nth(2).expect(usage));
     let context_path = PathBuf::from(env::args().nth(3).expect(usage));
-    let seller_context = serde_json::from_slice::<SaleContextFile>(
+    let mut sale = serde_json::from_slice::<SaleContextFile>(
         &fs::read(context_path).expect("read sale context JSON"),
     )
     .expect("decode sale context JSON")
-    .into_seller_context()
+    .into_sale_context()
     .expect("validate sale context");
+    let challenge_key = challenge_key(
+        sale.chain_id,
+        sale.sale_contract,
+        sale.sale_id,
+        proof_domain(VIDEO_SAMPLING_DOMAIN),
+    );
+    let (rpc_url, private_key, vrf_address) = sampling_vrf_config();
+    println!(
+        "requesting sampling seed for challenge 0x{}...",
+        hex::encode(challenge_key)
+    );
+    let challenge_receipt = request_and_read_seed(
+        &rpc_url,
+        &private_key,
+        &vrf_address,
+        sale.chain_id,
+        challenge_key,
+    )
+    .await
+    .expect("request and read sampling seed");
+    sale.external_randomness = challenge_receipt.seed;
+    let seller_context = SellerContext {
+        sale,
+        random_source: format!("sampling-vrf-mock:{}", challenge_receipt.contract),
+        challenge: SamplingChallengeEvidence {
+            contract: format!("{:#x}", challenge_receipt.contract),
+            challenge_key: challenge_receipt.challenge_key,
+            request_id: challenge_receipt.request_id,
+            requester: format!("{:#x}", challenge_receipt.requester),
+            request_count: challenge_receipt.request_count,
+            block_number: challenge_receipt.block_number,
+            transaction_hash: format!("{:#x}", challenge_receipt.transaction_hash),
+        },
+    };
+    println!(
+        "samplingSeedRequest: {:#x} (count {})",
+        challenge_receipt.transaction_hash, challenge_receipt.request_count
+    );
     fs::create_dir_all(&output_dir).expect("create output directory");
     let mp4 = fs::read(&asset).expect("read source MP4");
     let source_len = mp4.len();
@@ -231,6 +285,38 @@ fn main() {
     )
     .unwrap();
     println!("witness: {}", witness_path.display());
+}
+
+#[cfg(not(any(
+    feature = "execute",
+    feature = "network",
+    feature = "chain-verify",
+    feature = "publish"
+)))]
+fn sampling_vrf_config() -> (String, String, String) {
+    let rpc = env::var("SAMPLING_VRF_RPC_URL")
+        .or_else(|_| env::var("ARBITRUM_SEPOLIA_RPC_URL"))
+        .or_else(|_| env::var("ARBITRUM_SEPOLIA_RPC"))
+        .expect("SAMPLING_VRF_RPC_URL or ARBITRUM_SEPOLIA_RPC_URL must be set");
+    let address = env::var("SAMPLING_VRF_ADDRESS").expect("SAMPLING_VRF_ADDRESS must be set");
+    let key = env::var("SAMPLING_VRF_PRIVATE_KEY")
+        .or_else(|_| env::var("SELLER_KEY"))
+        .or_else(|_| {
+            let path = env::var("SAMPLING_VRF_PRIVATE_KEY_FILE")?;
+            let content = fs::read_to_string(path).map_err(|_| env::VarError::NotPresent)?;
+            content
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("SAMPLING_VRF_PRIVATE_KEY=")
+                        .or_else(|| line.strip_prefix("SELLER_KEY="))
+                })
+                .map(str::to_owned)
+                .ok_or(env::VarError::NotPresent)
+        })
+        .expect(
+            "SAMPLING_VRF_PRIVATE_KEY, SELLER_KEY, or SAMPLING_VRF_PRIVATE_KEY_FILE must be set",
+        );
+    (rpc, key, address)
 }
 
 #[cfg(any(
@@ -415,6 +501,15 @@ async fn main() {
             seed: format!("0x{}", hex::encode(<[u8; 32]>::from(values.samplingSeed))),
             external_randomness: format!("0x{}", hex::encode(sale.external_randomness)),
             random_source: seller_context.random_source,
+            challenge: CertificateChallenge {
+                contract: seller_context.challenge.contract,
+                challenge_key: format!("0x{}", hex::encode(seller_context.challenge.challenge_key)),
+                request_id: format!("0x{}", hex::encode(seller_context.challenge.request_id)),
+                requester: seller_context.challenge.requester,
+                request_count: seller_context.challenge.request_count,
+                block_number: seller_context.challenge.block_number,
+                transaction_hash: seller_context.challenge.transaction_hash,
+            },
         },
         previews.try_into().expect("exactly three previews"),
         CertificateProof {

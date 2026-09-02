@@ -38,6 +38,19 @@ pub struct CertificateSampling {
     pub seed: String,
     pub external_randomness: String,
     pub random_source: String,
+    pub challenge: CertificateChallenge,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateChallenge {
+    pub contract: String,
+    pub challenge_key: String,
+    pub request_id: String,
+    pub requester: String,
+    pub request_count: u64,
+    pub block_number: u64,
+    pub transaction_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,6 +120,15 @@ mod tests {
                 seed: "0x04".into(),
                 external_randomness: "0x05".into(),
                 random_source: "sale-block-hash".into(),
+                challenge: CertificateChallenge {
+                    contract: "0x0000000000000000000000000000000000000010".into(),
+                    challenge_key: format!("0x{}", "11".repeat(32)),
+                    request_id: format!("0x{}", "12".repeat(32)),
+                    requester: "0x0000000000000000000000000000000000000013".into(),
+                    request_count: 1,
+                    block_number: 42,
+                    transaction_hash: format!("0x{}", "14".repeat(32)),
+                },
             },
             std::array::from_fn(|bucket| CertificatePreview {
                 bucket: bucket as u8,
@@ -130,6 +152,7 @@ mod tests {
         assert_eq!(value["sale"]["chainId"], 1);
         assert_eq!(value["origin"]["walrusBlobId"], "blob");
         assert_eq!(value["sampling"]["randomSource"], "sale-block-hash");
+        assert_eq!(value["sampling"]["challenge"]["requestCount"], 1);
         assert_eq!(value["proof"]["programVKey"], "0x06");
         assert_eq!(value["proof"]["proofBytes"], "0x08");
         assert_eq!(value["previews"].as_array().unwrap().len(), 3);
