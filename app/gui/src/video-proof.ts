@@ -1,4 +1,4 @@
-import { createPublicClient, encodeFunctionData, http, isAddress, parseAbi, type Hex } from "viem";
+import { createPublicClient, encodeAbiParameters, encodeFunctionData, http, isAddress, keccak256, parseAbi, toHex, type Hex } from "viem";
 import { arbitrumSepolia } from "viem/chains";
 import { DEFAULT_RPC_URL, type MarketplaceSale } from "../../../packages/drop-ts-sdk/src";
 
@@ -14,6 +14,10 @@ const FETCH_TIMEOUT_MS = 12_000;
 const verifierAbi = parseAbi([
   "function verifyProof(bytes32 programVKey, bytes publicValues, bytes proofBytes) external view",
 ]);
+const samplingVrfAbi = parseAbi([
+  "function latestChallenges(address requester, bytes32 challengeKey) external view returns (address storedRequester, bytes32 seed, bytes32 requestId, uint64 requestCount, uint64 blockNumber)",
+]);
+const VIDEO_SAMPLING_DOMAIN = keccak256(toHex("trustdrop.video-sampling.v1"));
 
 export type VideoSamplingCertificate = {
   type: typeof CERTIFICATE_TYPE;
@@ -31,6 +35,15 @@ export type VideoSamplingCertificate = {
     seed: Hex;
     externalRandomness: Hex;
     randomSource: string;
+    challenge?: {
+      contract: Hex;
+      challengeKey: Hex;
+      requestId: Hex;
+      requester: Hex;
+      requestCount: number;
+      blockNumber: number;
+      transactionHash: Hex;
+    };
   };
   previews: Array<{
     bucket: number;
@@ -87,6 +100,31 @@ export async function verifyVideoProof(certificate: VideoSamplingCertificate): P
   if (result.data !== undefined && result.data !== "0x") throw new Error("Verifier returned unexpected data");
 }
 
+export async function verifyVideoSamplingSeed(certificate: VideoSamplingCertificate): Promise<void> {
+  const challenge = certificate.sampling.challenge;
+  if (!challenge) throw new Error("Certificate predates on-chain sampling seed commitments");
+  const expectedKey = keccak256(encodeAbiParameters(
+    [{ type: "uint256" }, { type: "address" }, { type: "bytes32" }, { type: "bytes32" }],
+    [BigInt(certificate.sale.chainId), certificate.sale.contract, certificate.sale.saleId, VIDEO_SAMPLING_DOMAIN],
+  ));
+  if (!sameHex(challenge.challengeKey, expectedKey)) throw new Error("Challenge key is not bound to this sale and proof type");
+
+  const client = createPublicClient({ chain: arbitrumSepolia, transport: http(DEFAULT_RPC_URL) });
+  const [requester, seed, requestId, requestCount, blockNumber] = await client.readContract({
+    address: challenge.contract,
+    abi: samplingVrfAbi,
+    functionName: "latestChallenges",
+    args: [challenge.requester, challenge.challengeKey],
+  });
+  if (!sameHex(requester, challenge.requester)
+    || !sameHex(seed, certificate.sampling.externalRandomness)
+    || !sameHex(requestId, challenge.requestId)
+    || requestCount !== BigInt(challenge.requestCount)
+    || blockNumber !== BigInt(challenge.blockNumber)) {
+    throw new Error("Certificate seed is not the latest seed committed by the sampling VRF; repeated or substituted challenges may indicate seed grinding");
+  }
+}
+
 export function videoProofCalldata(certificate: VideoSamplingCertificate): Hex {
   return encodeFunctionData({
     abi: verifierAbi,
@@ -127,6 +165,17 @@ function validateCertificate(value: unknown, sale: MarketplaceSale): VideoSampli
   }
   if (!isRecord(certificate.sampling) || !isHex32(certificate.sampling.specHash) || !isHex32(certificate.sampling.seed) || !isHex32(certificate.sampling.externalRandomness) || typeof certificate.sampling.randomSource !== "string" || !certificate.sampling.randomSource) {
     throw new Error("Certificate has invalid sampling inputs");
+  }
+  const challenge = certificate.sampling.challenge;
+  if (challenge !== undefined && (!isRecord(challenge)
+    || !isAddress(challenge.contract)
+    || !isHex32(challenge.challengeKey)
+    || !isHex32(challenge.requestId)
+    || !isAddress(challenge.requester)
+    || !Number.isSafeInteger(challenge.requestCount) || challenge.requestCount < 1
+    || !Number.isSafeInteger(challenge.blockNumber) || challenge.blockNumber < 1
+    || !isHex32(challenge.transactionHash))) {
+    throw new Error("Certificate has invalid sampling challenge evidence");
   }
   if (!Array.isArray(certificate.previews) || certificate.previews.length !== 3) {
     throw new Error("Certificate must contain exactly three previews");

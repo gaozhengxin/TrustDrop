@@ -109,6 +109,26 @@ button:disabled {
   color: #8f2424;
 }
 
+.verification-badge.unavailable {
+  background: #f2efe4;
+  border-color: #c7b978;
+  color: #705f18;
+}
+
+.certificate-check {
+  align-items: center;
+  border-top: 1px solid #ecece7;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 12px 0;
+}
+
+.certificate-check p {
+  font-size: 13px;
+  margin-top: 4px;
+}
+
 .preview-grid {
   display: grid;
   gap: 16px;

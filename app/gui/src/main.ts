@@ -29,7 +29,7 @@ import {
   type VddProof,
 } from "../../../packages/drop-ts-sdk/src";
 import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
-import { loadVideoProof, verifyVideoProof, videoProofCalldata, videoProofCid, videoProofCurlCommand, type LoadedVideoProof } from "./video-proof";
+import { loadVideoProof, verifyVideoProof, verifyVideoSamplingSeed, videoProofCalldata, videoProofCid, videoProofCurlCommand, type LoadedVideoProof } from "./video-proof";
 
 type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate";
 type ImportMetaWithEnv = ImportMeta & {
@@ -73,6 +73,8 @@ type UiState = {
   videoProofError: string;
   videoProofVerification: "idle" | "checking" | "accepted" | "rejected";
   videoProofVerificationDetail: string;
+  videoSeedVerification: "idle" | "checking" | "accepted" | "rejected" | "unavailable";
+  videoSeedVerificationDetail: string;
   message: string;
 };
 
@@ -117,6 +119,8 @@ const state: UiState = {
   videoProofError: "",
   videoProofVerification: "idle",
   videoProofVerificationDetail: "",
+  videoSeedVerification: "idle",
+  videoSeedVerificationDetail: "",
   message: "",
 };
 
@@ -304,6 +308,8 @@ async function loadRequestedVideoProof(): Promise<void> {
   state.videoProofError = "";
   state.videoProofVerification = "idle";
   state.videoProofVerificationDetail = "";
+  state.videoSeedVerification = "idle";
+  state.videoSeedVerificationDetail = "";
   render();
   try {
     let sale = state.allSales.find((item) => sameSaleRef(item, request.channel, request.saleId));
@@ -315,16 +321,28 @@ async function loadRequestedVideoProof(): Promise<void> {
     if (videoProofCid(sale.tags) !== request.cid) throw new Error("The sale does not reference this certificate CID.");
     state.selectedSaleId = sale.id;
     state.videoProof = await loadVideoProof(request.cid, sale);
+    const loadedProof = state.videoProof;
     state.videoProofVerification = "checking";
+    state.videoSeedVerification = "checking";
     render();
-    try {
-      await verifyVideoProof(state.videoProof.certificate);
+    const proofCheck = (async () => { try {
+      await verifyVideoProof(loadedProof.certificate);
       state.videoProofVerification = "accepted";
       state.videoProofVerificationDetail = "The SP1 Groth16 verifier accepted this proof on Arbitrum Sepolia.";
     } catch (error) {
       state.videoProofVerification = "rejected";
       state.videoProofVerificationDetail = errorMessage(error);
-    }
+    } })();
+    const seedCheck = (async () => { try {
+      await verifyVideoSamplingSeed(loadedProof.certificate);
+      state.videoSeedVerification = "accepted";
+      state.videoSeedVerificationDetail = "The certificate uses the latest seed committed by the sampling challenge contract.";
+    } catch (error) {
+      const detail = errorMessage(error);
+      state.videoSeedVerification = detail.includes("predates on-chain") ? "unavailable" : "rejected";
+      state.videoSeedVerificationDetail = detail;
+    } })();
+    await Promise.all([proofCheck, seedCheck]);
   } catch (error) {
     state.videoProofError = errorMessage(error);
   } finally {
@@ -572,6 +590,15 @@ function renderCertificate(): string {
   const certificate = proof.certificate;
   const verifierUrl = `https://sepolia.arbiscan.io/address/${certificate.verifier.address}`;
   const verificationLabel = state.videoProofVerification === "accepted" ? "Verified" : state.videoProofVerification === "rejected" ? "Verification failed" : "Verifying";
+  const seedLabel = state.videoSeedVerification === "accepted" ? "Seed matched" : state.videoSeedVerification === "rejected" ? "Seed mismatch" : state.videoSeedVerification === "unavailable" ? "Not recorded" : "Checking seed";
+  const overallVerification = state.videoProofVerification === "rejected" || state.videoSeedVerification === "rejected"
+    ? "rejected"
+    : state.videoProofVerification === "accepted" && state.videoSeedVerification === "accepted"
+      ? "accepted"
+      : state.videoProofVerification === "accepted" && state.videoSeedVerification === "unavailable"
+        ? "unavailable"
+        : "checking";
+  const overallLabel = overallVerification === "accepted" ? "Verified" : overallVerification === "rejected" ? "Certificate warning" : overallVerification === "unavailable" ? "Seed not recorded" : "Verifying";
   return renderShell(`
     <section class="certificate-page">
       <div class="certificate-heading">
@@ -581,7 +608,7 @@ function renderCertificate(): string {
           <p>Three sale-derived previews are bound to the plaintext Walrus blob by an SP1 proof.</p>
         </div>
         <div class="certificate-actions">
-          <span class="verification-badge ${state.videoProofVerification}">${escapeHtml(verificationLabel)}</span>
+          <span class="verification-badge ${overallVerification}">${escapeHtml(overallLabel)}</span>
           <button class="text-button" id="download-certificate-button" type="button">Download certificate</button>
         </div>
       </div>
@@ -595,8 +622,15 @@ function renderCertificate(): string {
         `).join("")}
       </div>
       <section class="certificate-panel">
-        <div class="section-title"><h2>Proof verification</h2><span class="verification-badge ${state.videoProofVerification}">${escapeHtml(verificationLabel)}</span></div>
-        <p>${escapeHtml(state.videoProofVerificationDetail || "Calling the verifier contract…")}</p>
+        <div class="section-title"><h2>Certificate checks</h2></div>
+        <div class="certificate-check">
+          <div><strong>ZK proof</strong><p>${escapeHtml(state.videoProofVerificationDetail || "Calling the verifier contract…")}</p></div>
+          <span class="verification-badge ${state.videoProofVerification}">${escapeHtml(verificationLabel)}</span>
+        </div>
+        <div class="certificate-check">
+          <div><strong>Sampling seed</strong><p>${escapeHtml(state.videoSeedVerificationDetail || "Reading the latest on-chain sampling challenge…")}</p></div>
+          <span class="verification-badge ${state.videoSeedVerification}">${escapeHtml(seedLabel)}</span>
+        </div>
         <dl class="certificate-facts">
           <div><dt>Verifier</dt><dd><a href="${escapeAttr(verifierUrl)}" target="_blank" rel="noreferrer">${escapeHtml(certificate.verifier.address)}</a></dd></div>
           <div><dt>Verifier version</dt><dd>${escapeHtml(certificate.verifier.version)}</dd></div>
@@ -623,6 +657,14 @@ function renderCertificate(): string {
           <div><dt>Sale ID</dt><dd><code>${escapeHtml(certificate.sale.saleId)}</code></dd></div>
           <div><dt>Randomness source</dt><dd>${escapeHtml(certificate.sampling.randomSource)}</dd></div>
           <div><dt>Sampling seed</dt><dd><code>${escapeHtml(certificate.sampling.seed)}</code></dd></div>
+          ${certificate.sampling.challenge ? `
+            <div><dt>Challenge contract</dt><dd><code>${escapeHtml(certificate.sampling.challenge.contract)}</code></dd></div>
+            <div><dt>Challenge key</dt><dd><code>${escapeHtml(certificate.sampling.challenge.challengeKey)}</code></dd></div>
+            <div><dt>Request ID</dt><dd><code>${escapeHtml(certificate.sampling.challenge.requestId)}</code></dd></div>
+            <div><dt>Requester</dt><dd><code>${escapeHtml(certificate.sampling.challenge.requester)}</code></dd></div>
+            <div><dt>Request count</dt><dd>${certificate.sampling.challenge.requestCount}</dd></div>
+            <div><dt>Request transaction</dt><dd><code>${escapeHtml(certificate.sampling.challenge.transactionHash)}</code></dd></div>
+          ` : ""}
         </dl>
       </section>
     </section>
