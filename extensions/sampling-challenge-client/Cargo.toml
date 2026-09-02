@@ -1,0 +1,11 @@
+[package]
+name = "sampling-challenge-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+ethers = { version = "2.0.14", features = ["rustls"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
