@@ -84,11 +84,13 @@ export function videoProofCid(tags: string[]): string | null {
 export async function loadVideoProof(certificateCid: string, sale: MarketplaceSale): Promise<LoadedVideoProof> {
   if (!isCid(certificateCid)) throw new Error("Video proof tag contains an invalid certificate CID");
   const certificateResponse = await fetchIpfs(certificateCid, "application/json");
-  const certificate = validateCertificate((await certificateResponse.response.json()) as unknown, sale);
+  const parsedCertificate = validateCertificate((await certificateResponse.response.json()) as unknown, sale);
+  const certificate = {
+    ...parsedCertificate,
+    previews: parsedCertificate.previews.slice().sort((left, right) => left.bucket - right.bucket),
+  };
   const previewUrls = await Promise.all(
     certificate.previews
-      .slice()
-      .sort((left, right) => left.bucket - right.bucket)
       .map(async (preview) => {
         const response = await fetchIpfs(preview.cid, "video/mp4", { Range: "bytes=0-31" });
         const bytes = new Uint8Array(await response.response.arrayBuffer());
