@@ -74,9 +74,10 @@ pub const HUB_ADDRESS: &str = "0x907337991b4cE4D9a6e70865e40Dc013df13a0D7";
 pub const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
 pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600;
 pub const ORACLE_TIMEOUT_SECS: u64 = 30 * 60;
+pub const DEFAULT_VDD_CYCLE_LIMIT: u64 = 10_000_000_000;
 
 pub const VSS_VERIFIER_ADDRESS: &str = "0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2";
-pub const VDD_VERIFIER_ADDRESS: &str = "0x7800C9E954e03CDa7A1BBF232C93C8aA93749479";
+pub const VDD_VERIFIER_ADDRESS: &str = "0xa224FF572D59b1840bB638961B7Ee3Dc3228f463";
 
 fn env_or_default(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
@@ -88,6 +89,13 @@ fn configured_input_asset_path() -> PathBuf {
 
 fn configured_drop_script_mode() -> String {
     env::var("DROP_SCRIPT_MODE").unwrap_or_else(|_| "full-flow".to_string())
+}
+
+fn configured_vdd_cycle_limit() -> Result<u64> {
+    env::var("VDD_CYCLE_LIMIT")
+        .unwrap_or_else(|_| DEFAULT_VDD_CYCLE_LIMIT.to_string())
+        .parse::<u64>()
+        .map_err(|_| anyhow!("Invalid VDD_CYCLE_LIMIT"))
 }
 
 pub fn configured_rpc_url() -> String {
@@ -1359,9 +1367,11 @@ pub async fn generate_vdd_proof(
     let pk = client.setup(VDD_ELF).await?;
     let vk_string = pk.verifying_key().bytes32().to_string();
     println!(">>> Submitting VDD proof generation request to network...");
+    let cycle_limit = configured_vdd_cycle_limit()?;
+    println!(">>> VDD Prove Network cycle limit: {cycle_limit}");
     let proof = client
         .prove(&pk, stdin)
-        .cycle_limit(1_000_000_000)
+        .cycle_limit(cycle_limit)
         .gas_limit(1_000_000_000)
         .skip_simulation(true)
         .compressed()
