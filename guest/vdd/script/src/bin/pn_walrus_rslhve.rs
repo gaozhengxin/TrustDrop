@@ -14,9 +14,10 @@ use std::path::PathBuf;
 // 引用你的 lib 逻辑
 use drop_lib::rslh_ve::{
     create_honest_proof, derive_rslh_nonce, walrus_symbol_size, DEFAULT_SAMPLE_COUNT,
+    MIN_VDD_BLOB_BYTES,
 };
 use drop_lib::walrus_address::compute_blob_id_default;
-use drop_lib::walrus_open::build_cipher_blob_opening;
+use drop_lib::walrus_open::{build_cipher_blob_opening, build_origin_blob_opening};
 
 /// ELF of the Walrus VDD program
 pub const VDD_WALRUS_RSLHVE_ELF: Elf = include_elf!("program-vdd-walrus-rslhve");
@@ -77,7 +78,7 @@ async fn main() {
     let mut origin_data = match &args.asset {
         Some(path) => std::fs::read(path).expect("failed to read asset file"),
         None => {
-            const DEFAULT_DATA_SIZE: usize = 64 * 1024;
+            const DEFAULT_DATA_SIZE: usize = MIN_VDD_BLOB_BYTES as usize;
             let data_size = std::env::var("VDD_RSLHVE_DATA_SIZE")
                 .ok()
                 .and_then(|v| v.parse::<usize>().ok())
@@ -87,8 +88,8 @@ async fn main() {
             data
         }
     };
-    if origin_data.is_empty() {
-        eprintln!("error: asset/data must not be empty");
+    if (origin_data.len() as u64) < MIN_VDD_BLOB_BYTES {
+        eprintln!("error: VDD requires an asset of at least 1 MiB");
         std::process::exit(1);
     }
 
@@ -119,6 +120,10 @@ async fn main() {
     seed_h.update(&c_cipher_bytes);
     seed_h.update(&c_key_bytes);
     let seed: [u8; 32] = seed_h.finalize().into();
+
+    let origin_opening = build_origin_blob_opening(&origin_data, &seed, symbol_size)
+        .expect("origin blob opening construction failed");
+    assert_eq!(&origin_opening.blob_id[..], c_origin.as_ref());
 
     // Walrus 承诺打开（基于真实密文）
     let cipher_opening = build_cipher_blob_opening(&cipher_data, &seed, symbol_size)
@@ -168,6 +173,7 @@ async fn main() {
         stdin.write(&proof.cipher_shard);
     }
 
+    stdin.write(&origin_opening);
     stdin.write(&cipher_opening);
 
     // --- 3. Setup & Prove ---

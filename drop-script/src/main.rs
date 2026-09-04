@@ -17,7 +17,7 @@ use storage::{BlobId, StorageNetwork, WalrusClient, WalrusConfig};
 use dotenv::dotenv;
 use drop_lib::ecies;
 use drop_lib::kdf::key_derive;
-use drop_lib::walrus_open::build_cipher_blob_opening;
+use drop_lib::walrus_open::{build_cipher_blob_opening, build_origin_blob_opening};
 
 mod config_check;
 
@@ -27,6 +27,7 @@ use drop_sdk::key_manager::{asset_key_commitment, derive_asset_encryption_key_fr
 // use drop_sdk::proof::{run_vdd_proof};
 use drop_lib::rslh_ve::{
     create_honest_proof, derive_rslh_nonce, walrus_symbol_size, DEFAULT_SAMPLE_COUNT,
+    MIN_VDD_BLOB_BYTES,
 };
 use drop_sdk::walrus::{compute_rs_id, upload_data_idempotent_with_end_epoch};
 use sha2::{Digest, Sha256};
@@ -73,9 +74,10 @@ pub const HUB_ADDRESS: &str = "0x907337991b4cE4D9a6e70865e40Dc013df13a0D7";
 pub const ARBITRUM_SEPOLIA_CHAIN_ID: u64 = 421614;
 pub const LIVING_WINDOW_SECS: u64 = 7 * 24 * 3600;
 pub const ORACLE_TIMEOUT_SECS: u64 = 30 * 60;
+pub const DEFAULT_VDD_CYCLE_LIMIT: u64 = 10_000_000_000;
 
 pub const VSS_VERIFIER_ADDRESS: &str = "0x5e80ed679fb9f4050a5c7ede5ccbe39178f142a2";
-pub const VDD_VERIFIER_ADDRESS: &str = "0x154D59Ed30B7784B5c9324b32b9ec5d6c8DE4071";
+pub const VDD_VERIFIER_ADDRESS: &str = "0xa224FF572D59b1840bB638961B7Ee3Dc3228f463";
 
 fn env_or_default(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
@@ -87,6 +89,13 @@ fn configured_input_asset_path() -> PathBuf {
 
 fn configured_drop_script_mode() -> String {
     env::var("DROP_SCRIPT_MODE").unwrap_or_else(|_| "full-flow".to_string())
+}
+
+fn configured_vdd_cycle_limit() -> Result<u64> {
+    env::var("VDD_CYCLE_LIMIT")
+        .unwrap_or_else(|_| DEFAULT_VDD_CYCLE_LIMIT.to_string())
+        .parse::<u64>()
+        .map_err(|_| anyhow!("Invalid VDD_CYCLE_LIMIT"))
 }
 
 pub fn configured_rpc_url() -> String {
@@ -725,6 +734,16 @@ pub async fn stage_1_5_submit_key_commitment(
         channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
 
     let data_key_commitment = data_key_commitment(&ctx.asset_encryption_key);
+    let onchain_commitment: [u8; 32] = channel_contract.data_key_commitment().call().await?.into();
+
+    if onchain_commitment == data_key_commitment {
+        println!(">>> Data key commitment already matches the local asset key.");
+        return Ok(());
+    }
+    ensure!(
+        onchain_commitment == [0u8; 32],
+        "channel dataKeyCommitment does not match the local asset key"
+    );
 
     let receipt = channel_contract
         .submit_data_key_commitment(data_key_commitment.into())
@@ -761,6 +780,10 @@ pub async fn stage_1_6_submit_vdd_proof(
         println!(">>> VDD proof already verified for current cCipher.");
         return Ok(H256::zero());
     }
+
+    // A relisted asset creates a fresh channel. Ensure that channel is bound to
+    // the local data key before spending time and PROVE on the VDD proof.
+    stage_1_5_submit_key_commitment(ctx, listing.channel_address).await?;
 
     let data_key_commit = data_key_commitment(&ctx.asset_encryption_key);
     let vdd_binding_hash =
@@ -1264,7 +1287,10 @@ pub async fn generate_vdd_proof(
 ) -> Result<(Bytes, Bytes, String)> {
     // 1. === 准备 VDD 电路所需的全部输入 ===
     let origin_data = fs::read(original_asset_path)?;
-    ensure!(!origin_data.is_empty(), "asset/data must not be empty");
+    ensure!(
+        origin_data.len() as u64 >= MIN_VDD_BLOB_BYTES,
+        "VDD requires an asset of at least 1 MiB"
+    );
 
     let aux_data = b"trustdrop_asset_v1";
     let nonce = derive_rslh_nonce(&ctx.asset_encryption_key, aux_data);
@@ -1301,6 +1327,13 @@ pub async fn generate_vdd_proof(
     seed_h.update(&c_key_bytes);
     let seed: [u8; 32] = seed_h.finalize().into();
 
+    let origin_opening = build_origin_blob_opening(&origin_data, &seed, symbol_size)
+        .map_err(|e| anyhow!("origin blob opening construction failed: {e}"))?;
+    ensure!(
+        &origin_opening.blob_id[..] == c_origin_bytes.as_slice(),
+        "origin opening blob id must match c_origin"
+    );
+
     // Walrus 承诺打开（基于真实密文本地重构，blob id 必须等于 cCipher）
     let cipher_opening = build_cipher_blob_opening(&cipher_data, &seed, symbol_size)
         .map_err(|e| anyhow!("cipher blob opening construction failed: {e}"))?;
@@ -1336,6 +1369,7 @@ pub async fn generate_vdd_proof(
         stdin.write(&proof.cipher_shard);
     }
 
+    stdin.write(&origin_opening);
     stdin.write(&cipher_opening);
 
     // 3. === 设置并运行 Prover ===
@@ -1347,9 +1381,11 @@ pub async fn generate_vdd_proof(
     let pk = client.setup(VDD_ELF).await?;
     let vk_string = pk.verifying_key().bytes32().to_string();
     println!(">>> Submitting VDD proof generation request to network...");
+    let cycle_limit = configured_vdd_cycle_limit()?;
+    println!(">>> VDD Prove Network cycle limit: {cycle_limit}");
     let proof = client
         .prove(&pk, stdin)
-        .cycle_limit(1_000_000_000)
+        .cycle_limit(cycle_limit)
         .gas_limit(1_000_000_000)
         .skip_simulation(true)
         .compressed()

@@ -7,9 +7,10 @@ use sp1_sdk::{include_elf, Elf, Prover, ProverClient, ProvingKey, SP1Stdin};
 
 use drop_lib::rslh_ve::{
     create_honest_proof, derive_rslh_nonce, walrus_symbol_size, DEFAULT_SAMPLE_COUNT,
+    MIN_VDD_BLOB_BYTES,
 };
 use drop_lib::walrus_address::compute_blob_id_default;
-use drop_lib::walrus_open::build_cipher_blob_opening;
+use drop_lib::walrus_open::{build_cipher_blob_opening, build_origin_blob_opening};
 
 pub const VDD_WALRUS_RSLHVE_ELF: Elf = include_elf!("program-vdd-walrus-rslhve");
 
@@ -39,13 +40,17 @@ async fn main() {
     }
 
     // 1. === Prepare inputs on host ===
-    const DEFAULT_DATA_SIZE: usize = 64 * 1024;
+    const DEFAULT_DATA_SIZE: usize = MIN_VDD_BLOB_BYTES as usize;
     let data_size = std::env::var("VDD_RSLHVE_DATA_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_DATA_SIZE);
     let mut origin_data = vec![0u8; data_size];
     rng().fill_bytes(&mut origin_data);
+    if (origin_data.len() as u64) < MIN_VDD_BLOB_BYTES {
+        eprintln!("error: VDD requires an asset of at least 1 MiB");
+        std::process::exit(1);
+    }
 
     let mut key = [0u8; 32];
     rng().fill_bytes(&mut key);
@@ -105,6 +110,10 @@ async fn main() {
         stdin.write(&proof.cipher_shard);
     }
 
+    let origin_opening = build_origin_blob_opening(&origin_data, &seed, symbol_size)
+        .expect("origin blob opening construction failed");
+    assert_eq!(&origin_opening.blob_id[..], c_origin.as_ref());
+
     // Walrus 承诺打开（guest 现在要求该输入）
     let cipher_opening = build_cipher_blob_opening(&cipher_data, &seed, symbol_size)
         .expect("cipher blob opening construction failed");
@@ -113,6 +122,7 @@ async fn main() {
         c_cipher.as_ref(),
         "opening blob id must match c_cipher"
     );
+    stdin.write(&origin_opening);
     stdin.write(&cipher_opening);
 
     if args.execute {
