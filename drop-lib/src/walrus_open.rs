@@ -47,9 +47,12 @@ pub struct WalrusShardOpening {
     pub secondary_symbols: Vec<WalrusSymbolOpening>,
     /// 对叶 `primary_root || secondary_root`（64B）在对叶树中的 Merkle 路径。
     pub pair_leaf_path: Vec<Node>,
-    /// RSLH 绑定的真实密文列符号：第 r 项是矩阵 row r 的 primary 树在
-    /// RSLH 列上的叶子打开（root = sliver_pair_roots[r].primary）。
-    pub column_symbols: Vec<WalrusSymbolOpening>,
+    /// RSLH 绑定使用的完整 primary sliver（667 个原始 symbols）。
+    /// Guest 校验这些 symbols 对应的 leaf hashes，再只重建一次 Merkle tree。
+    pub column_symbols: Vec<Vec<u8>>,
+    /// sampled primary 树的全部 1000 个 leaf hashes；后 333 个叶子没有对应
+    /// primary sliver 原文，但仍用于一次性重建被 blob commitment 绑定的树根。
+    pub column_leaf_hashes: Vec<Node>,
 }
 
 /// 一个 blob 的完整打开信息。
@@ -116,7 +119,6 @@ pub fn build_walrus_blob_opening(
             .primary_symbols
             .iter()
             .chain(sample.secondary_symbols.iter())
-            .chain(sample.column_symbols.iter())
         {
             if request.leaf_index as usize >= n_shards {
                 return Err("walrus_open: leaf_index out of range");
@@ -192,30 +194,22 @@ pub fn build_walrus_blob_opening(
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
 
+        if sample.column_symbols.len() != crate::rslh_ve::COL_HEIGHT_SECONDARY as usize {
+            return Err("walrus_open: full primary sliver must contain 667 symbols");
+        }
         let column_symbols = sample
             .column_symbols
             .iter()
-            .map(|request| {
-                if request.leaf_index as usize >= n_shards {
-                    return Err("walrus_open: column symbol leaf out of range");
+            .enumerate()
+            .map(|(leaf_index, request)| {
+                if request.leaf_index as usize != leaf_index {
+                    return Err("walrus_open: full primary sliver symbols must be ordered");
                 }
-                // RSLH 列绑定：列符号是采样 shard 行（= RSLH 列 c）primary 树的叶子，
-                // 因此打开必须取自第 i 行的树（而不是 enumerate 序号对应的行）。
-                let row_tree = MerkleTree::<Blake2b256>::build_from_leaf_hashes(
-                    symbol_hashes[i * n_shards..(i + 1) * n_shards]
-                        .iter()
-                        .cloned(),
-                );
-                let proof = row_tree
-                    .get_proof(request.leaf_index as usize)
-                    .map_err(|_| "walrus_open: failed to build column symbol proof")?;
-                Ok(WalrusSymbolOpening {
-                    leaf_index: request.leaf_index,
-                    symbol: request.symbol.clone(),
-                    path: proof.path().to_vec(),
-                })
+                Ok(request.symbol.clone())
             })
             .collect::<Result<Vec<_>, &'static str>>()?;
+        let column_leaf_hashes =
+            symbol_hashes[i * n_shards..(i + 1) * n_shards].to_vec();
 
         let pair_leaf_path = pair_tree
             .get_proof(i)
@@ -231,6 +225,7 @@ pub fn build_walrus_blob_opening(
             secondary_symbols,
             pair_leaf_path,
             column_symbols,
+            column_leaf_hashes,
         });
     }
 
@@ -330,18 +325,23 @@ pub fn verify_walrus_blob_opening(opening: &WalrusBlobOpening) -> Result<(), &'s
                 .map_err(|_| "walrus_open: secondary symbol opening failure")?;
         }
 
-        for symbol in &shard.column_symbols {
-            if symbol.leaf_index as usize >= n_shards {
-                return Err("walrus_open: column symbol index out of range");
+        if shard.column_symbols.len() != crate::rslh_ve::COL_HEIGHT_SECONDARY as usize {
+            return Err("walrus_open: full primary sliver length mismatch");
+        }
+        if shard.column_leaf_hashes.len() != n_shards {
+            return Err("walrus_open: primary leaf hash count mismatch");
+        }
+        for (symbol, expected_hash) in shard.column_symbols.iter().zip(&shard.column_leaf_hashes) {
+            let symbol_tree = MerkleTree::<Blake2b256>::build(core::iter::once(symbol.clone()));
+            if symbol_tree.root() != *expected_hash {
+                return Err("walrus_open: primary symbol/hash mismatch");
             }
-            MerkleProof::<Blake2b256>::new(&symbol.path)
-                .verify_proof(
-                    &Node::Digest(shard.primary_root),
-                    n_shards,
-                    &symbol.symbol,
-                    symbol.leaf_index as usize,
-                )
-                .map_err(|_| "walrus_open: column symbol opening failure")?;
+        }
+        let column_tree = MerkleTree::<Blake2b256>::build_from_leaf_hashes(
+            shard.column_leaf_hashes.iter().cloned(),
+        );
+        if column_tree.root().bytes() != shard.primary_root {
+            return Err("walrus_open: full primary sliver root mismatch");
         }
     }
 
@@ -352,9 +352,10 @@ pub fn verify_walrus_blob_opening(opening: &WalrusBlobOpening) -> Result<(), &'s
 ///
 /// 布局：RSLH 列 c（= `proof.col_index`，0..334）对应 Walrus 消息矩阵第 c 行
 /// （primary sliver c）。逻辑符号 `(row r, col c)` 的平坦偏移为 `(c*667+r)*s`，
-/// `s = pack_size`。opening 的 `column_symbols` 逐行携带数据区内的真实符号
-/// （leaf r，按 r 升序、无空洞），本函数：
-/// 1. 对每个打开用 primary 根做 Merkle 验证（绑定到 c_cipher 的承诺链）；
+/// `s = pack_size`。opening 的 `column_symbols` 携带 sampled primary sliver 的
+/// 全部 667 个 symbols；调用本函数前，opening 校验已一次重建 primary 树并
+/// 将这些 symbols 绑定到 c_cipher 的承诺链。本函数：
+/// 1. 使用已经完成承诺校验的完整 primary sliver；
 /// 2. 重算列聚合：数据区用打开的真实符号，超界/尾部用密钥流
 ///    （与 `create_honest_proof` 逐字节一致），与 `proof.cipher_shard` 比较。
 pub fn verify_cipher_column_bound(
@@ -396,39 +397,22 @@ pub fn verify_cipher_column_bound(
             return Err("rslh_walrus: shard length mismatch");
         }
 
-        // 数据行集合：flat 偏移 (c*667+r)*s < blob 长度
-        let data_rows: Vec<usize> = (0..cols)
-            .filter(|&r| (c * cols + r) * pack_size < data_len)
-            .collect();
-        if shard.column_symbols.len() != data_rows.len() {
-            return Err("rslh_walrus: column symbol count mismatch");
-        }
-        for (idx, symbol) in shard.column_symbols.iter().enumerate() {
-            let r = data_rows[idx];
-            if symbol.leaf_index as usize != r {
-                return Err("rslh_walrus: column symbol leaf mismatch");
-            }
-            MerkleProof::<Blake2b256>::new(&symbol.path)
-                .verify_proof(
-                    &Node::Digest(shard.primary_root),
-                    opening.n_shards as usize,
-                    &symbol.symbol,
-                    r,
-                )
-                .map_err(|_| "rslh_walrus: column symbol opening failure")?;
+        if shard.column_symbols.len() != cols {
+            return Err("rslh_walrus: full primary sliver length mismatch");
         }
 
         let mut expected = vec![0u8; pack_size];
         let mut chacha = ChaCha8::new(Key::from_slice(key), Nonce::from_slice(&nonce));
-        let mut di = 0usize;
         for r in 0..cols {
             let byte_off = (c * cols + r) * pack_size;
             let beta = GF_EXP[(r % 255) as usize];
             let in_data = byte_off < data_len;
             let data_end = (byte_off + pack_size).min(data_len);
             if in_data {
-                let sym = &shard.column_symbols[di].symbol;
-                di += 1;
+                let sym = &shard.column_symbols[r];
+                if sym.len() != pack_size {
+                    return Err("rslh_walrus: full primary sliver symbol size mismatch");
+                }
                 for j in 0..(data_end - byte_off) {
                     expected[j] ^= gf256_mul_walrus(sym[j], beta);
                 }
@@ -481,32 +465,23 @@ pub fn verify_origin_column_bound(
             return Err("rslh_walrus: origin shard length mismatch");
         }
 
-        let data_rows: Vec<usize> = (0..rows)
-            .filter(|&row| (column * rows + row) * pack_size < data_len)
-            .collect();
-        if shard.column_symbols.len() != data_rows.len() {
-            return Err("rslh_walrus: origin column symbol count mismatch");
+        if shard.column_symbols.len() != rows {
+            return Err("rslh_walrus: origin full primary sliver length mismatch");
         }
 
         let mut expected = vec![0u8; pack_size];
-        for (symbol, row) in shard.column_symbols.iter().zip(data_rows) {
-            if symbol.leaf_index as usize != row {
-                return Err("rslh_walrus: origin column symbol leaf mismatch");
-            }
-            MerkleProof::<Blake2b256>::new(&symbol.path)
-                .verify_proof(
-                    &Node::Digest(shard.primary_root),
-                    opening.n_shards as usize,
-                    &symbol.symbol,
-                    row,
-                )
-                .map_err(|_| "rslh_walrus: origin column symbol opening failure")?;
-
+        for (row, symbol) in shard.column_symbols.iter().take(rows).enumerate() {
             let byte_off = (column * rows + row) * pack_size;
+            if byte_off >= data_len {
+                break;
+            }
+            if symbol.len() != pack_size {
+                return Err("rslh_walrus: origin full primary sliver symbol size mismatch");
+            }
             let meaningful = (data_len - byte_off).min(pack_size);
             let beta = GF_EXP[row % 255];
             for i in 0..meaningful {
-                expected[i] ^= gf256_mul_walrus(symbol.symbol[i], beta);
+                expected[i] ^= gf256_mul_walrus(symbol[i], beta);
             }
         }
         if expected != proof.origin_shard {
@@ -520,7 +495,7 @@ pub fn verify_origin_column_bound(
 ///
 /// 每个采样 i（`idx = sha256(seed||i) % 1000`，RSLH 列 `c = idx % 334`）对应
 /// Walrus 消息矩阵第 c 行（primary sliver c）：
-/// - `column_symbols`：数据区内的行符号 `(c, r)`（leaf r，r 升序，无空洞）；
+/// - `column_symbols`：sampled primary sliver 的完整 667 个 symbols；
 /// - `primary_symbols`/`secondary_symbols`：该 shard 树的少量示例叶子；
 /// - 对叶打开绑定 root pair c → 对叶树 → blob id。
 #[cfg(not(feature = "guest"))]
@@ -556,7 +531,6 @@ fn build_column_blob_opening(
         return Err("walrus_open: pack size out of walrus range");
     }
 
-    let cols = COL_HEIGHT_SECONDARY as usize;
     let mut samples = Vec::with_capacity(DEFAULT_SAMPLE_COUNT);
     for i in 0..DEFAULT_SAMPLE_COUNT {
         let mut h = Sha256::new();
@@ -566,8 +540,7 @@ fn build_column_blob_opening(
         let c = idx % ROW_WIDTH_PRIMARY;
         let c_idx = c as usize;
 
-        let column_symbols = (0..cols)
-            .filter(|&r| (c_idx * cols + r) * pack_size < blob_data.len())
+        let column_symbols = (0..COL_HEIGHT_SECONDARY as usize)
             .map(|r| WalrusSymbolRequest {
                 leaf_index: r as u32,
                 symbol: slivers[c_idx].primary.symbols[r].to_vec(),
@@ -669,10 +642,12 @@ mod tests {
                     leaf_index: 7,
                     symbol: slivers[shard].secondary.symbols[7].to_vec(),
                 }],
-                column_symbols: vec![WalrusSymbolRequest {
-                    leaf_index: 0,
-                    symbol: slivers[shard].primary.symbols[0].to_vec(),
-                }],
+                column_symbols: (0..slivers[shard].primary.symbols.len())
+                    .map(|leaf| WalrusSymbolRequest {
+                        leaf_index: leaf as u32,
+                        symbol: slivers[shard].primary.symbols[leaf].to_vec(),
+                    })
+                    .collect(),
             })
             .collect()
     }
