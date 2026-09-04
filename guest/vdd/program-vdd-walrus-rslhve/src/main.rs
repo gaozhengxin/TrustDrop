@@ -3,10 +3,11 @@ sp1_zkvm::entrypoint!(main);
 
 use drop_lib::rslh_ve::{
     verify_rslh_ve_combat_raw, walrus_symbol_size, ParityType, VeShardProof, DEFAULT_SAMPLE_COUNT,
-    ROW_WIDTH_PRIMARY,
+    MIN_VDD_BLOB_BYTES, ROW_WIDTH_PRIMARY,
 };
 use drop_lib::walrus_open::{
-    verify_cipher_column_bound, verify_walrus_blob_opening, WalrusBlobOpening,
+    verify_cipher_column_bound, verify_origin_column_bound, verify_walrus_blob_opening,
+    WalrusBlobOpening,
 };
 
 pub fn main() {
@@ -39,18 +40,34 @@ pub fn main() {
         });
     }
 
-    // 2.5 读取并验证 Walrus 承诺打开：把采样数据绑定到密文 blob id
-    let blob_opening: WalrusBlobOpening = sp1_zkvm::io::read();
-    if let Err(e) = verify_walrus_blob_opening(&blob_opening) {
-        panic!("Walrus-Open Failure: {}", e);
+    // 2.5 原文和密文分别打开到各自的公开 Walrus blob id。
+    let origin_opening: WalrusBlobOpening = sp1_zkvm::io::read();
+    let cipher_opening: WalrusBlobOpening = sp1_zkvm::io::read();
+    if let Err(e) = verify_walrus_blob_opening(&origin_opening) {
+        panic!("Origin Walrus-Open Failure: {}", e);
     }
-    if blob_opening.blob_id != c_cipher_bytes {
-        panic!("Walrus-Binding Failure: opening blob id does not match cipher commitment");
+    if let Err(e) = verify_walrus_blob_opening(&cipher_opening) {
+        panic!("Cipher Walrus-Open Failure: {}", e);
+    }
+    if origin_opening.blob_id != c_origin_bytes {
+        panic!("Walrus-Binding Failure: origin opening does not match c_origin");
+    }
+    if cipher_opening.blob_id != c_cipher_bytes {
+        panic!("Walrus-Binding Failure: cipher opening does not match c_cipher");
+    }
+    if origin_opening.unencoded_length != cipher_opening.unencoded_length {
+        panic!("VDD Length Failure: origin and cipher lengths differ");
+    }
+    if origin_opening.unencoded_length < MIN_VDD_BLOB_BYTES {
+        panic!("VDD Length Failure: asset is smaller than 1 MiB");
     }
 
-    // 2.75 绑定：RSLH 列证明的 cipher_shard 必须与真实密文列聚合一致
-    let symbol_size = walrus_symbol_size(blob_opening.unencoded_length);
-    if let Err(e) = verify_cipher_column_bound(&key, &aux_data, &blob_opening, &proofs, symbol_size) {
+    // 2.75 同态关系两端的聚合分别绑定到两个公开 blob commitment。
+    let symbol_size = walrus_symbol_size(origin_opening.unencoded_length);
+    if let Err(e) = verify_origin_column_bound(&origin_opening, &proofs, symbol_size) {
+        panic!("RSLH-Origin-Binding Failure: {}", e);
+    }
+    if let Err(e) = verify_cipher_column_bound(&key, &aux_data, &cipher_opening, &proofs, symbol_size) {
         panic!("RSLH-Walrus-Binding Failure: {}", e);
     }
 

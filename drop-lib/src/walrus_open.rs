@@ -448,6 +448,74 @@ pub fn verify_cipher_column_bound(
     Ok(())
 }
 
+/// 把 RSLH origin_shard 绑定到公开原文 blob 的真实列符号。
+/// Walrus RS2 和 create_honest_proof 对原文尾部都使用零填充。
+pub fn verify_origin_column_bound(
+    opening: &WalrusBlobOpening,
+    proofs: &[crate::rslh_ve::VeShardProof],
+    pack_size: usize,
+) -> Result<(), &'static str> {
+    use crate::rslh_ve::{gf256_mul_walrus, COL_HEIGHT_SECONDARY, GF_EXP, ROW_WIDTH_PRIMARY};
+
+    if proofs.len() != opening.shards.len() {
+        return Err("rslh_walrus: origin proof/opening sample count mismatch");
+    }
+    if opening.n_shards != 1000 {
+        return Err("rslh_walrus: only 1000-shard RSLH-VE supported");
+    }
+    if pack_size != crate::rslh_ve::walrus_symbol_size(opening.unencoded_length) {
+        return Err("rslh_walrus: origin pack size mismatch");
+    }
+
+    let data_len = opening.unencoded_length as usize;
+    let rows = COL_HEIGHT_SECONDARY as usize;
+    for (proof, shard) in proofs.iter().zip(&opening.shards) {
+        let column = proof.col_index as usize;
+        if column >= ROW_WIDTH_PRIMARY as usize {
+            return Err("rslh_walrus: origin column index out of range");
+        }
+        if shard.shard_index as usize != column {
+            return Err("rslh_walrus: origin shard/column mismatch");
+        }
+        if proof.origin_shard.len() != pack_size {
+            return Err("rslh_walrus: origin shard length mismatch");
+        }
+
+        let data_rows: Vec<usize> = (0..rows)
+            .filter(|&row| (column * rows + row) * pack_size < data_len)
+            .collect();
+        if shard.column_symbols.len() != data_rows.len() {
+            return Err("rslh_walrus: origin column symbol count mismatch");
+        }
+
+        let mut expected = vec![0u8; pack_size];
+        for (symbol, row) in shard.column_symbols.iter().zip(data_rows) {
+            if symbol.leaf_index as usize != row {
+                return Err("rslh_walrus: origin column symbol leaf mismatch");
+            }
+            MerkleProof::<Blake2b256>::new(&symbol.path)
+                .verify_proof(
+                    &Node::Digest(shard.primary_root),
+                    opening.n_shards as usize,
+                    &symbol.symbol,
+                    row,
+                )
+                .map_err(|_| "rslh_walrus: origin column symbol opening failure")?;
+
+            let byte_off = (column * rows + row) * pack_size;
+            let meaningful = (data_len - byte_off).min(pack_size);
+            let beta = GF_EXP[row % 255];
+            for i in 0..meaningful {
+                expected[i] ^= gf256_mul_walrus(symbol.symbol[i], beta);
+            }
+        }
+        if expected != proof.origin_shard {
+            return Err("rslh_walrus: origin column aggregate mismatch");
+        }
+    }
+    Ok(())
+}
+
 /// 为密文数据构造 blob 打开（host 侧构造器，vdd-script 与 drop-script 共用）。
 ///
 /// 每个采样 i（`idx = sha256(seed||i) % 1000`，RSLH 列 `c = idx % 334`）对应
@@ -456,8 +524,8 @@ pub fn verify_cipher_column_bound(
 /// - `primary_symbols`/`secondary_symbols`：该 shard 树的少量示例叶子；
 /// - 对叶打开绑定 root pair c → 对叶树 → blob id。
 #[cfg(not(feature = "guest"))]
-pub fn build_cipher_blob_opening(
-    cipher_data: &[u8],
+fn build_column_blob_opening(
+    blob_data: &[u8],
     seed: &[u8; 32],
     pack_size: usize,
 ) -> Result<WalrusBlobOpening, &'static str> {
@@ -473,15 +541,15 @@ pub fn build_cipher_blob_opening(
         EncodingConfig::new(NonZeroU16::new(1000).expect("n_shards must be nonzero"))
             .get_for_type(EncodingType::RS2);
     let (metadata_with_id, symbol_hashes) = encoding_config
-        .compute_metadata_with_symbol_hashes(cipher_data)
-        .map_err(|_| "walrus_open: cipher metadata computation failed")?;
+        .compute_metadata_with_symbol_hashes(blob_data)
+        .map_err(|_| "walrus_open: blob metadata computation failed")?;
     let (slivers, encoded_metadata) = encoding_config
-        .encode_with_metadata(cipher_data.to_vec())
-        .map_err(|_| "walrus_open: cipher encoding failed")?;
+        .encode_with_metadata(blob_data.to_vec())
+        .map_err(|_| "walrus_open: blob encoding failed")?;
     if metadata_with_id.blob_id() != encoded_metadata.blob_id() {
         return Err("walrus_open: metadata/blob id divergence");
     }
-    if pack_size != crate::rslh_ve::walrus_symbol_size(cipher_data.len() as u64) {
+    if pack_size != crate::rslh_ve::walrus_symbol_size(blob_data.len() as u64) {
         return Err("walrus_open: pack size mismatch");
     }
     if pack_size >= 65535 {
@@ -499,7 +567,7 @@ pub fn build_cipher_blob_opening(
         let c_idx = c as usize;
 
         let column_symbols = (0..cols)
-            .filter(|&r| (c_idx * cols + r) * pack_size < cipher_data.len())
+            .filter(|&r| (c_idx * cols + r) * pack_size < blob_data.len())
             .map(|r| WalrusSymbolRequest {
                 leaf_index: r as u32,
                 symbol: slivers[c_idx].primary.symbols[r].to_vec(),
@@ -527,6 +595,24 @@ pub fn build_cipher_blob_opening(
         metadata_with_id.metadata().unencoded_length(),
         &samples,
     )
+}
+
+#[cfg(not(feature = "guest"))]
+pub fn build_origin_blob_opening(
+    origin_data: &[u8],
+    seed: &[u8; 32],
+    pack_size: usize,
+) -> Result<WalrusBlobOpening, &'static str> {
+    build_column_blob_opening(origin_data, seed, pack_size)
+}
+
+#[cfg(not(feature = "guest"))]
+pub fn build_cipher_blob_opening(
+    cipher_data: &[u8],
+    seed: &[u8; 32],
+    pack_size: usize,
+) -> Result<WalrusBlobOpening, &'static str> {
+    build_column_blob_opening(cipher_data, seed, pack_size)
 }
 
 #[cfg(test)]
@@ -830,6 +916,7 @@ mod tests {
         }
 
         let s = crate::rslh_ve::walrus_symbol_size(cipher.len() as u64);
+        let origin_opening = build_origin_blob_opening(&data, &seed, s).expect("origin opening");
         let opening = build_cipher_blob_opening(&cipher, &seed, s).expect("opening");
         let mut proofs = Vec::with_capacity(DEFAULT_SAMPLE_COUNT);
         for i in 0..DEFAULT_SAMPLE_COUNT {
@@ -841,7 +928,35 @@ mod tests {
         }
         verify_cipher_column_bound(&key, aux, &opening, &proofs, s)
             .expect("honest cipher must bind");
+        verify_origin_column_bound(&origin_opening, &proofs, s)
+            .expect("honest origin must bind");
         verify_walrus_blob_opening(&opening).expect("opening must verify");
+
+        // A self-consistent proof derived from uncommitted plaintext must fail
+        // against the opening for c_origin.
+        let mut uncommitted_origin = data.clone();
+        for b in uncommitted_origin.iter_mut() {
+            *b ^= 0xff;
+        }
+        let mut bad_origin_proofs = Vec::with_capacity(DEFAULT_SAMPLE_COUNT);
+        for i in 0..DEFAULT_SAMPLE_COUNT {
+            let mut h = sha2::Sha256::new();
+            h.update(&seed);
+            h.update(&(i as u32).to_le_bytes());
+            let idx = u32::from_le_bytes(h.finalize()[0..4].try_into().unwrap()) % 1000;
+            bad_origin_proofs.push(create_honest_proof(
+                &key,
+                &nonce,
+                idx,
+                s,
+                &uncommitted_origin,
+                &cipher,
+            ));
+        }
+        assert!(
+            verify_origin_column_bound(&origin_opening, &bad_origin_proofs, s).is_err(),
+            "uncommitted origin proofs must be rejected by the binding"
+        );
 
         // 篡改密文数据，用同一批采样生成“错误密文”的证明 → 绑定必须失败
         let mut tampered = cipher.clone();

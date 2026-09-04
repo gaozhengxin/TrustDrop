@@ -7,6 +7,8 @@ use walrus_core::BlobId;
 pub const ROW_WIDTH_PRIMARY: u32 = 334;    
 pub const COL_HEIGHT_SECONDARY: u32 = 667; 
 pub const DEFAULT_SAMPLE_COUNT: usize = 15;
+/// Minimum blob size accepted by the VDD proof.
+pub const MIN_VDD_BLOB_BYTES: u64 = 1024 * 1024;
 
 /// Walrus RS2 (1000 shards) encoding symbol size:
 /// `max(1, ceil(len / 222778))` rounded up to even bytes.
