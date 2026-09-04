@@ -1,0 +1,13 @@
+[package]
+name = "trustdrop-video-sampler"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+drop-lib = { path = "../../drop-lib" }
+hex = "0.4.3"
+sha2 = "0.10.9"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+serde_json = "1"

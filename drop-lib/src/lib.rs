@@ -9,6 +9,7 @@ pub mod walrus_address;
 pub mod walrus_blob_id;
 pub mod walrus_open;
 pub mod cid;
+pub mod video_sampling;
 pub mod rslh_ve;
 pub mod ecies;
 

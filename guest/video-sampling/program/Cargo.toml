@@ -1,0 +1,13 @@
+[package]
+name = "video-sampling-program"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }
+sha2 = "0.10.9"
+serde = { version = "1", features = ["derive"] }
+sp1-zkvm = "=6.2.4"
+video-sampling-lib = { path = "../lib" }
+walrus_core = { path = "../../../walrus-core" }

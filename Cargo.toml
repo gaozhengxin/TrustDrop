@@ -8,6 +8,7 @@ members = [
     "walrus-core",
     "drop-script",
     "drop-cli",
+    "extensions/sampling-challenge-client",
 ]
 
 [workspace.dependencies]
