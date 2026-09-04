@@ -23,7 +23,9 @@ const samplingVrfAbi = parseAbi([
 ]);
 const channelOwnerAbi = parseAbi(["function owner() external view returns (address)"]);
 const VIDEO_SAMPLING_DOMAIN = keccak256(toHex("trustdrop.video-sampling.v1"));
-const TRUSTED_SAMPLING_VRF_ADDRESS = (import.meta as ImportMetaWithEnv).env?.VITE_SAMPLING_VRF_ADDRESS;
+const DEFAULT_SAMPLING_VRF_ADDRESS = "0xF761821Ecae34E34AD8670F07E2aAf412AD80Faf";
+const TRUSTED_SAMPLING_VRF_ADDRESS =
+  (import.meta as ImportMetaWithEnv).env?.VITE_SAMPLING_VRF_ADDRESS || DEFAULT_SAMPLING_VRF_ADDRESS;
 
 export type VideoSamplingCertificate = {
   type: typeof CERTIFICATE_TYPE;
