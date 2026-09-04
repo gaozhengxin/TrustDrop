@@ -734,6 +734,16 @@ pub async fn stage_1_5_submit_key_commitment(
         channel_abi::ExchangeChannelContract::new(channel_address, ctx.signer.clone());
 
     let data_key_commitment = data_key_commitment(&ctx.asset_encryption_key);
+    let onchain_commitment: [u8; 32] = channel_contract.data_key_commitment().call().await?.into();
+
+    if onchain_commitment == data_key_commitment {
+        println!(">>> Data key commitment already matches the local asset key.");
+        return Ok(());
+    }
+    ensure!(
+        onchain_commitment == [0u8; 32],
+        "channel dataKeyCommitment does not match the local asset key"
+    );
 
     let receipt = channel_contract
         .submit_data_key_commitment(data_key_commitment.into())
@@ -770,6 +780,10 @@ pub async fn stage_1_6_submit_vdd_proof(
         println!(">>> VDD proof already verified for current cCipher.");
         return Ok(H256::zero());
     }
+
+    // A relisted asset creates a fresh channel. Ensure that channel is bound to
+    // the local data key before spending time and PROVE on the VDD proof.
+    stage_1_5_submit_key_commitment(ctx, listing.channel_address).await?;
 
     let data_key_commit = data_key_commitment(&ctx.asset_encryption_key);
     let vdd_binding_hash =
