@@ -11,3 +11,6 @@ datasets sold through Fair File Marketplace:
 Each proof owns its guest, host tooling, fixtures, certificate fields, and UI
 integration. Extension-specific logic stays outside the core `drop-lib` crate.
 
+The canonical dataset/sample envelope is defined by [`schema.json`](schema.json).
+The flow-graph and cluster directories refine that envelope with their respective
+challenge-selection fields and sampled payload requirements.
