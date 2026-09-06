@@ -9,6 +9,7 @@ members = [
     "drop-script",
     "drop-cli",
     "extensions/sampling-challenge-client",
+    "extensions/dataset-sampling/flow-graph/lib",
 ]
 
 [workspace.dependencies]
