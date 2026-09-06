@@ -1,3 +1,4 @@
+#[cfg(any(feature = "execute", feature = "network"))]
 use alloy_sol_types::SolValue;
 use drop_lib::{
     rslh_ve::{walrus_symbol_size, COL_HEIGHT_SECONDARY},
@@ -8,7 +9,10 @@ use flow_graph_sampling_guest_lib::{
     FlowSamplingWitness, MultiproofNode, WalrusFlowOpening, ARCHIVE_ENTRY_LEN, ARCHIVE_HEADER_LEN,
     ARCHIVE_MAGIC,
 };
+#[cfg(any(feature = "execute", feature = "network"))]
 use sp1_sdk::{include_elf, Prover, ProverClient, SP1Stdin};
+#[cfg(feature = "network")]
+use sp1_sdk::{network::NetworkMode, HashableKey, ProveRequest, ProvingKey};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -24,6 +28,7 @@ use walrus_core::{
     EncodingType,
 };
 
+#[cfg(any(feature = "execute", feature = "network"))]
 const FLOW_SAMPLING_ELF: sp1_sdk::Elf = include_elf!("flow_graph_sampling_program");
 
 #[derive(Debug)]
@@ -33,7 +38,7 @@ struct SourceBucket {
     bytes: Vec<u8>,
 }
 
-#[cfg(not(feature = "execute"))]
+#[cfg(not(any(feature = "execute", feature = "network")))]
 fn main() {
     let usage = "usage: flow-graph-sampling-client <entity-flows.ndjson> <output-dir> <seed-hex>";
     let input = PathBuf::from(env::args().nth(1).expect(usage));
@@ -94,6 +99,70 @@ fn main() {
     );
     println!("authenticatedSlivers: {authenticated_sliver_count}");
     println!("witness: {}", witness_path.display());
+}
+
+#[cfg(feature = "network")]
+#[tokio::main]
+async fn main() {
+    sp1_sdk::utils::setup_logger();
+    let witness_path = PathBuf::from(
+        env::args()
+            .nth(1)
+            .expect("usage: flow-graph-sampling-client <witness.bin> <proof.json>"),
+    );
+    let proof_path = PathBuf::from(
+        env::args()
+            .nth(2)
+            .expect("usage: flow-graph-sampling-client <witness.bin> <proof.json>"),
+    );
+    let encoded = fs::read(&witness_path).expect("read witness");
+    let (witness, seed): (FlowSamplingWitness, [u8; 32]) =
+        bincode::deserialize(&encoded).expect("decode witness");
+    let origin_blob_id = witness.origin.blob_id;
+
+    let mut stdin = SP1Stdin::new();
+    stdin.write(&witness);
+    stdin.write(&seed);
+
+    let private_key = network_private_key();
+    let client = ProverClient::builder()
+        .network_for(NetworkMode::Mainnet)
+        .private_key(&private_key)
+        .build()
+        .await;
+    let pk = client
+        .setup(FLOW_SAMPLING_ELF)
+        .await
+        .expect("network setup");
+    println!("programVKey: {}", pk.verifying_key().bytes32());
+    println!("submitting Groth16 proof request with local simulation skipped...");
+    let proof = client
+        .prove(&pk, stdin)
+        .skip_simulation(true)
+        .compressed()
+        .groth16()
+        .await
+        .expect("network proof");
+
+    let values = FlowGraphSamplingPublicValues::abi_decode(proof.public_values.as_slice())
+        .expect("decode public values");
+    assert_eq!(<[u8; 32]>::from(values.originBlobId), origin_blob_id);
+    assert_eq!(<[u8; 32]>::from(values.samplingSeed), seed);
+    let fixture = serde_json::json!({
+        "originBlobId": format!("0x{}", hex::encode(origin_blob_id)),
+        "samplingSeed": format!("0x{}", hex::encode(seed)),
+        "bucketStart": values.bucketStart,
+        "bucketEnd": values.bucketEnd,
+        "sampleCidDigest": format!("0x{}", hex::encode(values.sampleCidDigest)),
+        "programVKey": pk.verifying_key().bytes32(),
+        "publicValues": format!("0x{}", hex::encode(proof.public_values.as_slice())),
+        "proof": format!("0x{}", hex::encode(proof.bytes())),
+    });
+    fs::write(&proof_path, serde_json::to_vec_pretty(&fixture).unwrap())
+        .expect("write proof fixture");
+    println!("bucket: [{}..{})", values.bucketStart, values.bucketEnd);
+    println!("sampleCidDigest: 0x{}", hex::encode(values.sampleCidDigest));
+    println!("networkProof: {}", proof_path.display());
 }
 
 #[cfg(feature = "execute")]
@@ -238,6 +307,7 @@ fn build_opening_from_slivers(
             let tree = MerkleTree::<Blake2b256>::build(expanded.iter().copied());
             assert_eq!(tree.root(), Node::Digest(roots[index].primary));
             let mut proof_nodes = BTreeMap::<(u8, u32), Node>::new();
+            let mut active = leaves.clone();
             let symbols = leaves
                 .into_iter()
                 .map(|leaf_index| {
@@ -263,6 +333,19 @@ fn build_opening_from_slivers(
                     }
                 })
                 .collect();
+            let mut width = n_shards;
+            let mut level = 0u8;
+            while width > 1 {
+                for active_index in &active {
+                    proof_nodes.remove(&(level, *active_index));
+                }
+                active = active
+                    .into_iter()
+                    .map(|active_index| active_index / 2)
+                    .collect();
+                width = width.next_multiple_of(2) / 2;
+                level += 1;
+            }
             AuthenticatedPrimarySliver {
                 shard_index,
                 primary_root: roots[index].primary,
@@ -292,3 +375,24 @@ fn decode_seed(value: &str) -> [u8; 32] {
         .try_into()
         .expect("seed must be 32 bytes")
 }
+
+#[cfg(feature = "network")]
+fn network_private_key() -> String {
+    if let Ok(value) = env::var("NETWORK_PRIVATE_KEY").or_else(|_| env::var("SP1_PRIVATE_KEY")) {
+        if !value.is_empty() {
+            return value;
+        }
+    }
+    let path = env::var("SP1_PRIVATE_KEY_FILE")
+        .expect("NETWORK_PRIVATE_KEY, SP1_PRIVATE_KEY, or SP1_PRIVATE_KEY_FILE must be set");
+    fs::read_to_string(path)
+        .expect("read SP1 private key file")
+        .lines()
+        .find_map(|line| line.strip_prefix("SP1_PRIVATE_KEY="))
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .expect("SP1_PRIVATE_KEY is missing from key file")
+}
+
+#[cfg(all(feature = "execute", feature = "network"))]
+compile_error!("features execute and network are mutually exclusive");

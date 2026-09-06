@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [features]
 execute = []
+network = []
 
 [dependencies]
 alloy-sol-types = { workspace = true }
@@ -18,7 +19,7 @@ drop-lib = { path = "../../../drop-lib" }
 flow-graph-sampling-guest-lib = { path = "../lib" }
 hex = "0.4.3"
 serde_json = "1"
-sp1-sdk = "=6.2.4"
+sp1-sdk = { version = "=6.2.4", features = ["network"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 trustdrop-flow-graph-sampling = { path = "../../../extensions/dataset-sampling/flow-graph/lib" }
 walrus_core = { path = "../../../walrus-core" }
