@@ -10,6 +10,7 @@ members = [
     "drop-cli",
     "extensions/sampling-challenge-client",
     "extensions/dataset-sampling/flow-graph/lib",
+    "extensions/dataset-sampling/cluster/lib",
 ]
 
 [workspace.dependencies]
