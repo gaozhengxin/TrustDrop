@@ -48,6 +48,25 @@ contract FlowGraphSamplingVerifierTest is Test {
         verifier.verifyFlowGraphSamplingProof(bytes("wrong-proof"), abi.encode(sampleValues()));
     }
 
+    function testActualSuccinctProofWhenConfigured() public {
+        string memory fixturePath = vm.envOr("FLOW_PROOF_FIXTURE", string(""));
+        if (bytes(fixturePath).length == 0) return;
+
+        string memory fixture = vm.readFile(fixturePath);
+        bytes memory proof = vm.parseJsonBytes(fixture, ".proof");
+        bytes memory publicValues = vm.parseJsonBytes(fixture, ".publicValues");
+        bytes32 vkey = vm.parseJsonBytes32(fixture, ".programVKey");
+        address gateway = vm.envAddress("SP1_VERIFIER_GATEWAY");
+        FlowGraphSamplingVerifier liveVerifier = new FlowGraphSamplingVerifier(gateway, vkey);
+
+        FlowGraphSamplingVerifier.PublicValues memory decoded =
+            liveVerifier.verifyFlowGraphSamplingProof(proof, publicValues);
+
+        assertEq(decoded.originBlobId, vm.parseJsonBytes32(fixture, ".originBlobId"));
+        assertEq(decoded.samplingSeed, vm.parseJsonBytes32(fixture, ".samplingSeed"));
+        assertEq(decoded.sampleCidDigest, vm.parseJsonBytes32(fixture, ".sampleCidDigest"));
+    }
+
     function sampleValues() private pure returns (FlowGraphSamplingVerifier.PublicValues memory values) {
         values = FlowGraphSamplingVerifier.PublicValues({
             originBlobId: bytes32(uint256(1)),
