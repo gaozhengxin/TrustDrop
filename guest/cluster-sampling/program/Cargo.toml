@@ -1,0 +1,17 @@
+[package]
+name = "cluster-sampling-program"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+
+[[bin]]
+name = "cluster_sampling_program"
+path = "src/main.rs"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }
+cluster-sampling-guest-lib = { path = "../lib" }
+sp1-zkvm = "=6.2.4"
+trustdrop-cluster-sampling = { path = "../../../extensions/dataset-sampling/cluster/lib" }
+walrus_core = { path = "../../../walrus-core" }
