@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
+import {ClusterSamplingVerifier} from "../src/ClusterSamplingVerifier.sol";
+
+contract MockClusterSP1Verifier is ISP1Verifier {
+    bytes32 public immutable expectedVKey;
+
+    constructor(bytes32 vkey) {
+        expectedVKey = vkey;
+    }
+
+    function verifyProof(bytes32 vkey, bytes calldata, bytes calldata proof) external view {
+        require(vkey == expectedVKey, "wrong vkey");
+        require(keccak256(proof) == keccak256("valid-proof"), "invalid proof");
+    }
+}
+
+contract ClusterSamplingVerifierTest is Test {
+    bytes32 internal constant VKEY = bytes32(uint256(1));
+    ClusterSamplingVerifier internal verifier;
+
+    function setUp() public {
+        verifier = new ClusterSamplingVerifier(address(new MockClusterSP1Verifier(VKEY)), VKEY);
+    }
+
+    function testVerifiesAndDecodesPublicValues() public view {
+        ClusterSamplingVerifier.PublicValues memory values = sampleValues();
+        ClusterSamplingVerifier.PublicValues memory decoded =
+            verifier.verifyClusterSamplingProof(bytes("valid-proof"), abi.encode(values));
+
+        assertEq(decoded.originBlobId, values.originBlobId);
+        assertEq(decoded.samplingSeed, values.samplingSeed);
+        assertEq(decoded.clusterId0, values.clusterId0);
+        assertEq(decoded.clusterId1, values.clusterId1);
+        assertEq(decoded.clusterId2, values.clusterId2);
+        assertEq(decoded.sampleCidDigest, values.sampleCidDigest);
+    }
+
+    function testRejectsWrongPublicValuesLength() public {
+        vm.expectRevert("invalid public values length");
+        verifier.verifyClusterSamplingProof(bytes("valid-proof"), new bytes(32 * 5));
+    }
+
+    function testRejectsWrongProgramProof() public {
+        vm.expectRevert("invalid proof");
+        verifier.verifyClusterSamplingProof(bytes("wrong-proof"), abi.encode(sampleValues()));
+    }
+
+    function testActualSuccinctProofWhenConfigured() public {
+        string memory fixturePath = vm.envOr("CLUSTER_PROOF_FIXTURE", string(""));
+        if (bytes(fixturePath).length == 0) return;
+
+        string memory fixture = vm.readFile(fixturePath);
+        bytes memory proof = vm.parseJsonBytes(fixture, ".proof");
+        bytes memory publicValues = vm.parseJsonBytes(fixture, ".publicValues");
+        bytes32 vkey = vm.parseJsonBytes32(fixture, ".programVKey");
+        address gateway = vm.envAddress("SP1_VERIFIER_GATEWAY");
+        ClusterSamplingVerifier liveVerifier = new ClusterSamplingVerifier(gateway, vkey);
+
+        ClusterSamplingVerifier.PublicValues memory decoded =
+            liveVerifier.verifyClusterSamplingProof(proof, publicValues);
+
+        assertEq(decoded.originBlobId, vm.parseJsonBytes32(fixture, ".originBlobId"));
+        assertEq(decoded.samplingSeed, vm.parseJsonBytes32(fixture, ".samplingSeed"));
+        assertEq(decoded.sampleCidDigest, vm.parseJsonBytes32(fixture, ".sampleCidDigest"));
+    }
+
+    function sampleValues() private pure returns (ClusterSamplingVerifier.PublicValues memory values) {
+        values = ClusterSamplingVerifier.PublicValues({
+            originBlobId: bytes32(uint256(1)),
+            samplingSeed: bytes32(uint256(2)),
+            clusterId0: bytes32("wcl_000000000000000000000001"),
+            clusterId1: bytes32("wcl_000000000000000000000002"),
+            clusterId2: bytes32("wcl_000000000000000000000003"),
+            sampleCidDigest: bytes32(uint256(3))
+        });
+    }
+}
