@@ -190,6 +190,11 @@ async function refreshMarketplace(): Promise<void> {
   }
 }
 
+async function refreshMarketplaceAndRender(): Promise<void> {
+  await refreshMarketplace();
+  render();
+}
+
 async function loadMoreMarketplaceSales(renderOnFinish = true): Promise<void> {
   if (state.loadingMoreSales || !state.salesHasMore) return;
   state.loadingMoreSales = true;
@@ -1022,7 +1027,7 @@ function bindEvents(root: HTMLElement): void {
     disconnect();
   });
   root.querySelector<HTMLButtonElement>("#refresh-button")?.addEventListener("click", () => {
-    void refreshMarketplace();
+    void refreshMarketplaceAndRender();
   });
   root.querySelector<HTMLButtonElement>("#purchase-button")?.addEventListener("click", () => {
     void handlePurchase();
