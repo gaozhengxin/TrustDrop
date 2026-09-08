@@ -1386,7 +1386,7 @@ pub async fn generate_vdd_proof(
     let proof = client
         .prove(&pk, stdin)
         .cycle_limit(cycle_limit)
-        .gas_limit(1_000_000_000)
+        .gas_limit(6_000_000_000)
         .skip_simulation(true)
         .compressed()
         .groth16()
