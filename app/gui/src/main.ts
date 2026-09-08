@@ -7,6 +7,7 @@ import {
   onWalletAccountsChanged,
   onWalletChainChanged,
   recoverPurchasedAsset,
+  reconnectWallet,
   refundPurchase,
   listLocalThreads,
   preparePurchase,
@@ -140,6 +141,12 @@ async function boot(): Promise<void> {
   else if (proofRequestFromUrl()) state.route = "certificate";
   installWalletListeners();
   render();
+  try {
+    state.wallet = await reconnectWallet();
+  } catch (error) {
+    state.wallet = null;
+    state.message = errorMessage(error);
+  }
   try {
     await loadVisionDescriptor();
     state.visionReady = true;
