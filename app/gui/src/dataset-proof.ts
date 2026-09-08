@@ -94,7 +94,7 @@ export function datasetSampleCurlCommand(kind: "flow" | "clusters", certificate:
 }
 
 export function datasetViewerUrl(kind: "flow" | "clusters", cid: string): string {
-  const url = new URL("/chain-intelligence-viewer/", window.location.origin);
+  const url = new URL("/chain-intelligence-viewer/index.html", window.location.origin);
   url.search = new URLSearchParams({ view: kind === "flow" ? "flow" : "cluster", cid }).toString();
   return url.toString();
 }
