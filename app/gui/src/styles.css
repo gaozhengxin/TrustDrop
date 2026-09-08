@@ -135,6 +135,19 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.dataset-sample-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dataset-sample-card .section-title {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
 .preview-card,
 .certificate-panel {
   background: #ffffff;
@@ -239,6 +252,10 @@ button:disabled {
   }
 
   .preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-sample-grid {
     grid-template-columns: 1fr;
   }
 

@@ -30,8 +30,9 @@ import {
 } from "../../../packages/drop-ts-sdk/src";
 import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, loadVisionDescriptor, marketplaceQueryBounds } from "./content-engine/engine";
 import { loadVideoProof, verifyVideoProof, verifyVideoSamplingSeed, videoProofCalldata, videoProofCid, videoProofCurlCommand, type LoadedVideoProof } from "./video-proof";
+import { datasetProofCid, datasetSampleCalldata, datasetSampleCurlCommand, datasetViewerUrl, loadDatasetProof, verifyDatasetSample, type LoadedDatasetProof } from "./dataset-proof";
 
-type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate";
+type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate" | "dataset-certificate";
 type ImportMetaWithEnv = ImportMeta & {
   env?: {
     DEV?: boolean;
@@ -75,6 +76,11 @@ type UiState = {
   videoProofVerificationDetail: string;
   videoSeedVerification: "idle" | "checking" | "accepted" | "rejected" | "unavailable";
   videoSeedVerificationDetail: string;
+  datasetProof: LoadedDatasetProof | null;
+  datasetProofLoading: boolean;
+  datasetProofError: string;
+  datasetVerification: Record<"flow" | "clusters", "idle" | "checking" | "accepted" | "rejected">;
+  datasetVerificationDetail: Record<"flow" | "clusters", string>;
   message: string;
 };
 
@@ -121,11 +127,17 @@ const state: UiState = {
   videoProofVerificationDetail: "",
   videoSeedVerification: "idle",
   videoSeedVerificationDetail: "",
+  datasetProof: null,
+  datasetProofLoading: false,
+  datasetProofError: "",
+  datasetVerification: { flow: "idle", clusters: "idle" },
+  datasetVerificationDetail: { flow: "", clusters: "" },
   message: "",
 };
 
 async function boot(): Promise<void> {
-  if (proofRequestFromUrl()) state.route = "certificate";
+  if (datasetProofRequestFromUrl()) state.route = "dataset-certificate";
+  else if (proofRequestFromUrl()) state.route = "certificate";
   installWalletListeners();
   render();
   try {
@@ -157,6 +169,7 @@ async function refreshMarketplace(): Promise<void> {
     await loadMoreMarketplaceSales(false);
     await loadMoreRecommendedSales(false);
     if (state.route === "certificate") await loadRequestedVideoProof();
+    if (state.route === "dataset-certificate") await loadRequestedDatasetProof();
     if (!state.sales.some((sale) => sale.id === state.selectedSaleId)) {
       state.selectedSaleId = state.sales[0]?.id || state.recommendedSales[0]?.id || "";
     }
@@ -351,6 +364,55 @@ async function loadRequestedVideoProof(): Promise<void> {
   }
 }
 
+function datasetProofRequestFromUrl(): { cid: string; channel: `0x${string}`; saleId: `0x${string}` } | null {
+  const params = new URLSearchParams(window.location.search);
+  const cid = params.get("datasetProof") ?? "";
+  const channel = params.get("channel") ?? "";
+  const saleId = params.get("saleId") ?? "";
+  if (!cid || !/^0x[0-9a-fA-F]{40}$/.test(channel) || !/^0x[0-9a-fA-F]{64}$/.test(saleId)) return null;
+  return { cid, channel: channel as `0x${string}`, saleId: saleId as `0x${string}` };
+}
+
+async function loadRequestedDatasetProof(): Promise<void> {
+  const request = datasetProofRequestFromUrl();
+  if (!request) { state.datasetProofError = "The certificate URL is incomplete."; return; }
+  state.datasetProof = null;
+  state.datasetProofLoading = true;
+  state.datasetProofError = "";
+  state.datasetVerification = { flow: "idle", clusters: "idle" };
+  state.datasetVerificationDetail = { flow: "", clusters: "" };
+  render();
+  try {
+    let sale = state.allSales.find((item) => sameSaleRef(item, request.channel, request.saleId));
+    if (!sale) {
+      sale = await subgraph.getSale(request.channel, request.saleId) ?? undefined;
+      if (sale) upsertAllSales([sale]);
+    }
+    if (!sale) throw new Error("The sale referenced by this certificate is not indexed.");
+    if (datasetProofCid(sale.tags) !== request.cid) throw new Error("The sale does not reference this chain-intelligence certificate CID.");
+    state.selectedSaleId = sale.id;
+    state.datasetProof = await loadDatasetProof(request.cid, sale);
+    const loaded = state.datasetProof;
+    state.datasetVerification = { flow: "checking", clusters: "checking" };
+    render();
+    await Promise.all((["flow", "clusters"] as const).map(async (kind) => {
+      try {
+        await verifyDatasetSample(kind, loaded.certificate);
+        state.datasetVerification[kind] = "accepted";
+        state.datasetVerificationDetail[kind] = "The standalone SP1 Groth16 verifier accepted this sample proof on Arbitrum Sepolia.";
+      } catch (error) {
+        state.datasetVerification[kind] = "rejected";
+        state.datasetVerificationDetail[kind] = errorMessage(error);
+      }
+    }));
+  } catch (error) {
+    state.datasetProofError = errorMessage(error);
+  } finally {
+    state.datasetProofLoading = false;
+    render();
+  }
+}
+
 function proofPageUrl(sale: MarketplaceSale, cid: string): string {
   const url = new URL(window.location.href);
   url.search = new URLSearchParams({ proof: cid, channel: sale.channel, saleId: sale.saleId }).toString();
@@ -358,9 +420,17 @@ function proofPageUrl(sale: MarketplaceSale, cid: string): string {
   return url.toString();
 }
 
+function datasetProofPageUrl(sale: MarketplaceSale, cid: string): string {
+  const url = new URL(window.location.href);
+  url.search = new URLSearchParams({ datasetProof: cid, channel: sale.channel, saleId: sale.saleId }).toString();
+  url.hash = "";
+  return url.toString();
+}
+
 function clearProofUrl(): void {
   const url = new URL(window.location.href);
   url.searchParams.delete("proof");
+  url.searchParams.delete("datasetProof");
   url.searchParams.delete("channel");
   url.searchParams.delete("saleId");
   window.history.replaceState(null, "", url);
@@ -531,6 +601,7 @@ function renderDetail(sale: MarketplaceSale): string {
   if (!state.visionReady && state.loading) return renderShell(contentRulesLoading());
   if (!state.visionReady) return renderShell(contentRulesUnavailable());
   const certificateCid = videoProofCid(sale.tags);
+  const datasetCertificateCid = datasetProofCid(sale.tags);
   return renderShell(`
     <section class="detail">
       <button class="text-button" data-route="browse" type="button">Back to browse</button>
@@ -543,6 +614,7 @@ function renderDetail(sale: MarketplaceSale): string {
           <p>${escapeHtml(sale.description || sale.info || "No description")}</p>
           <div class="tag-row">${sale.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("") || `<span>untagged</span>`}</div>
           ${certificateCid ? `<a class="proof-link" href="${escapeAttr(proofPageUrl(sale, certificateCid))}" target="_blank" rel="noreferrer">View video sampling certificate</a>` : ""}
+          ${datasetCertificateCid ? `<a class="proof-link" href="${escapeAttr(datasetProofPageUrl(sale, datasetCertificateCid))}" target="_blank" rel="noreferrer">View chain-intelligence sampling certificate</a>` : ""}
           <dl class="facts">
             <div><dt>Price</dt><dd>${salePriceEth(sale)} ETH</dd></div>
             <div><dt>Size</dt><dd>${formatBytes(sale.fileSize)}</dd></div>
@@ -671,6 +743,42 @@ function renderCertificate(): string {
   `);
 }
 
+function renderDatasetCertificate(): string {
+  const sale = selectedSale();
+  const loaded = state.datasetProof;
+  if (state.datasetProofLoading && !loaded) return renderShell(`<section class="certificate-page">${loadingRows()}</section>`);
+  if (state.datasetProofError || !loaded || !sale) return renderShell(`<section class="certificate-page"><button class="text-button" data-route="detail" type="button">Back to listing</button><div class="notice">${escapeHtml(state.datasetProofError || "Certificate unavailable")}</div></section>`);
+  const certificate = loaded.certificate;
+  const labels = { flow: "Flow graph time sample", clusters: "Wallet-cluster evidence sample" } as const;
+  const descriptions = {
+    flow: `${formatTimestamp(String(certificate.samples.flow.bucketStart))}–${formatTimestamp(String(certificate.samples.flow.bucketEnd))}`,
+    clusters: `${certificate.samples.clusters.clusterIds.length} seed-selected clusters with their supporting transfer subgraphs`,
+  } as const;
+  const overall = Object.values(state.datasetVerification).some((value) => value === "rejected") ? "rejected" : Object.values(state.datasetVerification).every((value) => value === "accepted") ? "accepted" : "checking";
+  return renderShell(`
+    <section class="certificate-page">
+      <div class="certificate-heading">
+        <div><span class="eyebrow">Chain-intelligence v2 sampling certificate</span><h1>${escapeHtml(saleDisplayTitle(sale))}</h1><p>Two authenticated samples are reconstructed from Walrus-bound dataset sections: one time-aligned flow bucket and three complete cluster evidence subgraphs.</p></div>
+        <div class="certificate-actions"><span class="verification-badge ${overall}">${overall === "accepted" ? "Verified" : overall === "rejected" ? "Verification failed" : "Verifying"}</span><button class="text-button" id="download-dataset-certificate-button" type="button">Download certificate</button></div>
+      </div>
+      <div class="dataset-sample-grid">
+        ${(["flow", "clusters"] as const).map((kind) => {
+          const sample = certificate.samples[kind];
+          const status = state.datasetVerification[kind];
+          return `<article class="certificate-panel dataset-sample-card">
+            <div class="section-title"><div><span class="eyebrow">${kind === "flow" ? "entity_flows" : "cluster_subgraphs"}</span><h2>${labels[kind]}</h2></div><span class="verification-badge ${status}">${status === "accepted" ? "Verified" : status === "rejected" ? "Failed" : "Verifying"}</span></div>
+            <p>${escapeHtml(descriptions[kind])}</p>
+            <a class="proof-link" href="${escapeAttr(datasetViewerUrl(kind, sample.cid))}" target="_blank" rel="noreferrer">Open authenticated sample in explorer</a>
+            <dl class="certificate-facts"><div><dt>Sample CID</dt><dd><code>${escapeHtml(sample.cid)}</code></dd></div><div><dt>Origin commitment</dt><dd><code>${escapeHtml(sample.originBlobId)}</code></dd></div><div><dt>Sampling seed</dt><dd><code>${escapeHtml(sample.samplingSeed)}</code></dd></div><div><dt>Verifier</dt><dd><a href="https://sepolia.arbiscan.io/address/${escapeAttr(sample.verifier.address)}" target="_blank" rel="noreferrer">${escapeHtml(sample.verifier.address)}</a></dd></div></dl>
+            <p>${escapeHtml(state.datasetVerificationDetail[kind] || "Calling the verifier contract…")}</p>
+            <details class="verification-reproduce"><summary>Reproduce this verification</summary><div class="verification-code-heading"><strong>Calldata</strong></div><pre><code>${escapeHtml(datasetSampleCalldata(kind, certificate))}</code></pre><div class="verification-code-heading"><strong>Terminal command</strong><button class="text-button" data-copy-dataset-verification="${kind}" type="button">Copy</button></div><p>Paste this command into Terminal. A valid proof prints <code>Verified</code>.</p><pre><code>${escapeHtml(datasetSampleCurlCommand(kind, certificate))}</code></pre></details>
+          </article>`;
+        }).join("")}
+      </div>
+      <section class="certificate-panel"><h2>Dataset claim</h2><dl class="certificate-facts"><div><dt>Schema</dt><dd><code>${escapeHtml(certificate.dataset.schema)}</code></dd></div><div><dt>Chain</dt><dd>${escapeHtml(certificate.dataset.chain)} · Chain ID ${certificate.dataset.chainId}</dd></div><div><dt>Coverage</dt><dd>${formatTimestamp(String(certificate.dataset.firstTimestamp))}–${formatTimestamp(String(certificate.dataset.lastTimestamp))}</dd></div><div><dt>Source transfers</dt><dd>${certificate.dataset.transferCount.toLocaleString()}</dd></div><div><dt>Clustering rule</dt><dd><code>${escapeHtml(certificate.dataset.clusteringMethod)}</code></dd></div><div><dt>Sale contract</dt><dd><code>${escapeHtml(certificate.sale.contract)}</code></dd></div><div><dt>Sale ID</dt><dd><code>${escapeHtml(certificate.sale.saleId)}</code></dd></div></dl></section>
+    </section>`);
+}
+
 function searchBox(): string {
   return `
     <label class="search">
@@ -791,6 +899,8 @@ function render(): void {
     root.innerHTML = renderSettings();
   } else if (state.route === "certificate") {
     root.innerHTML = renderCertificate();
+  } else if (state.route === "dataset-certificate") {
+    root.innerHTML = renderDatasetCertificate();
   } else if (state.route === "detail") {
     const sale = selectedSale();
     root.innerHTML = sale ? renderDetail(sale) : renderShell(empty("No listing selected."));
@@ -805,7 +915,7 @@ function bindEvents(root: HTMLElement): void {
   root.querySelectorAll<HTMLButtonElement>("[data-route]").forEach((button) => {
     button.addEventListener("click", () => {
       state.route = (button.dataset.route as Route) ?? "home";
-      if (state.route !== "certificate") clearProofUrl();
+      if (state.route !== "certificate" && state.route !== "dataset-certificate") clearProofUrl();
       state.message = "";
       state.walletMenuOpen = false;
       render();
@@ -858,6 +968,16 @@ function bindEvents(root: HTMLElement): void {
     anchor.click();
     URL.revokeObjectURL(url);
   });
+  root.querySelector<HTMLButtonElement>("#download-dataset-certificate-button")?.addEventListener("click", () => {
+    if (!state.datasetProof) return;
+    const bytes = JSON.stringify(state.datasetProof.certificate, null, 2);
+    const url = URL.createObjectURL(new Blob([`${bytes}\n`], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `trustdrop-chain-intelligence-v2-certificate-${state.datasetProof.certificateCid}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  });
   root.querySelector<HTMLButtonElement>("#copy-verification-command-button")?.addEventListener("click", async (event) => {
     if (!state.videoProof) return;
     const button = event.currentTarget as HTMLButtonElement;
@@ -867,6 +987,14 @@ function bindEvents(root: HTMLElement): void {
     } catch {
       button.textContent = "Copy failed";
     }
+  });
+  root.querySelectorAll<HTMLButtonElement>("[data-copy-dataset-verification]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!state.datasetProof) return;
+      const kind = button.dataset.copyDatasetVerification as "flow" | "clusters";
+      try { await navigator.clipboard.writeText(datasetSampleCurlCommand(kind, state.datasetProof.certificate)); button.textContent = "Copied"; }
+      catch { button.textContent = "Copy failed"; }
+    });
   });
 
   root.querySelector<HTMLButtonElement>("#wallet-button")?.addEventListener("click", () => {
