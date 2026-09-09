@@ -2,15 +2,19 @@ import {
   buyerAssetStatus,
   checkWalrusAggregator,
   connectWallet,
+  deriveBuyerSecret,
+  encryptedWalrusBlobId,
   fileKind,
   getStoredWalrusAggregatorUrl,
   onWalletAccountsChanged,
   onWalletChainChanged,
   recoverPurchasedAsset,
   reconnectWallet,
+  recoverBuyerRecordKeys,
   refundPurchase,
   listLocalThreads,
   preparePurchase,
+  readDataKeyCommitment,
   saleDisplayTitle,
   salePriceEth,
   setStoredWalrusAggregatorUrl,
@@ -19,6 +23,7 @@ import {
   upsertLocalThread,
   WALRUS_AGGREGATOR_PRESETS,
   walletFromAccount,
+  isWalrusBlobReadable,
   type BrowserWallet,
   type BuyerThread,
   type BuyerKeyMode,
@@ -83,6 +88,11 @@ type UiState = {
   datasetVerification: Record<"flow" | "clusters", "idle" | "checking" | "accepted" | "rejected">;
   datasetVerificationDetail: Record<"flow" | "clusters", string>;
   message: string;
+  expandedRecords: Set<string>;
+  recordSecrets: Record<string, { userKey?: string; dataKey?: string }>;
+  visibleRecordSecrets: Record<string, { userKey: boolean; dataKey: boolean }>;
+  walrusChecks: Record<string, "checking" | "readable" | "unavailable">;
+  dataKeyCommitments: Record<string, string>;
 };
 
 const subgraph = new TrustDropSubgraph();
@@ -134,6 +144,11 @@ const state: UiState = {
   datasetVerification: { flow: "idle", clusters: "idle" },
   datasetVerificationDetail: { flow: "", clusters: "" },
   message: "",
+  expandedRecords: new Set(),
+  recordSecrets: {},
+  visibleRecordSecrets: {},
+  walrusChecks: {},
+  dataKeyCommitments: {},
 };
 
 async function boot(): Promise<void> {
@@ -861,6 +876,16 @@ function buyerRecordRows(): string {
     const hidden = sale ? hiddenReasonsForSale(sale).length > 0 : false;
     const refundState = refundAvailability(purchase, status);
     const refundBusy = state.refundBusy.toLowerCase() === purchase.txHash.toLowerCase();
+    const thread = state.localThreads.find((item) => item.txHash.toLowerCase() === purchase.txHash.toLowerCase());
+    const share = dataKeyShareForPurchase(purchase);
+    const proof = vddProofForPurchase(purchase);
+    const blobId = sale && proof ? encryptedWalrusBlobId(sale, [proof]) : "";
+    const detailId = purchase.txHash.toLowerCase();
+    const secret = state.recordSecrets[detailId];
+    const visible = state.visibleRecordSecrets[detailId] ?? { userKey: false, dataKey: false };
+    const keyMode = thread?.keyMode === "manual_secret" ? "User-specified" : thread?.keyMode === "wallet_derived" ? "Wallet-derived" : "Unknown on this browser";
+    const walrusState = state.walrusChecks[detailId];
+    const walrusLabel = walrusState === "readable" ? "Readable" : walrusState === "unavailable" ? "Unavailable" : walrusState === "checking" ? "Checking…" : "Not checked";
     return `
       <article class="record">
         <span class="file-badge kind-${sale ? fileKind(sale.contentType, sale.fileName) : "binary"}">${escapeHtml(fileKindLabel(sale))}</span>
@@ -876,6 +901,18 @@ function buyerRecordRows(): string {
         <button class="text-button" data-refund="${escapeAttr(purchase.txHash)}" title="${escapeAttr(refundState.reason)}" type="button" ${refundState.enabled && !refundBusy ? "" : "disabled"}>
           ${refundBusy ? "Refunding" : "Refund"}
         </button>
+        <details class="record-details" data-record-details="${escapeAttr(detailId)}" ${state.expandedRecords.has(detailId) ? "open" : ""}>
+          <summary>More information</summary>
+          <dl class="record-facts">
+            <div><dt>User key commitment</dt><dd><code>${escapeHtml(purchase.vssKeyCommitment)}</code></dd></div>
+            <div><dt>User key</dt><dd><code>${secret?.userKey && visible.userKey ? escapeHtml(secret.userKey) : "Hidden"}</code> <button class="text-button compact" data-reveal-key="userKey" data-record-id="${escapeAttr(detailId)}" type="button">${visible.userKey ? "Hide" : "Show"}</button><small>ChaCha8 · ${escapeHtml(keyMode)}</small></dd></div>
+            <div><dt>Data key commitment</dt><dd><code>${escapeHtml(state.dataKeyCommitments[detailId] ?? "Loading…")}</code></dd></div>
+            <div><dt>Data key</dt><dd><code>${secret?.dataKey && visible.dataKey ? escapeHtml(secret.dataKey) : "Hidden"}</code> <button class="text-button compact" data-reveal-key="dataKey" data-record-id="${escapeAttr(detailId)}" type="button">${visible.dataKey ? "Hide" : "Show"}</button><small>32-byte key recovered from the fulfilled ChaCha8 key share</small></dd></div>
+            <div><dt>Plaintext commitment</dt><dd><code>${escapeHtml(purchase.dataCommitment)}</code></dd></div>
+            <div><dt>Ciphertext commitment / Walrus blob ID</dt><dd><code>${escapeHtml(proof?.cCipher ?? "Not published")}</code>${blobId ? `<small>${escapeHtml(blobId)} · <span class="walrus-${walrusState ?? "unchecked"}">${walrusLabel}</span></small>` : ""}</dd></div>
+            <div><dt>Fulfill transaction</dt><dd>${share ? `<a href="https://sepolia.arbiscan.io/tx/${escapeAttr(share.txHash)}" target="_blank" rel="noreferrer"><code>${escapeHtml(share.txHash)}</code></a>` : "Not fulfilled"}</dd></div>
+          </dl>
+        </details>
       </article>
     `;
   });
@@ -897,6 +934,20 @@ function buyerRecordRows(): string {
     `;
     });
   return [...indexedRows, ...localRows].join("");
+}
+
+function dataKeyShareForPurchase(purchase: MarketplacePurchase): DataKeyShare | undefined {
+  return [...state.dataKeyShares]
+    .filter((share) => share.channel.toLowerCase() === purchase.channel.toLowerCase())
+    .filter((share) => share.audiences.some((audience) => audience.toLowerCase() === purchase.buyer.toLowerCase()))
+    .filter((share) => Number(share.timestamp) >= Number(purchase.timestamp))
+    .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))[0];
+}
+
+function vddProofForPurchase(purchase: MarketplacePurchase): VddProof | undefined {
+  return [...state.vddProofs]
+    .filter((proof) => proof.channel.toLowerCase() === purchase.channel.toLowerCase())
+    .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))[0];
 }
 
 function render(): void {
@@ -1029,6 +1080,27 @@ function bindEvents(root: HTMLElement): void {
   root.querySelector<HTMLButtonElement>("#refresh-button")?.addEventListener("click", () => {
     void refreshMarketplaceAndRender();
   });
+  for (const details of root.querySelectorAll<HTMLDetailsElement>("[data-record-details]")) {
+    details.addEventListener("toggle", () => {
+      const id = details.dataset.recordDetails;
+      if (!id) return;
+      if (details.open) {
+        state.expandedRecords.add(id);
+        void loadRecordDetails(id);
+      } else {
+        state.expandedRecords.delete(id);
+      }
+    });
+  }
+  for (const button of root.querySelectorAll<HTMLButtonElement>("[data-reveal-key]")) {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = button.dataset.recordId;
+      const key = button.dataset.revealKey as "userKey" | "dataKey";
+      if (id) void toggleRecordKey(id, key);
+    });
+  }
   root.querySelector<HTMLButtonElement>("#purchase-button")?.addEventListener("click", () => {
     void handlePurchase();
   });
@@ -1058,6 +1130,78 @@ function bindEvents(root: HTMLElement): void {
       void handleRefund(button.dataset.refund as `0x${string}`);
     });
   });
+}
+
+async function loadRecordDetails(id: string): Promise<void> {
+  const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === id);
+  if (!purchase) return;
+  const tasks: Promise<void>[] = [];
+  if (!state.dataKeyCommitments[id]) {
+    tasks.push(readDataKeyCommitment(purchase.channel).then((value) => {
+      state.dataKeyCommitments[id] = value;
+    }).catch(() => {
+      state.dataKeyCommitments[id] = "Unavailable";
+    }));
+  }
+  const sale = findSaleForPurchase(purchase);
+  const proof = vddProofForPurchase(purchase);
+  if (sale && proof && !state.walrusChecks[id]) {
+    state.walrusChecks[id] = "checking";
+    tasks.push(isWalrusBlobReadable(state.aggregatorUrl, encryptedWalrusBlobId(sale, [proof])).then((readable) => {
+      state.walrusChecks[id] = readable ? "readable" : "unavailable";
+    }).catch(() => {
+      state.walrusChecks[id] = "unavailable";
+    }));
+  }
+  render();
+  await Promise.all(tasks);
+  render();
+}
+
+async function toggleRecordKey(id: string, key: "userKey" | "dataKey"): Promise<void> {
+  const visible = state.visibleRecordSecrets[id] ?? { userKey: false, dataKey: false };
+  if (visible[key]) {
+    state.visibleRecordSecrets[id] = { ...visible, [key]: false };
+    render();
+    return;
+  }
+  if (state.recordSecrets[id]?.[key]) {
+    state.visibleRecordSecrets[id] = { ...visible, [key]: true };
+    render();
+    return;
+  }
+  const purchase = state.purchases.find((item) => item.txHash.toLowerCase() === id);
+  if (!purchase || !state.wallet) return;
+  if (purchase.buyer.toLowerCase() !== state.wallet.account.toLowerCase()) {
+    state.message = "Connected wallet does not match this purchase.";
+    render();
+    return;
+  }
+  const sale = await saleForPurchase(purchase);
+  const thread = state.localThreads.find((item) => item.txHash.toLowerCase() === id);
+  const manualSecret = thread?.keyMode === "manual_secret" ? promptManualSecret("User key hex") : undefined;
+  try {
+    if (key === "userKey") {
+      const userKey = manualSecret ?? `0x${Array.from(await deriveBuyerSecret(sale, state.wallet.account, state.wallet.client), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+      state.recordSecrets[id] = { ...state.recordSecrets[id], userKey };
+    } else {
+      state.recordSecrets[id] = await recoverBuyerRecordKeys({
+        sale,
+        purchase,
+        settlements: state.settlements,
+        dataKeyShares: state.dataKeyShares,
+        vddProofs: state.vddProofs,
+        buyer: state.wallet.account,
+        walletClient: state.wallet.client,
+        manualSecret: manualSecret as `0x${string}` | undefined,
+      });
+    }
+    state.visibleRecordSecrets[id] = { ...visible, [key]: true };
+    state.message = "Keys are visible only in this page session.";
+  } catch (error) {
+    state.message = errorMessage(error);
+  }
+  render();
 }
 
 async function connect(): Promise<void> {
