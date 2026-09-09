@@ -1478,19 +1478,26 @@ function fileKindLabel(sale?: MarketplaceSale): string {
   return "BIN";
 }
 
+const activeDownloadUrls = new Set<string>();
+
+window.addEventListener("pagehide", () => {
+  for (const url of activeDownloadUrls) URL.revokeObjectURL(url);
+  activeDownloadUrls.clear();
+});
+
 function triggerBrowserDownload(bytes: Uint8Array, fileName: string, contentType: string): void {
   // Copy the exact byte range into a standalone ArrayBuffer. More importantly,
   // keep the object URL alive while the browser consumes a large download.
   const downloadBytes = bytes.slice();
   const blob = new Blob([downloadBytes.buffer], { type: contentType || "application/octet-stream" });
   const url = URL.createObjectURL(blob);
+  activeDownloadUrls.add(url);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = fileName || "trustdrop-asset.bin";
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function empty(message: string): string {
