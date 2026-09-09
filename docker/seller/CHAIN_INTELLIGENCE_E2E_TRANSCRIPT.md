@@ -221,8 +221,8 @@ export CLUSTER_SAMPLE_CID="$(curl -fsS https://api.pinata.cloud/pinning/pinFileT
   -H "Authorization: Bearer $PINATA_JWT" \
   -F 'pinataOptions={"cidVersion":1}' \
   -F "file=@$PROOF_DIR/clusters/cluster-sample.json;type=application/json" | jq -r .IpfsHash)"
-test -n "$FLOW_SAMPLE_CID"
-test -n "$CLUSTER_SAMPLE_CID"
+case "$FLOW_SAMPLE_CID" in b*) ;; *) echo "invalid flow sample CID: $FLOW_SAMPLE_CID" >&2; exit 1 ;; esac
+case "$CLUSTER_SAMPLE_CID" in b*) ;; *) echo "invalid cluster sample CID: $CLUSTER_SAMPLE_CID" >&2; exit 1 ;; esac
 printf 'flow sample CID: %s\ncluster sample CID: %s\n' "$FLOW_SAMPLE_CID" "$CLUSTER_SAMPLE_CID"
 
 jq -n \
@@ -262,7 +262,7 @@ export CERTIFICATE_CID="$(curl -fsS https://api.pinata.cloud/pinning/pinFileToIP
   -H "Authorization: Bearer $PINATA_JWT" \
   -F 'pinataOptions={"cidVersion":1}' \
   -F "file=@$PROOF_DIR/certificate.json;type=application/json" | jq -r .IpfsHash)"
-test -n "$CERTIFICATE_CID"
+case "$CERTIFICATE_CID" in b*) ;; *) echo "invalid certificate CID: $CERTIFICATE_CID" >&2; exit 1 ;; esac
 printf 'certificate CID: %s\n' "$CERTIFICATE_CID"
 printf '%s\n' "$CERTIFICATE_CID" > "$PROOF_DIR/certificate.cid"
 exit
