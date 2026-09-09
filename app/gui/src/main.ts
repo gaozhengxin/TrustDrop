@@ -1358,6 +1358,10 @@ async function handleDownload(txHash: `0x${string}`): Promise<void> {
       aggregatorUrl: state.aggregatorUrl,
       manualSecret: manualSecret ? (manualSecret as `0x${string}`) : undefined,
     });
+    const expectedSize = Number(sale.fileSize);
+    if (Number.isSafeInteger(expectedSize) && expectedSize > 0 && result.bytes.byteLength !== expectedSize) {
+      throw new Error(`Recovered asset size mismatch: expected ${expectedSize} bytes, got ${result.bytes.byteLength}`);
+    }
     triggerBrowserDownload(result.bytes, result.fileName, result.contentType);
     state.message = `Download ready: ${result.fileName}`;
   } catch (error) {
@@ -1475,7 +1479,10 @@ function fileKindLabel(sale?: MarketplaceSale): string {
 }
 
 function triggerBrowserDownload(bytes: Uint8Array, fileName: string, contentType: string): void {
-  const blob = new Blob([bytes], { type: contentType || "application/octet-stream" });
+  // Copy the exact byte range into a standalone ArrayBuffer. More importantly,
+  // keep the object URL alive while the browser consumes a large download.
+  const downloadBytes = bytes.slice();
+  const blob = new Blob([downloadBytes.buffer], { type: contentType || "application/octet-stream" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -1483,7 +1490,7 @@ function triggerBrowserDownload(bytes: Uint8Array, fileName: string, contentType
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 function empty(message: string): string {
