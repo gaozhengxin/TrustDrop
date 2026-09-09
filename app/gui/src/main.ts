@@ -1137,6 +1137,7 @@ async function loadRecordDetails(id: string): Promise<void> {
   if (!purchase) return;
   const tasks: Promise<void>[] = [];
   if (!state.dataKeyCommitments[id]) {
+    state.dataKeyCommitments[id] = "Loading…";
     tasks.push(readDataKeyCommitment(purchase.channel).then((value) => {
       state.dataKeyCommitments[id] = value;
     }).catch(() => {
@@ -1153,7 +1154,7 @@ async function loadRecordDetails(id: string): Promise<void> {
       state.walrusChecks[id] = "unavailable";
     }));
   }
-  render();
+  if (tasks.length === 0) return;
   await Promise.all(tasks);
   render();
 }
