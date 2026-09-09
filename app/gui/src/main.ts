@@ -38,7 +38,7 @@ import { featuredAssetRefs, filterSalesForContentEngine, hiddenReasonsForSale, l
 import { loadVideoProof, verifyVideoProof, verifyVideoSamplingSeed, videoProofCalldata, videoProofCid, videoProofCurlCommand, type LoadedVideoProof } from "./video-proof";
 import { datasetProofCid, datasetSampleCalldata, datasetSampleCurlCommand, datasetViewerUrl, loadDatasetProof, verifyDatasetSample, type LoadedDatasetProof } from "./dataset-proof";
 
-type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate" | "dataset-certificate";
+type Route = "home" | "browse" | "records" | "settings" | "detail" | "certificate" | "dataset-certificate" | "dataset-viewer";
 type ImportMetaWithEnv = ImportMeta & {
   env?: {
     DEV?: boolean;
@@ -152,7 +152,8 @@ const state: UiState = {
 };
 
 async function boot(): Promise<void> {
-  if (datasetProofRequestFromUrl()) state.route = "dataset-certificate";
+  if (window.location.pathname.replace(/\/+$/, "") === "/dataset-viewer") state.route = "dataset-viewer";
+  else if (datasetProofRequestFromUrl()) state.route = "dataset-certificate";
   else if (proofRequestFromUrl()) state.route = "certificate";
   installWalletListeners();
   render();
@@ -954,7 +955,9 @@ function render(): void {
   const root = document.querySelector<HTMLDivElement>("#app");
   if (!root) return;
 
-  if (state.route === "browse") {
+  if (state.route === "dataset-viewer") {
+    root.innerHTML = `<iframe class="dataset-viewer-frame" src="/chain-intelligence-viewer/index.html" title="Chain Intelligence Dataset Viewer"></iframe>`;
+  } else if (state.route === "browse") {
     root.innerHTML = renderBrowse();
   } else if (state.route === "records") {
     root.innerHTML = renderRecords();
