@@ -53,6 +53,13 @@ export async function connectWallet(): Promise<BrowserWallet> {
   };
 }
 
+export async function reconnectWallet(): Promise<BrowserWallet | null> {
+  if (!window.ethereum) return null;
+  const accounts = (await window.ethereum.request({ method: "eth_accounts" })) as `0x${string}`[];
+  const account = accounts[0];
+  return account ? walletFromAccount(account) : null;
+}
+
 export async function walletFromAccount(account: `0x${string}`): Promise<BrowserWallet> {
   if (!window.ethereum) throw new Error("No injected wallet found");
   const chainId = (await window.ethereum.request({ method: "eth_chainId" })) as string;

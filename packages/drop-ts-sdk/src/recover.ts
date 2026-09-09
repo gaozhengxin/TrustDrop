@@ -1,5 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
-import { concatBytes, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { keccak256, type WalletClient } from "viem";
 import { arbitrumSepolia } from "viem/chains";
 import type { DataKeyShare, MarketplacePurchase, MarketplaceSale, MarketplaceSettlement, VddProof } from "./subgraph";
@@ -26,6 +26,29 @@ export type RecoverAssetResult = {
   fileName: string;
   contentType: string;
 };
+
+export type BuyerRecordKeys = {
+  userKey: Hex;
+  dataKey: Hex;
+};
+
+export async function recoverBuyerRecordKeys(input: Omit<RecoverAssetInput, "aggregatorUrl">): Promise<BuyerRecordKeys> {
+  validateSaleDataCommitment(input.sale);
+  if (!sameHex(input.sale.dataCommitment, input.purchase.dataCommitment)) {
+    throw new Error("Purchase data commitment does not match sale data commitment");
+  }
+  const share = findDataKeyShare(input.dataKeyShares, input.buyer, input.purchase.timestamp);
+  if (!share) throw new Error("No data key share found for this purchase");
+  const secret = input.manualSecret
+    ? bytesFromHex(input.manualSecret, "manual recovery secret", 32)
+    : await deriveBuyerSecret(input.sale, input.buyer, input.walletClient);
+  const dataKey = chacha8Xor(encryptedKeyForAudience(share, input.buyer), secret, new Uint8Array(12), 0);
+  return { userKey: bytesToHex(secret) as Hex, dataKey: bytesToHex(dataKey) as Hex };
+}
+
+export function encryptedWalrusBlobId(sale: MarketplaceSale, vddProofs: VddProof[]): string {
+  return walrusBlobId(sale, vddProofs);
+}
 
 export async function recoverPurchasedAsset(input: RecoverAssetInput): Promise<RecoverAssetResult> {
   validateSaleDataCommitment(input.sale);

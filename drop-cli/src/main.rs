@@ -101,6 +101,7 @@ Usage:
   drop-cli sale list <sale-id> --yes
   drop-cli sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes
   drop-cli sale attach-video-proof <sale-id> --certificate-cid <cid> --yes
+  drop-cli sale attach-dataset-proof <sale-id> --certificate-cid <cid> --yes
   drop-cli sale submit-key-commitment <sale-id>
   drop-cli purchase list [--channel <channel>] [--sale <sale-id>] [--status <status>]
   drop-cli purchase show <purchase-tx>
@@ -807,8 +808,39 @@ async fn sale_attach_video_proof(sale_id: &str, args: &[String]) -> Result<()> {
     Ok(())
 }
 
+async fn sale_attach_dataset_proof(sale_id: &str, args: &[String]) -> Result<()> {
+    const TAG_PREFIX: &str = "trustdrop:chain-intelligence-v2-sampling:v1:";
+    let certificate_cid = flag_value(args, "--certificate-cid")
+        .ok_or_else(|| anyhow!("--certificate-cid is required"))?;
+    let parsed_cid =
+        cid::Cid::try_from(certificate_cid).context("--certificate-cid must be a valid CID")?;
+    ensure!(parsed_cid.version() == cid::Version::V1, "certificate CID must be CIDv1");
+    ensure!(parsed_cid.to_string() == certificate_cid, "certificate CID must use canonical lowercase encoding");
+
+    let config = load_config()?;
+    let state = load_sale_state(state_dir(&config)?, sale_id)?;
+    let channel = state.channel_address.as_deref()
+        .ok_or_else(|| anyhow!("sale state is missing channel_address"))?;
+    let sale = fetch_subgraph_sale(&config, channel, sale_id).await?;
+    let updated_info = attach_sampling_tag(&sale.info, certificate_cid, TAG_PREFIX)?;
+    let update_args = vec![
+        "--channel".to_owned(), sale.channel,
+        "--data".to_owned(), sale.data_commitment,
+        "--price".to_owned(), sale.price,
+        "--info".to_owned(), updated_info,
+    ];
+    sale_update_metadata(sale_id, &update_args).await?;
+    println!("certificateCid: {certificate_cid}");
+    println!("saleTag: {TAG_PREFIX}{certificate_cid}");
+    Ok(())
+}
+
 fn attach_video_sampling_tag(info: &str, certificate_cid: &str) -> Result<String> {
     const TAG_PREFIX: &str = "trustdrop:video-sampling:v1:";
+    attach_sampling_tag(info, certificate_cid, TAG_PREFIX)
+}
+
+fn attach_sampling_tag(info: &str, certificate_cid: &str, tag_prefix: &str) -> Result<String> {
     let mut info: serde_json::Value =
         serde_json::from_str(info).context("current sale info must be a JSON object")?;
     let object = info
@@ -821,11 +853,11 @@ fn attach_video_sampling_tag(info: &str, certificate_cid: &str) -> Result<String
         .ok_or_else(|| anyhow!("current sale info tags must be an array"))?;
     tags.retain(|tag| {
         tag.as_str()
-            .map(|value| !value.starts_with(TAG_PREFIX))
+            .map(|value| !value.starts_with(tag_prefix))
             .unwrap_or(true)
     });
     tags.push(serde_json::Value::String(format!(
-        "{TAG_PREFIX}{certificate_cid}"
+        "{tag_prefix}{certificate_cid}"
     )));
     Ok(serde_json::to_string(&info)?)
 }
@@ -972,7 +1004,16 @@ async fn cmd_sale(args: &[String]) -> Result<()> {
             }
             sale_attach_video_proof(sale_id, args).await
         }
-        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes | sale attach-video-proof <sale-id> --certificate-cid <cid> --yes | sale submit-key-commitment <sale-id> --yes"),
+        Some("attach-dataset-proof") => {
+            let sale_id = require_arg(&args[1..], "sale-id")?;
+            if !has_flag(args, "--yes") {
+                println!("sale attach-dataset-proof requires --yes to send an Arbitrum Sepolia transaction.");
+                println!("usage: drop-cli sale attach-dataset-proof <sale-id> --certificate-cid <cid> --yes");
+                return Ok(());
+            }
+            sale_attach_dataset_proof(sale_id, args).await
+        }
+        _ => bail!("usage: drop-cli sale list [--channel <channel>] | sale show <sale-id> | sale list <sale-id> --yes | sale update-metadata <sale-id> --channel <addr> --data <0x...> --price <wei> --info <json> --yes | sale attach-video-proof <sale-id> --certificate-cid <cid> --yes | sale attach-dataset-proof <sale-id> --certificate-cid <cid> --yes | sale submit-key-commitment <sale-id> --yes"),
     }
 }
 
@@ -3903,5 +3944,19 @@ mod video_sampling_metadata_tests {
             value["tags"],
             serde_json::json!(["other", "trustdrop:video-sampling:v1:bafynew"])
         );
+    }
+
+    #[test]
+    fn attach_dataset_tag_preserves_other_proof_types() {
+        let updated = attach_sampling_tag(
+            r#"{"tags":["trustdrop:video-sampling:v1:bafyvideo","trustdrop:chain-intelligence-v2-sampling:v1:bafyold"]}"#,
+            "bafynew",
+            "trustdrop:chain-intelligence-v2-sampling:v1:",
+        ).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&updated).unwrap();
+        assert_eq!(value["tags"], serde_json::json!([
+            "trustdrop:video-sampling:v1:bafyvideo",
+            "trustdrop:chain-intelligence-v2-sampling:v1:bafynew"
+        ]));
     }
 }

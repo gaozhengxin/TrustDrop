@@ -74,6 +74,15 @@ export async function downloadWalrusBlob(url: string, blobId: string): Promise<U
   return new Uint8Array(await response.arrayBuffer());
 }
 
+export async function isWalrusBlobReadable(url: string, blobId: string): Promise<boolean> {
+  const normalized = normalizeAggregatorUrl(url);
+  const response = await fetch(`${normalized}/v1/blobs/${encodeURIComponent(blobId)}`, {
+    headers: { Range: "bytes=0-0" },
+  });
+  await response.body?.cancel();
+  return response.ok;
+}
+
 export function walrusBlobIdFromHex(hex: `0x${string}`): string {
   const bytes = hexToBytes32(hex, "Walrus blob id bytes");
   return base64UrlNoPad(bytes);
