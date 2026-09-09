@@ -151,7 +151,6 @@ set -a
 source drop-script/.env
 source /root/.trustdrop/secrets/pinata-write.env
 set +a
-export PROOF_RPC_URL="${ARBITRUM_SEPOLIA_RPC_URL:-$ARBITRUM_SEPOLIA_RPC}"
 
 export SAMPLING_VRF_ADDRESS=0xF761821Ecae34E34AD8670F07E2aAf412AD80Faf
 export PROOF_DIR=/root/.trustdrop/dataset-proofs/arbitrum-e2e
@@ -209,7 +208,7 @@ jq '{originBlobId, samplingSeed, clusterIds, sampleCidDigest, programVKey}' \
 
 These commands wait for real Groth16 proofs. Continue only after both `proof.json` files exist.
 
-## 7. Upload samples, verify proofs, build and upload the certificate
+## 7. Upload samples, build and upload the certificate
 
 Still inside the Ubuntu container:
 
@@ -225,18 +224,6 @@ export CLUSTER_SAMPLE_CID="$(curl -fsS https://api.pinata.cloud/pinning/pinFileT
 test -n "$FLOW_SAMPLE_CID"
 test -n "$CLUSTER_SAMPLE_CID"
 printf 'flow sample CID: %s\ncluster sample CID: %s\n' "$FLOW_SAMPLE_CID" "$CLUSTER_SAMPLE_CID"
-
-cast call --rpc-url "$PROOF_RPC_URL" \
-  0xf8D06350C5b261e79ccA1A1061A6bd7922a3b09d \
-  'verifyFlowGraphSamplingProof(bytes,bytes)' \
-  "$(jq -r .proof "$PROOF_DIR/flow/proof.json")" \
-  "$(jq -r .publicValues "$PROOF_DIR/flow/proof.json")"
-
-cast call --rpc-url "$PROOF_RPC_URL" \
-  0xe5Ba837f440AC5460C4cc02E5f48fe04994E68e6 \
-  'verifyClusterSamplingProof(bytes,bytes)' \
-  "$(jq -r .proof "$PROOF_DIR/clusters/proof.json")" \
-  "$(jq -r .publicValues "$PROOF_DIR/clusters/proof.json")"
 
 jq -n \
   --arg saleId "$TRUSTDROP_SALE_ID" \
@@ -281,8 +268,9 @@ printf '%s\n' "$CERTIFICATE_CID" > "$PROOF_DIR/certificate.cid"
 exit
 ```
 
-Both `cast call` commands must return successfully. A revert or RPC error means the proof must not be
-attached to the sale.
+Each network client decodes its returned public values and checks the origin blob ID and sampling
+seed before writing `proof.json`. The product's actual on-chain verifier calls happen in FFM after
+the certificate is attached in the next section.
 
 ## 8. Attach the certificate and inspect it in FFM
 
@@ -297,7 +285,9 @@ test -n "$CERTIFICATE_CID"
 ```
 
 Refresh FFM after The Graph indexes the metadata update. Open the certificate page. It must show two
-successful verifier checks and two links:
+successful verifier checks. Expand each verifier call, copy its displayed `curl` command, and run it
+once to show the same successful `eth_call` result outside the page. The page also provides two
+viewer links:
 
 - Flow graph sample: opens the viewer with the one-minute flow CID already imported.
 - Cluster sample: opens the viewer with the three-cluster array already imported and a working
