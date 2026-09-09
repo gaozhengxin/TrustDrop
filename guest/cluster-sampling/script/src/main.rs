@@ -12,10 +12,10 @@ use drop_lib::{
     rslh_ve::{walrus_symbol_size, COL_HEIGHT_SECONDARY},
     walrus_blob_id::SliverPairRoots,
 };
-#[cfg(any(feature = "execute", feature = "network"))]
-use sp1_sdk::{include_elf, Prover, ProverClient, SP1Stdin};
 #[cfg(feature = "network")]
 use sp1_sdk::{network::NetworkMode, HashableKey, ProveRequest, ProvingKey};
+#[cfg(any(feature = "execute", feature = "network"))]
+use sp1_sdk::{Elf, Prover, ProverClient, SP1Stdin};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -32,7 +32,17 @@ use walrus_core::{
 };
 
 #[cfg(any(feature = "execute", feature = "network"))]
-const CLUSTER_SAMPLING_ELF: sp1_sdk::Elf = include_elf!("cluster_sampling_program");
+const TRUSTED_CLUSTER_SAMPLING_VKEY: &str =
+    "0x00749a17219133a8c64a776926fe18e7d6499072e27cd24ef182eecfd784434a";
+
+#[cfg(any(feature = "execute", feature = "network"))]
+fn load_cluster_sampling_elf() -> Elf {
+    let path = env::var("CLUSTER_SAMPLING_ELF_PATH")
+        .unwrap_or_else(|_| "/root/.trustdrop/programs/cluster_sampling_program.elf".to_owned());
+    fs::read(&path)
+        .unwrap_or_else(|error| panic!("read trusted cluster sampling ELF {path}: {error}"))
+        .into()
+}
 
 #[derive(Debug)]
 struct SourceCluster {
@@ -124,14 +134,26 @@ async fn main() {
         .build()
         .await;
     let pk = client
-        .setup(CLUSTER_SAMPLING_ELF)
+        .setup(load_cluster_sampling_elf())
         .await
         .expect("network setup");
-    println!("programVKey: {}", pk.verifying_key().bytes32());
+    let program_vkey = pk.verifying_key().bytes32().to_string();
+    assert_eq!(
+        program_vkey, TRUSTED_CLUSTER_SAMPLING_VKEY,
+        "refusing to submit proof for an untrusted cluster sampling ELF"
+    );
+    println!("programVKey: {program_vkey}");
+    if env::var("CLUSTER_SAMPLING_CHECK_VKEY_ONLY").as_deref() == Ok("1") {
+        println!("trusted program check passed; proof was not submitted");
+        return;
+    }
     println!("submitting Groth16 proof request with local simulation skipped...");
     let proof = client
         .prove(&pk, stdin)
         .skip_simulation(true)
+        // Large clusters can require substantially more than SP1's 1B default
+        // network gas budget even though the authenticated source is compact.
+        .gas_limit(10_000_000_000)
         .compressed()
         .groth16()
         .await
@@ -146,7 +168,7 @@ async fn main() {
         "samplingSeed": format!("0x{}", hex::encode(seed)),
         "clusterIds": public_cluster_ids(&values),
         "sampleCidDigest": format!("0x{}", hex::encode(values.sampleCidDigest)),
-        "programVKey": pk.verifying_key().bytes32(),
+        "programVKey": program_vkey,
         "publicValues": format!("0x{}", hex::encode(proof.public_values.as_slice())),
         "proof": format!("0x{}", hex::encode(proof.bytes())),
     });
@@ -176,7 +198,7 @@ async fn main() {
     let client = ProverClient::builder().cpu().build().await;
     println!("executing authenticated cluster sampling guest...");
     let (public_values, report) = client
-        .execute(CLUSTER_SAMPLING_ELF, stdin)
+        .execute(load_cluster_sampling_elf(), stdin)
         .await
         .expect("SP1 guest execute");
     let values = ClusterSamplingPublicValues::abi_decode(public_values.as_slice())
