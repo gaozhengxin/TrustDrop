@@ -33,6 +33,52 @@
           TrustDrop turns delivery into a protocol-visible condition for settlement. The seller is paid after the delivery path is backed by commitments, data availability evidence, proof verification, and buyer-recoverable key material.
         </p>
 
+        <h2>Protocol Components and Evidence</h2>
+        <p>
+          TrustDrop combines storage availability, proof-backed key delivery, verifiable encryption, and contract settlement. Verifiable Dataset Sampling adds an open evidence layer around the original-file commitment.
+        </p>
+        <div class="protocol-diagram" aria-label="TrustDrop protocol components and evidence diagram">
+          <pre class="mermaid">
+flowchart LR
+  Seller["SELLER<br/>Publishes encrypted package"]
+  Walrus["WALRUS + ORACLE<br/>Ciphertext remains accessible"]
+  Contract["CONTRACT<br/>Atomic payment and delivery"]
+  Buyer["BUYER<br/>Recovers key and decrypts"]
+
+  VSS["VSS<br/>Correct data key delivered"]
+  VDD["VDD<br/>Key + original + ciphertext bound"]
+  Original["ORIGINAL BLOB ID"]
+  Now["EVIDENCE NOW<br/>Video · Flow · Clusters"]
+  Future["EVIDENCE LATER<br/>Quality · Properties · Provenance · Audits"]
+
+  Seller --> Walrus --> Contract --> Buyer
+  Seller --> VSS --> Contract
+  Seller --> VDD --> Contract
+  Original --> VDD
+  Original --> Now --> Buyer
+  Original -.-> Future
+
+  classDef storage fill:#e7f5ee,stroke:#27745a,color:#16211d
+  classDef proof fill:#edf1fb,stroke:#4263a8,color:#182033
+  classDef contract fill:#f1ebfa,stroke:#7651a8,color:#20182c
+  classDef evidence fill:#fff4d8,stroke:#a87619,color:#2c2415
+  classDef future fill:#f2f2ee,stroke:#767b75,color:#262826
+  class Walrus storage
+  class VSS,VDD proof
+  class Contract contract
+  class Original,Now evidence
+  class Future future
+          </pre>
+        </div>
+        <div class="component-notes">
+          <p><strong>Walrus + Oracle</strong> keep the exact ciphertext Blob ID accessible for the required period.</p>
+          <p><strong>Contracts</strong> lock payment and allow settlement only after key delivery, encryption binding, and accessibility checks pass.</p>
+          <p><strong>VSS</strong> proves that the buyer can recover the asset's committed data key.</p>
+          <p><strong>VDD</strong> proves that the committed key, original Blob ID, and ciphertext Blob ID belong to one encryption relation.</p>
+          <p><strong>Evidence now</strong> proves three video previews, one complete one-minute flow window, or three complete cluster records.</p>
+          <p><strong>Evidence later</strong> can add dataset quality, file properties, provenance, licensing, or confidential full-dataset audits.</p>
+        </div>
+
         <h2>The Problem</h2>
         <p>
           Many digital transactions depend on an off-chain promise: the seller says delivery happened, the buyer has to check later, and payment settlement may not be bound to whether the delivered material is recoverable. TrustDrop makes the relevant delivery conditions visible to the protocol before the seller can settle.
@@ -76,5 +122,29 @@
         </nav>
       </article>
     </main>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "base",
+        securityLevel: "strict",
+        flowchart: {
+          htmlLabels: true,
+          useMaxWidth: true,
+          curve: "basis"
+        },
+        themeVariables: {
+          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          fontSize: "17px",
+          primaryColor: "#f8f8f5",
+          primaryTextColor: "#171717",
+          primaryBorderColor: "#7a7d78",
+          lineColor: "#66706b",
+          clusterBkg: "#ffffff",
+          clusterBorder: "#c9cec9"
+        }
+      });
+    </script>
   </body>
 </html>
