@@ -35,28 +35,44 @@
 
         <h2>Protocol Components and Evidence</h2>
         <p>
-          TrustDrop combines storage availability, proof-backed key delivery, verifiable encryption, and contract settlement. Verifiable Dataset Sampling adds an open evidence layer around the original-file commitment.
+          TrustDrop makes payment and delivery atomic and verifiable. The same original-file commitment also anchors extensible evidence adapters for different asset types.
         </p>
         <div class="protocol-diagram" aria-label="TrustDrop protocol components and evidence diagram">
           <pre class="mermaid">
-flowchart LR
-  Seller["SELLER<br/>Publishes encrypted package"]
-  Walrus["WALRUS + ORACLE<br/>Ciphertext remains accessible"]
-  Contract["CONTRACT<br/>Atomic payment and delivery"]
-  Buyer["BUYER<br/>Recovers key and decrypts"]
+flowchart TB
+  subgraph Delivery["TRUSTDROP · VERIFIABLE DELIVERY"]
+    direction LR
+    Seller["SELLER<br/>Publishes encrypted package"]
+    Walrus["WALRUS + ORACLE<br/>Encrypted data is available"]
+    VSS["VSS · VERIFIABLE KEY DELIVERY<br/>The buyer's key package contains<br/>the asset's real data key"]
+    VDD["VDD · VERIFIABLE ENCRYPTION<br/>That key decrypts the stored ciphertext<br/>into the committed original"]
+    Contract["SMART CONTRACT<br/>Valid delivery and payment<br/>are atomic"]
+    Buyer["BUYER<br/>Recovers the data key<br/>and decrypts the asset"]
 
-  VSS["VSS<br/>Correct data key delivered"]
-  VDD["VDD<br/>Key + original + ciphertext bound"]
-  Original["ORIGINAL BLOB ID"]
-  Now["EVIDENCE NOW<br/>Video · Flow · Clusters"]
-  Future["EVIDENCE LATER<br/>Quality · Properties · Provenance · Audits"]
+    Seller --> Walrus --> Contract
+    Seller --> VSS --> Contract
+    Seller --> VDD --> Contract
+    Contract --> Buyer
+  end
 
-  Seller --> Walrus --> Contract --> Buyer
-  Seller --> VSS --> Contract
-  Seller --> VDD --> Contract
+  Original["ORIGINAL BLOB ID<br/>Identifies the exact asset"]
   Original --> VDD
-  Original --> Now --> Buyer
-  Original -.-> Future
+
+  subgraph Evidence["EXTENSIBLE ASSET EVIDENCE"]
+    direction LR
+    Adapters["ASSET EVIDENCE ADAPTERS<br/>Different asset types use<br/>different evidence methods"]
+    Video["VIDEO ASSETS<br/>Verifiable Preview"]
+    Structured["STRUCTURED DATA<br/>Verifiable Sampling<br/>Other Evidence"]
+    Other["OTHER ASSETS<br/>Asset-specific Evidence"]
+    Result["VERIFIABLE EVIDENCE<br/>Proof-backed claims and outputs<br/>bound to the original asset"]
+
+    Adapters --> Video --> Result
+    Adapters --> Structured --> Result
+    Adapters --> Other --> Result
+  end
+
+  Original --> Adapters
+  Result -.-> Buyer
 
   classDef storage fill:#e7f5ee,stroke:#27745a,color:#16211d
   classDef proof fill:#edf1fb,stroke:#4263a8,color:#182033
@@ -66,17 +82,17 @@ flowchart LR
   class Walrus storage
   class VSS,VDD proof
   class Contract contract
-  class Original,Now evidence
-  class Future future
+  class Original,Adapters,Video,Structured,Result evidence
+  class Other future
           </pre>
         </div>
         <div class="component-notes">
-          <p><strong>Walrus + Oracle</strong> keep the exact ciphertext Blob ID accessible for the required period.</p>
-          <p><strong>Contracts</strong> lock payment and allow settlement only after key delivery, encryption binding, and accessibility checks pass.</p>
-          <p><strong>VSS</strong> proves that the buyer can recover the asset's committed data key.</p>
-          <p><strong>VDD</strong> proves that the committed key, original Blob ID, and ciphertext Blob ID belong to one encryption relation.</p>
-          <p><strong>Evidence now</strong> proves three video previews, one complete one-minute flow window, or three complete cluster records.</p>
-          <p><strong>Evidence later</strong> can add dataset quality, file properties, provenance, licensing, or confidential full-dataset audits.</p>
+          <p><strong>Walrus + Oracle</strong> prove that the encrypted package is actually available for the buyer to download.</p>
+          <p><strong>Smart Contract</strong> releases payment only after the required delivery and availability checks pass.</p>
+          <p><strong>VSS · Verifiable Key Delivery</strong> proves that the key package created for this buyer contains the asset's real data key.</p>
+          <p><strong>VDD · Verifiable Encryption</strong> proves that this data key decrypts the stored ciphertext into the exact original committed by the seller.</p>
+          <p><strong>Asset Evidence Adapters</strong> let each asset type define appropriate proof-backed evidence: video uses Verifiable Preview, while structured data can use Verifiable Sampling or other evidence.</p>
+          <p><strong>Other Assets</strong> can add their own evidence adapters without changing the verifiable-delivery protocol.</p>
         </div>
 
         <h2>The Problem</h2>
