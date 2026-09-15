@@ -1,9 +1,9 @@
 # Authenticated flow-graph sampling guest
 
 The Walrus blob uses a small authenticated random-access envelope: a fixed
-header, one fixed-width entry per minute bucket, then contiguous NDJSON bucket
-payloads. The guest authenticates the directory, derives the challenged minute
-from the seed, obtains the byte range from that directory, and requires the
+header, one fixed-width entry per configured time bucket, then contiguous
+NDJSON bucket payloads. The guest authenticates the directory, derives the
+challenged bucket from the seed, obtains the byte range from that directory, and requires the
 witness to contain exactly the primary symbols covering the directory and the
 selected payload.
 

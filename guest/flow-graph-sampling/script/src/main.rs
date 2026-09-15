@@ -237,7 +237,12 @@ fn read_source_buckets(path: &Path) -> Vec<SourceBucket> {
 
 fn build_archive(buckets: &[SourceBucket]) -> Vec<u8> {
     let bucket_seconds = buckets[0].bucket_end - buckets[0].bucket_start;
-    let directory_end = ARCHIVE_HEADER_LEN + ARCHIVE_ENTRY_LEN * buckets.len() as u64;
+    let bucket_count =
+        u32::try_from(buckets.len()).expect("flow archive has more than u32::MAX buckets");
+    let directory_end = ARCHIVE_ENTRY_LEN
+        .checked_mul(u64::from(bucket_count))
+        .and_then(|entries_len| ARCHIVE_HEADER_LEN.checked_add(entries_len))
+        .expect("flow archive directory length overflow");
     let total_payload = buckets
         .iter()
         .map(|bucket| bucket.bytes.len())
@@ -247,7 +252,7 @@ fn build_archive(buckets: &[SourceBucket]) -> Vec<u8> {
     archive.extend_from_slice(&bucket_seconds.to_be_bytes());
     archive.extend_from_slice(&buckets.first().unwrap().bucket_start.to_be_bytes());
     archive.extend_from_slice(&(buckets.last().unwrap().bucket_end - 1).to_be_bytes());
-    archive.extend_from_slice(&(buckets.len() as u32).to_be_bytes());
+    archive.extend_from_slice(&bucket_count.to_be_bytes());
     archive.extend_from_slice(&0u32.to_be_bytes());
     let mut offset = directory_end;
     for bucket in buckets {
