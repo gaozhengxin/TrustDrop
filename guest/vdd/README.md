@@ -87,3 +87,27 @@ command:
 ```sh
 SP1_PROVER=network NETWORK_PRIVATE_KEY=... cargo run --release --bin evm
 ```
+
+## Observed Prover Cost
+
+The current RSLH/VE guest has been measured on two assets with the same proof path:
+
+| Asset size | Prover work |
+| --- | ---: |
+| about 31 MB | 648,131,771 PGUs |
+| 100,843,520 bytes | 1,318,495,910 PGUs |
+
+These measurements support treating prover work as roughly linear in asset size for operational
+capacity planning, with a material fixed cost and implementation-dependent step effects. They do
+not establish an asymptotic bound, and costs should not be described as sublinear based on these
+two observations.
+
+Succinct quotes the variable price per billion PGUs (bPGU). For the 1.318495910 bPGU run, using
+the observed Groth16 base fee of 0.374064 PROVE:
+
+- Promotional price of 0.000000001 PROVE/bPGU: approximately 0.374064001 PROVE total.
+- Reference non-promotional price of 0.59 PROVE/bPGU: approximately 1.151976587 PROVE total.
+
+At the 2026-09-08 reference exchange rate of 1 PROVE = 0.195893 USD, these totals are approximately
+0.0733 USD and 0.2257 USD respectively. Both the network auction price and the token/USD exchange
+rate are time-dependent; recompute them when quoting a current cost.

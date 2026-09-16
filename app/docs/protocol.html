@@ -33,6 +33,68 @@
           TrustDrop turns delivery into a protocol-visible condition for settlement. The seller is paid after the delivery path is backed by commitments, data availability evidence, proof verification, and buyer-recoverable key material.
         </p>
 
+        <h2>Protocol Components and Evidence</h2>
+        <p>
+          TrustDrop makes payment and delivery atomic and verifiable. The same original-file commitment also anchors extensible evidence adapters for different asset types.
+        </p>
+        <div class="protocol-diagram" aria-label="TrustDrop protocol components and evidence diagram">
+          <pre class="mermaid">
+flowchart TB
+  subgraph Delivery["TRUSTDROP · VERIFIABLE DELIVERY"]
+    direction LR
+    Seller["SELLER<br/>Publishes encrypted package"]
+    Walrus["WALRUS + ORACLE<br/>Encrypted data is available"]
+    VSS["VSS · VERIFIABLE KEY DELIVERY<br/>The buyer's key package contains<br/>the asset's real data key"]
+    VDD["VDD · VERIFIABLE ENCRYPTION<br/>That key decrypts the stored ciphertext<br/>into the committed original"]
+    Contract["SMART CONTRACT<br/>Valid delivery and payment<br/>are atomic"]
+    Buyer["BUYER<br/>Recovers the data key<br/>and decrypts the asset"]
+
+    Seller --> Walrus --> Contract
+    Seller --> VSS --> Contract
+    Seller --> VDD --> Contract
+    Contract --> Buyer
+  end
+
+  Original["ORIGINAL BLOB ID<br/>Identifies the exact asset"]
+  Original --> VDD
+
+  subgraph Evidence["EXTENSIBLE ASSET EVIDENCE"]
+    direction LR
+    Adapters["ASSET EVIDENCE ADAPTERS<br/>Different asset types use<br/>different evidence methods"]
+    Video["VIDEO ASSETS<br/>Verifiable Preview"]
+    Structured["STRUCTURED DATA<br/>Verifiable Sampling<br/>Other Evidence"]
+    Other["OTHER ASSETS<br/>Asset-specific Evidence"]
+    Result["VERIFIABLE EVIDENCE<br/>Proof-backed claims and outputs<br/>bound to the original asset"]
+
+    Adapters --> Video --> Result
+    Adapters --> Structured --> Result
+    Adapters --> Other --> Result
+  end
+
+  Original --> Adapters
+  Result -.-> Buyer
+
+  classDef storage fill:#e7f5ee,stroke:#27745a,color:#16211d
+  classDef proof fill:#edf1fb,stroke:#4263a8,color:#182033
+  classDef contract fill:#f1ebfa,stroke:#7651a8,color:#20182c
+  classDef evidence fill:#fff4d8,stroke:#a87619,color:#2c2415
+  classDef future fill:#f2f2ee,stroke:#767b75,color:#262826
+  class Walrus storage
+  class VSS,VDD proof
+  class Contract contract
+  class Original,Adapters,Video,Structured,Result evidence
+  class Other future
+          </pre>
+        </div>
+        <div class="component-notes">
+          <p><strong>Walrus + Oracle</strong> prove that the encrypted package is actually available for the buyer to download.</p>
+          <p><strong>Smart Contract</strong> releases payment only after the required delivery and availability checks pass.</p>
+          <p><strong>VSS · Verifiable Key Delivery</strong> proves that the key package created for this buyer contains the asset's real data key.</p>
+          <p><strong>VDD · Verifiable Encryption</strong> proves that this data key decrypts the stored ciphertext into the exact original committed by the seller.</p>
+          <p><strong>Asset Evidence Adapters</strong> let each asset type define appropriate proof-backed evidence: video uses Verifiable Preview, while structured data can use Verifiable Sampling or other evidence.</p>
+          <p><strong>Other Assets</strong> can add their own evidence adapters without changing the verifiable-delivery protocol.</p>
+        </div>
+
         <h2>The Problem</h2>
         <p>
           Many digital transactions depend on an off-chain promise: the seller says delivery happened, the buyer has to check later, and payment settlement may not be bound to whether the delivered material is recoverable. TrustDrop makes the relevant delivery conditions visible to the protocol before the seller can settle.
@@ -76,5 +138,29 @@
         </nav>
       </article>
     </main>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "base",
+        securityLevel: "strict",
+        flowchart: {
+          htmlLabels: true,
+          useMaxWidth: true,
+          curve: "basis"
+        },
+        themeVariables: {
+          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          fontSize: "17px",
+          primaryColor: "#f8f8f5",
+          primaryTextColor: "#171717",
+          primaryBorderColor: "#7a7d78",
+          lineColor: "#66706b",
+          clusterBkg: "#ffffff",
+          clusterBorder: "#c9cec9"
+        }
+      });
+    </script>
   </body>
 </html>

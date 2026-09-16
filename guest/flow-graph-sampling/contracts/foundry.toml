@@ -1,0 +1,7 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["../../vdd/contracts/lib"]
+remappings = ["@sp1-contracts/=../../vdd/contracts/lib/sp1-contracts/contracts/src/"]
+fs_permissions = [{ access = "read", path = "./flow-proof.json" }]

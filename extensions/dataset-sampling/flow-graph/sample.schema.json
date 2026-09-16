@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:trustdrop:schema:flow-graph-sample:v1",
+  "title": "TrustDrop time-aligned flow-graph sample",
+  "allOf": [
+    { "$ref": "urn:trustdrop:schema:chain-intelligence:v2" },
+    {
+      "type": "object",
+      "properties": {
+        "manifest": {
+          "type": "object",
+          "properties": {
+            "sample": {
+              "type": "object",
+              "required": ["kind", "selection"],
+              "properties": {
+                "kind": { "const": "flow-graph-time-range" },
+                "selection": {
+                  "type": "object",
+                  "required": ["bucket_start", "bucket_end"],
+                  "properties": {
+                    "bucket_start": { "type": "integer" },
+                    "bucket_end": { "type": "integer" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": ["sample"]
+        },
+        "entity_flows": { "type": "array", "minItems": 1 },
+        "cluster_subgraphs": { "type": "array", "maxItems": 0 }
+      }
+    }
+  ]
+}

@@ -23,5 +23,5 @@ check_hash() {
 
 check_hash "bbb48442fbb8bfcfbdca83cb5ebb5ca798b3697d9e59abd827d1d8383641bb2e" \
   "guest/vss/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/vss-program"
-check_hash "791680137fe92209b774830c7272bda8b7c0c8e53c73345be3e0e51cbc3e69df" \
+check_hash "17c5e56d48d5360ea12e30d3d810aeaab45408a12f4ad1764620879d658f856e" \
   "guest/vdd/target/elf-compilation/riscv64im-succinct-zkvm-elf/release/program-vdd-walrus-rslhve"

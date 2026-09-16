@@ -20,6 +20,7 @@ abigen!(
 
 pub const VIDEO_SAMPLING_DOMAIN: &str = "trustdrop.video-sampling.v1";
 pub const FLOW_GRAPH_SAMPLING_DOMAIN: &str = "trustdrop.flow-graph-sampling.v1";
+pub const CLUSTER_SAMPLING_DOMAIN: &str = "trustdrop.cluster-sampling.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChallengeReceipt {
@@ -127,6 +128,12 @@ mod tests {
             sale_id,
             proof_domain(FLOW_GRAPH_SAMPLING_DOMAIN),
         );
+        let cluster = challenge_key(
+            421614,
+            sale_contract,
+            sale_id,
+            proof_domain(CLUSTER_SAMPLING_DOMAIN),
+        );
         assert_eq!(
             video,
             challenge_key(
@@ -137,5 +144,7 @@ mod tests {
             )
         );
         assert_ne!(video, graph);
+        assert_ne!(video, cluster);
+        assert_ne!(graph, cluster);
     }
 }

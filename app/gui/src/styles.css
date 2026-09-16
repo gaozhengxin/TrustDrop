@@ -22,6 +22,13 @@ body {
   overflow-x: hidden;
 }
 
+.dataset-viewer-frame {
+  border: 0;
+  display: block;
+  height: 100vh;
+  width: 100%;
+}
+
 button,
 input,
 select {
@@ -135,6 +142,19 @@ button:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.dataset-sample-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dataset-sample-card .section-title {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
 .preview-card,
 .certificate-panel {
   background: #ffffff;
@@ -239,6 +259,10 @@ button:disabled {
   }
 
   .preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-sample-grid {
     grid-template-columns: 1fr;
   }
 
@@ -763,6 +787,58 @@ p {
   grid-template-columns: 44px minmax(0, 1fr) auto auto auto;
 }
 
+.record-details {
+  border-top: 1px solid #d9dedb;
+  grid-column: 1 / -1;
+  padding-top: 10px;
+}
+
+.record-details summary {
+  color: #355b54;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.record-facts {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 14px 0 2px;
+}
+
+.record-facts div {
+  background: #f4f6f4;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.record-facts dt,
+.record-facts small {
+  color: #69706d;
+  display: block;
+  font-size: 12px;
+}
+
+.record-facts dd {
+  margin: 5px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.record-facts code {
+  white-space: normal;
+  word-break: break-all;
+}
+
+.text-button.compact {
+  margin-left: 8px;
+  min-height: auto;
+  padding: 3px 7px;
+}
+
+.walrus-readable { color: #18794e; font-weight: 700; }
+.walrus-unavailable { color: #b42318; font-weight: 700; }
+
 .record-main {
   min-width: 0;
 }
@@ -906,6 +982,10 @@ p {
   }
 
   .facts {
+    grid-template-columns: 1fr;
+  }
+
+  .record-facts {
     grid-template-columns: 1fr;
   }
 

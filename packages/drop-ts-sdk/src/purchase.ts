@@ -171,6 +171,15 @@ export async function submitPurchase(prepared: PreparedPurchase, walletClient: W
   }
 }
 
+export async function readDataKeyCommitment(channel: Hex): Promise<Hex> {
+  const publicClient = createPublicClient({ chain: arbitrumSepolia, transport: http(DEFAULT_RPC_URL) });
+  return publicClient.readContract({
+    address: channel,
+    abi: parseAbi(["function dataKeyCommitment() view returns (bytes32)"]),
+    functionName: "dataKeyCommitment",
+  });
+}
+
 export async function refundPurchase(purchase: MarketplacePurchase, walletClient: WalletClient): Promise<`0x${string}`> {
   if (!walletClient.account) throw new Error("Wallet account is required");
   if (walletClient.account.address.toLowerCase() !== purchase.buyer.toLowerCase()) {

@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:trustdrop:schema:chain-intelligence:v2",
+  "title": "TrustDrop chain-intelligence dataset bundle",
+  "type": "object",
+  "required": [
+    "manifest",
+    "addresses",
+    "wallet_clusters",
+    "entities",
+    "entity_flows",
+    "cluster_subgraphs"
+  ],
+  "properties": {
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "addresses": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/address" }
+    },
+    "wallet_clusters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/walletCluster" }
+    },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" }
+    },
+    "entity_flows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entityFlow" }
+    },
+    "cluster_subgraphs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/clusterSubgraph" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "hexAddress": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{40}$"
+    },
+    "nullableString": {
+      "type": ["string", "null"]
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["schema", "generated_at", "source", "model", "counts", "limitations"],
+      "properties": {
+        "schema": { "const": "trustdrop.chain-intelligence.v2" },
+        "generated_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" },
+        "source": {
+          "type": "object",
+          "required": ["fact_type", "graph_blocks", "transfers", "first_timestamp", "last_timestamp"],
+          "properties": {
+            "files": { "type": "array", "items": { "type": "string" } },
+            "fact_type": { "const": "ERC20 Transfer logs" },
+            "graph_blocks": { "type": "integer", "minimum": 0 },
+            "transfers": { "type": "integer", "minimum": 0 },
+            "first_timestamp": { "type": ["integer", "null"] },
+            "last_timestamp": { "type": ["integer", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "model": {
+          "type": "object",
+          "required": ["objects", "clustering_method", "relationship_bucket_seconds", "identity_labels"],
+          "properties": {
+            "objects": { "type": "array", "items": { "type": "string" } },
+            "clustering_method": { "const": "shared-sweep-destination-v1" },
+            "relationship_bucket_seconds": { "type": "integer", "minimum": 1 },
+            "identity_labels": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "limitations": { "type": "array", "items": { "type": "string" } },
+        "sample": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "address": {
+      "type": "object",
+      "required": [
+        "address_id", "chain", "chain_id", "address", "address_type",
+        "wallet_cluster_id", "first_seen", "last_seen", "incoming_transfer_count",
+        "outgoing_transfer_count", "counterparty_count", "tokens"
+      ],
+      "properties": {
+        "address_id": { "type": "string" },
+        "chain": { "type": "string" },
+        "chain_id": { "type": "integer", "minimum": 1 },
+        "address": { "$ref": "#/$defs/hexAddress" },
+        "address_type": { "type": "string" },
+        "protocol": { "$ref": "#/$defs/nullableString" },
+        "role": { "$ref": "#/$defs/nullableString" },
+        "wallet_cluster_id": { "$ref": "#/$defs/nullableString" },
+        "first_seen": { "type": "integer" },
+        "last_seen": { "type": "integer" },
+        "incoming_transfer_count": { "type": "integer", "minimum": 0 },
+        "outgoing_transfer_count": { "type": "integer", "minimum": 0 },
+        "counterparty_count": { "type": "integer", "minimum": 0 },
+        "tokens": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    },
+    "walletCluster": {
+      "type": "object",
+      "required": [
+        "wallet_cluster_id", "chain_id", "cluster_type", "address_count",
+        "address_ids", "methodology", "confidence", "evidence", "caveat"
+      ],
+      "properties": {
+        "wallet_cluster_id": { "type": "string", "pattern": "^wcl_[0-9a-f]{24}$" },
+        "chain_id": { "type": "integer", "minimum": 1 },
+        "cluster_type": { "const": "behavioral-candidate" },
+        "address_count": { "type": "integer", "minimum": 1 },
+        "address_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+        "methodology": { "const": "shared-sweep-destination-v1" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": {
+          "type": "object",
+          "required": ["shared_sweep_destination", "minimum_member_transfers", "maximum_member_counterparties"],
+          "properties": {
+            "shared_sweep_destination": { "$ref": "#/$defs/hexAddress" },
+            "minimum_member_transfers": { "type": "integer", "minimum": 1 },
+            "maximum_member_counterparties": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "caveat": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "entity": {
+      "type": "object",
+      "required": ["entity_id", "wallet_cluster_id", "entity_name", "entity_category", "attribution_type", "confidence", "methodology"],
+      "properties": {
+        "entity_id": { "type": "string", "pattern": "^ent_[0-9a-f]{24}$" },
+        "wallet_cluster_id": { "type": "string", "pattern": "^wcl_[0-9a-f]{24}$" },
+        "entity_name": { "type": "string" },
+        "entity_category": { "type": "string" },
+        "attribution_type": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "methodology": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "flowEvidence": {
+      "type": "object",
+      "required": ["transaction_hash", "log_index", "transfer_id"],
+      "properties": {
+        "transaction_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+        "log_index": { "type": "integer", "minimum": 0 },
+        "transfer_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "entityFlow": {
+      "type": "object",
+      "required": [
+        "flow_id", "chain", "chain_id", "bucket_start", "bucket_end",
+        "source_node_id", "destination_node_id", "source_node_type",
+        "destination_node_type", "relationship_type", "token", "token_address",
+        "token_decimals", "transfer_count", "amount_raw", "first_seen", "last_seen", "evidence"
+      ],
+      "properties": {
+        "flow_id": { "type": "string", "pattern": "^flw_[0-9a-f]{24}$" },
+        "chain": { "type": "string" },
+        "chain_id": { "type": "integer", "minimum": 1 },
+        "bucket_start": { "type": "integer" },
+        "bucket_end": { "type": "integer" },
+        "source_node_id": { "type": "string" },
+        "destination_node_id": { "type": "string" },
+        "source_node_type": { "enum": ["address", "wallet_cluster"] },
+        "destination_node_type": { "enum": ["address", "wallet_cluster"] },
+        "source_entity_id": { "$ref": "#/$defs/nullableString" },
+        "destination_entity_id": { "$ref": "#/$defs/nullableString" },
+        "source_wallet_cluster_id": { "$ref": "#/$defs/nullableString" },
+        "destination_wallet_cluster_id": { "$ref": "#/$defs/nullableString" },
+        "source_address_id": { "$ref": "#/$defs/nullableString" },
+        "destination_address_id": { "$ref": "#/$defs/nullableString" },
+        "relationship_type": { "const": "DIRECT_TOKEN_FLOW" },
+        "token": { "type": "string" },
+        "token_address": { "$ref": "#/$defs/hexAddress" },
+        "token_decimals": { "type": "integer", "minimum": 0 },
+        "transfer_count": { "type": "integer", "minimum": 1 },
+        "amount_raw": { "type": "string", "pattern": "^[0-9]+$" },
+        "first_seen": { "type": "integer" },
+        "last_seen": { "type": "integer" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/flowEvidence" }, "maxItems": 3 }
+      },
+      "additionalProperties": false
+    },
+    "clusterNode": {
+      "type": "object",
+      "required": ["id", "kind", "protocol", "role", "cluster_role"],
+      "properties": {
+        "id": { "$ref": "#/$defs/hexAddress" },
+        "kind": { "type": "string" },
+        "protocol": { "$ref": "#/$defs/nullableString" },
+        "role": { "$ref": "#/$defs/nullableString" },
+        "cluster_role": { "enum": ["member", "shared-sweep-destination", "counterparty"] }
+      },
+      "additionalProperties": false
+    },
+    "transferEdge": {
+      "type": "object",
+      "required": [
+        "id", "from", "to", "type", "token", "token_address", "token_decimals",
+        "amount_raw", "log_index", "chain", "chain_id", "block_number", "timestamp", "transaction_hash"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "from": { "$ref": "#/$defs/hexAddress" },
+        "to": { "$ref": "#/$defs/hexAddress" },
+        "type": { "enum": ["MINT", "BURN", "ERC20_TRANSFER"] },
+        "token": { "type": "string" },
+        "token_address": { "$ref": "#/$defs/hexAddress" },
+        "token_decimals": { "type": "integer", "minimum": 0 },
+        "amount_raw": { "type": "string", "pattern": "^[0-9]+$" },
+        "log_index": { "type": "integer", "minimum": 0 },
+        "chain": { "type": "string" },
+        "chain_id": { "type": "integer", "minimum": 1 },
+        "block_number": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "integer" },
+        "transaction_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "clusterSubgraph": {
+      "type": "object",
+      "required": [
+        "cluster_subgraph_id", "wallet_cluster_id", "chain_id", "methodology",
+        "shared_sweep_destination", "member_addresses", "nodes", "edges"
+      ],
+      "properties": {
+        "cluster_subgraph_id": { "type": "string", "pattern": "^csg_[0-9a-f]{24}$" },
+        "wallet_cluster_id": { "type": "string", "pattern": "^wcl_[0-9a-f]{24}$" },
+        "chain_id": { "type": "integer", "minimum": 1 },
+        "methodology": { "const": "shared-sweep-destination-v1" },
+        "shared_sweep_destination": { "$ref": "#/$defs/hexAddress" },
+        "member_addresses": { "type": "array", "items": { "$ref": "#/$defs/hexAddress" }, "minItems": 1, "uniqueItems": true },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/clusterNode" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/transferEdge" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

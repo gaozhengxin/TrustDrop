@@ -267,6 +267,52 @@ td {
   padding: 16px 18px;
 }
 
+.protocol-diagram {
+  background: #fbfbf8;
+  border: 1px solid #deded8;
+  border-radius: 8px;
+  margin-top: 18px;
+  padding: 4px;
+}
+
+.component-notes {
+  display: grid;
+  gap: 6px 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.component-notes p {
+  border-top: 1px solid #deded8;
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 0;
+  padding-top: 7px;
+}
+
+@media (max-width: 760px) {
+  .component-notes {
+    grid-template-columns: 1fr;
+  }
+}
+
+pre.mermaid {
+  background: transparent;
+  color: #171717;
+  margin: 0;
+  overflow: visible;
+  padding: 0;
+  text-align: center;
+  white-space: normal;
+}
+
+.protocol-diagram svg {
+  display: block;
+  height: auto;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
 code {
   background: #ecece7;
   border-radius: 5px;

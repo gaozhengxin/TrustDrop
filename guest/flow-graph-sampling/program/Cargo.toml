@@ -1,0 +1,17 @@
+[package]
+name = "flow-graph-sampling-program"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+
+[[bin]]
+name = "flow_graph_sampling_program"
+path = "src/main.rs"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+drop-lib = { path = "../../../drop-lib", default-features = false, features = ["guest"] }
+flow-graph-sampling-guest-lib = { path = "../lib" }
+sp1-zkvm = "=6.2.4"
+trustdrop-flow-graph-sampling = { path = "../../../extensions/dataset-sampling/flow-graph/lib" }
+walrus_core = { path = "../../../walrus-core" }
