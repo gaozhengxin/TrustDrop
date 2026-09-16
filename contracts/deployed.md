@@ -6,3 +6,5 @@
 | Oracle proxy | 0x456Eb12B6A9584967d4ed1cB5B640B4Cd7215672 | hybrid centralized/CRE oracle, block 283721124; signer configured block 283721366 |
 | Exchange hub | 0x907337991b4cE4D9a6e70865e40Dc013df13a0D7 | latest broadcast, block 283721189 |
 | Exchange logic | 0xB8D465C1ee0f990F6bA0AB23531eebc03f374c74 | latest broadcast, block 283721157 |
+| Flow graph sampling verifier | 0xf8D06350C5b261e79ccA1A1061A6bd7922a3b09d | standalone SP1 verifier; program vkey `0x00d47eb96b8c3846c8812056885424a768e4838a2796e98a2bf53fd7efef85ee` |
+| Cluster sampling verifier | 0xe5Ba837f440AC5460C4cc02E5f48fe04994E68e6 | standalone SP1 verifier; program vkey `0x00749a17219133a8c64a776926fe18e7d6499072e27cd24ef182eecfd784434a` |
